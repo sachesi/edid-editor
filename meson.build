@@ -13,4 +13,11 @@ adw_dep = dependency('libadwaita-1')
 inc_core = include_directories('core')
 
 subdir('core')
-# subdir('app')
+subdir('app')
+
+gnome = import('gnome')
+
+gnome.post_install(
+  glib_compile_schemas : false,
+  update_desktop_database : false,
+)

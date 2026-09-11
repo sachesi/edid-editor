@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=EDID Editor
+GenericName=EDID Editor
+Comment=Extended Display Identification Data editor
+Exec=edid-editor %f
+Icon=video-display
+Terminal=false
+Categories=System;HardwareSettings;GTK;
+Keywords=EDID;display;monitor;CTA-861;
