@@ -13,6 +13,8 @@
 G_BEGIN_DECLS
 
 void wxedid_app_activate(AdwApplication* app, gpointer user_data);
+void wxedid_app_open(AdwApplication* app, GFile** files, gint n_files,
+                     gchar* hint, gpointer user_data);
 
 G_END_DECLS
 

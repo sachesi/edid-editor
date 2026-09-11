@@ -7,6 +7,7 @@
 #include "window.h"
 
 #include "wxcompat.h"
+#include "wxedid_rcd_scope.h"
 #include "guilog.h"
 #include "vmap.h"
 #include "EDID_class.h"
@@ -21,6 +22,7 @@
 struct wxedid_doc {
    EDID_cl    EDID;
    guilog_cl  GLog;
+   char       path[1024]; //current file, empty if none
 };
 
 //tree item: GObject holding an edi_grp_cl* for GtkTreeListModel
@@ -64,8 +66,94 @@ static void log_sink(const char* msg, void* user_data) {
 }
 
 //------------
-// field list: refreshed when a group is selected in the tree
+//field row widgets: what the user interacts with per field
+enum {
+   ROW_LABEL,     //read-only or not writable: label only
+   ROW_ENTRY,     //text entry (OP_WRSTR)
+   ROW_COMBO,     //value selector dropdown (F_VS)
+};
+
+struct wxedid_row {
+   edi_dynfld_t* pfld;
+   edi_grp_cl*   pgrp;
+   EDID_cl*      pEDID;
+   int           kind;
+   GtkWidget*    entry;  //GtkEditable | GtkDropDown
+   u32_t         sel_idx; //dropdown item value
+};
+
+//re-read all rows of the field list into the widgets' current display
+static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID);
+
+//------------
+// helpers shared by rows
+static bool field_writable(const edi_field_t& f) {
+   return (0 == (f.flags & F_RD));
+}
+
+static bool field_has_selector(const edi_field_t& f) {
+   return ((f.flags & F_VS) != 0) && (f.vmap_idx != VS_NO_SELECTOR);
+}
+
+//string representation accepted by the field's write handler (OP_WRSTR)
+static void field_read_str(edi_dynfld_t* pfld, EDID_cl& EDID, wxc_String& sval) {
+   u32_t ival = 0;
+   sval.Empty();
+   ( EDID.*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
+}
+
+//------------
+//entry activated: write the string back via the field handler
+static void row_on_entry_activate(GtkEntry* entry, gpointer user_data) {
+   wxedid_row* r = (wxedid_row*) user_data;
+
+   const char* txt = gtk_editable_get_text(GTK_EDITABLE(entry));
+   wxc_String  sval(txt);
+   u32_t       ival = 0;
+
+   rcode retU = ( r->pEDID->*r->pfld->field.handlerfn )(OP_WRSTR, sval, ival, r->pfld);
+
+   //re-read to confirm the value took; wrong input leaves the old value
+   if (RCD_IS_OK(retU)) {
+      wxc_String snew;
+      field_read_str(r->pfld, *r->pEDID, snew);
+      gtk_editable_set_text(GTK_EDITABLE(entry), snew.c_str());
+      gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
+   } else {
+      gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
+   }
+}
+
+//dropdown chosen: write integer value via OP_WRINT
+static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer user_data) {
+   wxedid_row* r = (wxedid_row*) user_data;
+
+   gpointer idx = g_object_get_data(G_OBJECT(dd), "sel-idx");
+   if (idx == NULL) return; //startup notification
+
+   guint pos = gtk_drop_down_get_selected(dd);
+   if (pos == GTK_INVALID_LIST_POSITION) return;
+
+   u32_t* vals = (u32_t*) idx;
+   u32_t  val  = vals[pos];
+
+   wxc_String sval;
+   rcode retU = ( r->pEDID->*r->pfld->field.handlerfn )(OP_WRINT, sval, val, r->pfld);
+
+   if (RCD_IS_OK(retU)) {
+      gtk_widget_remove_css_class(GTK_WIDGET(dd), "error");
+   } else {
+      gtk_widget_add_css_class(GTK_WIDGET(dd), "error");
+   }
+}
+
+//------------
+// field list: rebuilt when a group is selected in the tree
 static void fields_refresh(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl& EDID) {
+   rows_reload(list, pgrp, &EDID);
+}
+
+static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID) {
    //drop old rows
    GtkWidget* child = gtk_widget_get_first_child(GTK_WIDGET(list));
    while (child != NULL) {
@@ -77,15 +165,15 @@ static void fields_refresh(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl& EDID) {
    if (pgrp == NULL) return;
 
    wxc_String sval;
+   wxc_String vdesc;
    u32_t      ival = 0;
    u32_t      cnt  = pgrp->FieldsAr.GetCount();
 
    for (u32_t idx=0; idx<cnt; idx++) {
       edi_dynfld_t* pfld = pgrp->FieldsAr.Item(idx);
 
-      sval.Empty();
-      ival = 0;
-      rcode retU = ( EDID.*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
+      field_read_str(pfld, *pEDID, sval);
+      rcode retU = ( pEDID->*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
 
       GtkWidget* row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
       gtk_widget_set_margin_start(row, 8);
@@ -98,19 +186,77 @@ static void fields_refresh(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl& EDID) {
       gtk_label_set_ellipsize(GTK_LABEL(lbl_name), PANGO_ELLIPSIZE_END);
       gtk_widget_add_css_class(lbl_name, "heading");
 
-      GtkWidget* lbl_val = gtk_label_new(sval.c_str());
-      gtk_label_set_xalign(GTK_LABEL(lbl_val), 0.0);
-      gtk_label_set_ellipsize(GTK_LABEL(lbl_val), PANGO_ELLIPSIZE_END);
-      gtk_label_set_selectable(GTK_LABEL(lbl_val), TRUE);
-      gtk_label_set_wrap(GTK_LABEL(lbl_val), TRUE);
-      gtk_widget_add_css_class(lbl_val, "monospace");
-      if (! RCD_IS_OK(retU)) {
-         gtk_widget_add_css_class(lbl_val, "error");
+      gtk_box_append(GTK_BOX(row), lbl_name);
+
+      GtkWidget* widget = NULL;
+
+      if (field_has_selector(pfld->field)) {
+         //value selector dropdown from vmap
+         sm_vmap* vmap = vmap_GetVmap(pfld->field.vmap_idx, VMAP_MID);
+         if (vmap != NULL) {
+            GtkStringList* items = gtk_string_list_new(NULL);
+            u32_t*         vals  = new u32_t[vmap->size()];
+            u32_t          pos   = 0;
+            int            cur   = -1;
+
+            for (auto& kv : *vmap) {
+               gtk_string_list_append(items, kv.second.name);
+               //F_VSVM: the selectable value lives in vmap_ent_t.val,
+               //otherwise it is the map key (menu id)
+               u32_t v = (pfld->field.flags & F_VSVM) ? kv.second.val : kv.first;
+               vals[pos] = v;
+               if (v == ival) cur = pos;
+               pos++;
+            }
+
+            GtkDropDown* dd = GTK_DROP_DOWN(gtk_drop_down_new(
+               G_LIST_MODEL(items), NULL));
+            gtk_drop_down_set_selected(dd, (cur >= 0) ? (guint) cur : GTK_INVALID_LIST_POSITION);
+            gtk_widget_set_valign(GTK_WIDGET(dd), GTK_ALIGN_CENTER);
+
+            wxedid_row* r = new wxedid_row{pfld, pgrp, pEDID, ROW_COMBO, GTK_WIDGET(dd), 0};
+            g_object_set_data_full(G_OBJECT(dd), "sel-idx", vals,
+                                   [](gpointer data){ delete[] (u32_t*) data; });
+            g_object_set_data_full(G_OBJECT(dd), "row", r,
+                                   [](gpointer data){ delete (wxedid_row*) data; });
+
+            g_signal_connect(dd, "notify::selected", G_CALLBACK(row_on_combo_notify), r);
+            widget = GTK_WIDGET(dd);
+         }
       }
 
-      gtk_box_append(GTK_BOX(row), lbl_name);
-      gtk_box_append(GTK_BOX(row), lbl_val);
+      if (widget == NULL) {
+         if (field_writable(pfld->field)) {
+            //text entry
+            GtkEntry* entry = GTK_ENTRY(gtk_entry_new());
+            gtk_editable_set_text(GTK_EDITABLE(entry), sval.c_str());
+            // entry width: default, sval driven
 
+            wxedid_row* r = new wxedid_row{pfld, pgrp, pEDID, ROW_ENTRY, GTK_WIDGET(entry), 0};
+
+            g_signal_connect(entry, "activate", G_CALLBACK(row_on_entry_activate), r);
+            g_object_set_data_full(G_OBJECT(entry), "row", r,
+                                   [](gpointer data){ delete (wxedid_row*) data; });
+
+            GtkWidget* hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+            gtk_box_append(GTK_BOX(hbox), GTK_WIDGET(entry));
+            widget = hbox;
+         } else {
+            //read-only label
+            GtkWidget* lbl_val = gtk_label_new(sval.c_str());
+            gtk_label_set_xalign(GTK_LABEL(lbl_val), 0.0);
+            gtk_label_set_ellipsize(GTK_LABEL(lbl_val), PANGO_ELLIPSIZE_END);
+            gtk_label_set_selectable(GTK_LABEL(lbl_val), TRUE);
+            gtk_label_set_wrap(GTK_LABEL(lbl_val), TRUE);
+            gtk_widget_add_css_class(lbl_val, "monospace");
+            if (! RCD_IS_OK(retU)) {
+               gtk_widget_add_css_class(lbl_val, "error");
+            }
+            widget = lbl_val;
+         }
+      }
+
+      gtk_box_append(GTK_BOX(row), widget);
       gtk_list_box_append(list, row);
    }
 }
@@ -200,6 +346,8 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    fread(pbuf, 1, sizeof(edi_buf_t), in);
    fclose(in);
 
+   snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
+
    rcode retU;
    u32_t n_extblk = 0;
 
@@ -222,7 +370,6 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
       tree_item_expand,
       NULL, NULL);
 
-   gtk_column_view_set_model(wnd->tree, GTK_SELECTION_MODEL(wnd->tree_sel));
    gtk_single_selection_set_model(wnd->tree_sel, G_LIST_MODEL(wnd->tree_model));
 }
 
@@ -256,9 +403,103 @@ static void wnd_on_open(GtkButton* /*btn*/, gpointer user_data) {
 }
 
 //------------
+// save: write the buffer to a given path, recompute checksums first
+static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
+   rcode retU = wnd->doc->EDID.AssembleEDID();
+   if (! RCD_IS_OK(retU)) {
+      char msg[1024];
+      wxedid_RCD_GET_MSG(retU, msg, sizeof(msg));
+      wnd->doc->GLog.DoLog(msg);
+      return false;
+   }
+
+   //checksums: base + all valid extension blocks
+   for (u32_t blk=0; blk < wnd->doc->EDID.getNumValidBlocks(); blk++) {
+      wnd->doc->EDID.genChksum(blk);
+   }
+
+   FILE* out = fopen(path, "wb");
+   if (out == NULL) {
+      wnd->doc->GLog.DoLog("[E!] Cannot open file for writing");
+      return false;
+   }
+
+   edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
+   size_t wr = fwrite(pbuf->buff, 1,
+                      wnd->doc->EDID.getNumValidBlocks() * sizeof(ediblk_t), out);
+   fclose(out);
+
+   char msg[1152];
+   snprintf(msg, sizeof(msg), "[i] Saved %zu bytes to %s", wr, path);
+   wnd->doc->GLog.DoLog(msg);
+   snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
+   return true;
+}
+
+static void wnd_on_save_response(GtkNativeDialog* native_dlg, int response, gpointer user_data) {
+   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+
+   if (response == GTK_RESPONSE_ACCEPT) {
+      GFile* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(native_dlg));
+      char* path = g_file_get_path(file);
+      g_object_unref(file);
+
+      if (path != NULL) {
+         wnd_save_to_file(wnd, path);
+         g_free(path);
+      }
+   }
+   g_object_unref(native_dlg);
+}
+
+static void wnd_on_save(GtkButton* /*btn*/, gpointer user_data) {
+   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+
+   //already have a path: save in place
+   if (wnd->doc->path[0] != 0) {
+      wnd_save_to_file(wnd, wnd->doc->path);
+      return;
+   }
+
+   GtkFileChooserNative* native_dlg = gtk_file_chooser_native_new(
+      "Save EDID binary",
+      GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(user_data))),
+      GTK_FILE_CHOOSER_ACTION_SAVE,
+      "_Save", "_Cancel");
+   gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(native_dlg), "edid.bin");
+
+   g_signal_connect(native_dlg, "response", G_CALLBACK(wnd_on_save_response), wnd);
+   gtk_native_dialog_show(GTK_NATIVE_DIALOG(native_dlg));
+}
+
+//------------
+// 'open' signal: files passed on the command line
+void wxedid_app_open(AdwApplication* app, GFile** files, gint n_files,
+                     gchar* /*hint*/, gpointer /*user_data*/) {
+   //activate first (creates the window), then load into it
+   wxedid_app_activate(app, NULL);
+
+   //find the window created by activate
+   GtkWindow* window = gtk_application_get_active_window(GTK_APPLICATION(app));
+   if (window == NULL) return;
+
+   wxedid_wnd* wnd = (wxedid_wnd*) g_object_get_data(G_OBJECT(window), "wxedid-wnd");
+   if (wnd == NULL) return;
+
+   for (gint i=0; i<n_files; i++) {
+      char* path = g_file_get_path(files[i]);
+      if (path != NULL) {
+         wnd_load_file(wnd, path);
+         g_free(path);
+      }
+   }
+}
+
+//------------
 void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    wxedid_wnd* wnd = new wxedid_wnd;
    wnd->doc        = new wxedid_doc;
+   wnd->doc->path[0] = 0;
    wnd->tree_model = NULL;
    wnd->tree_sel   = NULL;
 
@@ -267,17 +508,21 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_window_set_title(GTK_WINDOW(window), "EDID Editor");
 
    g_object_set_data_full(G_OBJECT(window), "wxedid-wnd", wnd,
-                          [](gpointer data) {
-                             wxedid_wnd* w = (wxedid_wnd*) data;
-                             delete w->doc;
-                             delete w;
-                          });
+                           [](gpointer data) {
+                              wxedid_wnd* w = (wxedid_wnd*) data;
+                              delete w->doc;
+                              delete w;
+                           });
 
    //header bar
    GtkWidget* header = adw_header_bar_new();
    GtkWidget* btn_open = gtk_button_new_with_mnemonic("_Open");
    g_signal_connect(btn_open, "clicked", G_CALLBACK(wnd_on_open), wnd);
    adw_header_bar_pack_start(ADW_HEADER_BAR(header), btn_open);
+
+   GtkWidget* btn_save = gtk_button_new_with_mnemonic("_Save");
+   g_signal_connect(btn_save, "clicked", G_CALLBACK(wnd_on_save), wnd);
+   adw_header_bar_pack_start(ADW_HEADER_BAR(header), btn_save);
 
    //layout: left = block tree, right = field list + log
    GtkWidget* pane = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);

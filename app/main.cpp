@@ -13,10 +13,11 @@ int main(int argc, char* argv[]) {
 
    AdwApplication* app = adw_application_new(
       "io.github.sachesi.EdidEditor",
-      G_APPLICATION_NON_UNIQUE /*keep it simple during development*/
+      (GApplicationFlags) (G_APPLICATION_HANDLES_OPEN | G_APPLICATION_NON_UNIQUE)
    );
 
    g_signal_connect(app, "activate", G_CALLBACK(wxedid_app_activate), NULL);
+   g_signal_connect(app, "open",     G_CALLBACK(wxedid_app_open),     NULL);
 
    int status = g_application_run(G_APPLICATION(app), argc, argv);
 
