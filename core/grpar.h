@@ -40,6 +40,8 @@ class GroupAr_cl : public wxArGroup_cl {
       void  base_InsertDn  (u32_t idx, edi_grp_cl* pgrp);
 
    public:
+              void  Empty        ();
+              void  Clear        () {Empty();};
               void  Append       (edi_grp_cl* pgrp);
               void  UpdateAbsOffs(u32_t idx, u32_t abs_offs, bool b_updt_soffs = true);
               void  UpdateRelOffs(u32_t idx, u32_t abs_offs, u32_t rel_offs);
@@ -75,7 +77,7 @@ class GroupAr_cl : public wxArGroup_cl {
 
       GroupAr_cl() : parent_ar(NULL), used_sz(0), free_sz(0) { Alloc(16);};
 
-      ~GroupAr_cl() {
+      virtual ~GroupAr_cl() {
          Empty();
       };
 };

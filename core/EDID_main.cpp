@@ -764,7 +764,11 @@ u32_t EDID_cl::genChksum(u32_t block) {
 }
 
 void EDID_cl::Clear() {
-
+   EDI_BaseGrpAr.Clear();
+   EDI_Ext0GrpAr.Clear();
+   EDI_Ext1GrpAr.Clear();
+   EDI_Ext2GrpAr.Clear();
+   num_valid_blocks = 0;
    memset(EDID_buff.buff, 0, sizeof(edi_buf_t) );
 }
 

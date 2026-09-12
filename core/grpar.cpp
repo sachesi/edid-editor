@@ -24,6 +24,13 @@ RCD_AUTOGEN_DEFINE_UNIT
 //WX_DEFINE_OBJARRAY: no-op with wxc_PtrArray (see wxcompat.h)
 
 //group array: base class
+void GroupAr_cl::Empty() {
+   for (u32_t idx=0; idx<GetCount(); idx++) {
+      delete Item(idx);
+   }
+   wxArGroup_cl::Empty();
+}
+
 void GroupAr_cl::Append(edi_grp_cl* pgrp) {
    pgrp->setArrayIdx(this, GetCount() );
    Add(pgrp);
@@ -846,4 +853,3 @@ void SubGrpAr_cl::InsertDn(u32_t idx, edi_grp_cl* pgrp) {
 void SubGrpAr_cl::InsertInto(edi_grp_cl* parent, edi_grp_cl* pgrp) {
    doInsert(0, pgrp, parent);
 }
-

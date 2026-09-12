@@ -488,10 +488,7 @@ class EDID_cl {
       };
 
       ~EDID_cl() {
-         EDI_BaseGrpAr.Clear();
-         EDI_Ext0GrpAr.Clear();
-         EDI_Ext1GrpAr.Clear();
-         EDI_Ext2GrpAr.Clear();
+         Clear();
       };
 };
 #undef __EDID_HDL_ARGS

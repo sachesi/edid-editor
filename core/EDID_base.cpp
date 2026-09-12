@@ -1470,15 +1470,6 @@ void edi_grp_cl::clear_fields() {
 }
 
 void dbc_grp_cl::delete_subg() {
-   edi_grp_cl  *psubg;
-   u32_t        n_subg;
-
-   n_subg  = subgroups.GetCount();
-
-   for (u32_t idx=0; idx<n_subg; ++idx) {
-      psubg = subgroups[idx];
-      delete psubg;
-   }
    subgroups.Clear();
 }
 
@@ -1513,4 +1504,3 @@ u32_t dbc_grp_cl::getTotalSize() {
 
    return dsize;
 }
-

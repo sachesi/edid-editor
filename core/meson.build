@@ -36,6 +36,14 @@ test_edit_roundtrip = executable(
   install : false,
 )
 
+test_reload_ownership = executable(
+  'test-reload-ownership',
+  'tests/test_reload_ownership.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
 #synthetic EDID sample data (generated, checked in as build tests below)
 sample_data = custom_target(
   'sample-edid-data',
@@ -47,3 +55,4 @@ sample_data = custom_target(
 test('parse-dump', test_parse_dump, args : [sample_data[1]])
 test('edit-roundtrip', test_edit_roundtrip, args : [sample_data[1]])
 test('edit-roundtrip-raw-extension', test_edit_roundtrip, args : [sample_data[2]])
+test('reload-ownership', test_reload_ownership, args : [sample_data[1]])
