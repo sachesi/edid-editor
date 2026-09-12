@@ -860,7 +860,13 @@ rcode EDID_cl::AssembleEDID() {
 
       n_grp = p_grp_ar->GetCount();
 
-      if (0 == p_grp_ar->GetCount()) {
+      if ((block > EDI_BASE_IDX) && (n_grp == 0)) {
+         pGLog->slog.Printf("[i] Preserving unsupported extension block %u", block);
+         pGLog->DoLog();
+         continue;
+      }
+
+      if (n_grp == 0) {
          RCD_RETURN_FAULT_MSG(retU, "[E!] Invalid number of extension blocks");
       }
 

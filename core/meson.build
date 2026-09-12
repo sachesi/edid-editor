@@ -39,10 +39,11 @@ test_edit_roundtrip = executable(
 #synthetic EDID sample data (generated, checked in as build tests below)
 sample_data = custom_target(
   'sample-edid-data',
-  output : ['sample_base.bin', 'sample_cea.bin'],
+  output : ['sample_base.bin', 'sample_cea.bin', 'sample_cea_displayid.bin'],
   command : [find_program('python3'), files('tests/gen_sample_edid.py'), '@OUTDIR@'],
   build_by_default : true,
 )
 
 test('parse-dump', test_parse_dump, args : [sample_data[1]])
 test('edit-roundtrip', test_edit_roundtrip, args : [sample_data[1]])
+test('edit-roundtrip-raw-extension', test_edit_roundtrip, args : [sample_data[2]])

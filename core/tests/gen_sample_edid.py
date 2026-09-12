@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Generate synthetic EDID test data.
 
-Produces two binaries used by the headless core tests:
+Produces three binaries used by the headless core tests:
   sample_base.bin : EDID 1.3 base block (DTD 640x480@60, MND text descriptor)
   sample_cea.bin  : base block + CTA-861 ext (VDB, HDMI VSDB, one DTD)
+  sample_cea_displayid.bin : base + CTA-861 + opaque DisplayID extension
 
 Usage: gen_sample_edid.py <out_dir>
 """
@@ -71,6 +72,14 @@ def cea_block():
     return chksum(e)
 
 
+def displayid_block():
+    e = bytearray(128)
+    e[0] = 0x70                            # DisplayID extension tag
+    e[1] = 0x12                            # revision
+    e[2:12] = b"RAW-TEST\x00\x01"
+    return chksum(e)
+
+
 def main():
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
     base = base_block()
@@ -85,7 +94,14 @@ def main():
     with open(os.path.join(out_dir, "sample_cea.bin"), "wb") as f:
         f.write(bytes(base_cea) + bytes(cea_block()))
 
-    print("wrote sample_base.bin, sample_cea.bin to", out_dir)
+    base_multi = bytearray(base)
+    base_multi[126] = 2                    # two extension blocks
+    chksum(base_multi)
+
+    with open(os.path.join(out_dir, "sample_cea_displayid.bin"), "wb") as f:
+        f.write(bytes(base_multi) + bytes(cea_block()) + bytes(displayid_block()))
+
+    print("wrote sample_base.bin, sample_cea.bin, sample_cea_displayid.bin to", out_dir)
 
 
 if __name__ == "__main__":

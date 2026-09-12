@@ -40,6 +40,7 @@ struct wxedid_item {
    GObject     parent;
    edi_grp_cl* pgrp;
    EDID_cl*    pEDID;
+   char        label[96];
 };
 
 static void wxedid_item_init(wxedid_item*) {}
@@ -51,6 +52,15 @@ static wxedid_item* wxedid_item_new(edi_grp_cl* pgrp, EDID_cl* pEDID) {
    wxedid_item* item = (wxedid_item*) g_object_new(WXEDID_TYPE_ITEM, NULL);
    item->pgrp  = pgrp;
    item->pEDID = pEDID;
+   return item;
+}
+
+static wxedid_item* wxedid_item_new_raw_extension(u32_t block, u8_t tag,
+                                                   EDID_cl* pEDID) {
+   wxedid_item* item = wxedid_item_new(NULL, pEDID);
+   const char* type = (tag == 0x70) ? "DisplayID" : "Unsupported";
+   snprintf(item->label, sizeof(item->label),
+            "Extension %u: %s (0x%02X), preserved read-only", block, type, tag);
    return item;
 }
 
@@ -265,7 +275,9 @@ static GListModel* tree_item_expand(gpointer item, gpointer /*user_data*/) {
    for (u32_t idx=0; idx<subg_cnt; idx++) {
       edi_grp_cl* psubg = pgrp->getSubGroup(idx);
       if (psubg == NULL) continue;
-      g_list_store_append(store, wxedid_item_new(psubg, it->pEDID));
+      wxedid_item* child = wxedid_item_new(psubg, it->pEDID);
+      g_list_store_append(store, child);
+      g_object_unref(child);
    }
    return G_LIST_MODEL(store);
 }
@@ -276,7 +288,9 @@ static void store_fill_block(GListStore* root, GroupAr_cl* grp_ar, EDID_cl* pEDI
    for (u32_t idx=0; idx<cnt; idx++) {
       edi_grp_cl* pgrp = grp_ar->Item(idx);
       if (pgrp == NULL) continue;
-      g_list_store_append(root, wxedid_item_new(pgrp, pEDID));
+      wxedid_item* item = wxedid_item_new(pgrp, pEDID);
+      g_list_store_append(root, item);
+      g_object_unref(item);
    }
 }
 
@@ -304,6 +318,8 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
    wxc_String   gname;
    if ((it != NULL) && (it->pgrp != NULL) && (it->pEDID != NULL)) {
       it->pgrp->getGrpName(*it->pEDID, gname);
+   } else if (it != NULL) {
+      gname = it->label;
    }
    gtk_label_set_text(GTK_LABEL(cell), gname.c_str());
    g_object_unref(obj);
@@ -337,27 +353,77 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
 
 static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    FILE* in = fopen(path, "rb");
-   if (in == NULL) return;
+   if (in == NULL) {
+      wnd->doc->GLog.DoLog("[E!] Cannot open EDID file");
+      return;
+   }
+
+   u8_t file_data[sizeof(edi_t) + 1] = {};
+   size_t rd = fread(file_data, 1, sizeof(file_data), in);
+   bool read_failed = (ferror(in) != 0);
+   fclose(in);
+
+   if (read_failed || (rd > sizeof(edi_t)) || (rd < sizeof(ediblk_t)) ||
+       ((rd % sizeof(ediblk_t)) != 0)) {
+      wnd->doc->GLog.DoLog("[E!] EDID file must contain 1 to 4 complete 128-byte blocks");
+      return;
+   }
+
+   edi_buf_t loaded = {};
+   memcpy(loaded.buff, file_data, rd);
+
+   u32_t n_extblk = loaded.edi.base.num_extblk;
+   size_t expected = (1U + n_extblk) * sizeof(ediblk_t);
+   if ((n_extblk > 3) || (rd != expected)) {
+      char msg[192];
+      snprintf(msg, sizeof(msg),
+               "[E!] EDID declares %u blocks, but the file contains %zu",
+               1U + n_extblk, rd / sizeof(ediblk_t));
+      wnd->doc->GLog.DoLog(msg);
+      return;
+   }
 
    wnd->doc->EDID.Clear();
    edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
-   fread(pbuf, 1, sizeof(edi_buf_t), in);
-   fclose(in);
+   memcpy(pbuf->buff, loaded.buff, rd);
 
    snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
 
    rcode retU;
-   u32_t n_extblk = 0;
+   u32_t parsed_extblk = 0;
 
-   retU = wnd->doc->EDID.ParseEDID_Base(n_extblk);
-   if (RCD_IS_OK(retU) && (n_extblk > 0)) {
-      wnd->doc->EDID.ParseEDID_CEA();
+   retU = wnd->doc->EDID.ParseEDID_Base(parsed_extblk);
+   bool parse_ok = RCD_IS_OK(retU);
+   if (parse_ok && (parsed_extblk > 0) && (pbuf->blk[EDI_EXT0_IDX][0] == 0x02)) {
+      retU = wnd->doc->EDID.ParseEDID_CEA();
+      parse_ok = RCD_IS_OK(retU);
+   }
+   if (parse_ok) {
+      wnd->doc->EDID.ForceNumValidBlocks(1U + parsed_extblk);
    }
 
-   //rebuild tree model: base + ext0 blocks, sub-groups expand lazily
+   //rebuild tree model: parsed groups plus read-only preserved extensions
    GListStore* root = g_list_store_new(WXEDID_TYPE_ITEM);
    store_fill_block(root, &wnd->doc->EDID.EDI_BaseGrpAr, &wnd->doc->EDID);
    store_fill_block(root, &wnd->doc->EDID.EDI_Ext0GrpAr, &wnd->doc->EDID);
+
+   if (parse_ok) {
+      for (u32_t block=1; block<=parsed_extblk; block++) {
+         if (wnd->doc->EDID.BlkGroupsAr[block]->GetCount() != 0) continue;
+
+         u8_t tag = pbuf->blk[block][0];
+         wxedid_item* item =
+            wxedid_item_new_raw_extension(block, tag, &wnd->doc->EDID);
+         g_list_store_append(root, item);
+         g_object_unref(item);
+
+         char msg[144];
+         snprintf(msg, sizeof(msg),
+                  "[i] Extension block %u (tag 0x%02X) preserved read-only",
+                  block, tag);
+         wnd->doc->GLog.DoLog(msg);
+      }
+   }
 
    if (wnd->tree_model != NULL) g_object_unref(wnd->tree_model);
    wnd->tree_model = gtk_tree_list_model_new(
@@ -366,6 +432,7 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
       FALSE,                   //not built lazily (small data)
       tree_item_expand,
       NULL, NULL);
+   g_object_unref(root);
 
    gtk_single_selection_set_model(wnd->tree_sel, G_LIST_MODEL(wnd->tree_model));
    if (g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model)) > 0) {
@@ -427,7 +494,9 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
 
    //checksums: base + all valid extension blocks
    for (u32_t blk=0; blk < wnd->doc->EDID.getNumValidBlocks(); blk++) {
-      wnd->doc->EDID.genChksum(blk);
+      if (wnd->doc->EDID.BlkGroupsAr[blk]->GetCount() != 0) {
+         wnd->doc->EDID.genChksum(blk);
+      }
    }
 
    FILE* out = fopen(path, "wb");

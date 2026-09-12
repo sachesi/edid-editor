@@ -73,7 +73,7 @@ int main(int argc, char* argv[]) {
 
    edi_buf_t* pbuf = EDID.getEDID();
    memset(pbuf, 0, sizeof(edi_buf_t));
-   fread(pbuf, 1, sizeof(edi_buf_t), in);
+   size_t rd = fread(pbuf, 1, sizeof(pbuf->edi), in);
    fclose(in);
 
    rcode retU;
@@ -85,6 +85,15 @@ int main(int argc, char* argv[]) {
    if (n_extblk > 0) {
       retU = EDID.ParseEDID_CEA();
       check(RCD_IS_OK(retU), "ParseEDID_CEA");
+   }
+   check(rd == (1U + n_extblk) * sizeof(ediblk_t),
+         "file size matches declared extension count");
+   EDID.ForceNumValidBlocks(1U + n_extblk);
+
+   u8_t raw_extension[sizeof(ediblk_t)] = {};
+   bool has_raw_extension = (n_extblk > 1);
+   if (has_raw_extension) {
+      memcpy(raw_extension, pbuf->blk[EDI_EXT1_IDX], sizeof(raw_extension));
    }
    check(saw_dtd_log, "parser log includes DTD group code");
    check(saw_vdb_log, "parser log includes VDB group code");
@@ -171,7 +180,7 @@ int main(int argc, char* argv[]) {
 
    u32_t nblk = EDID.getNumValidBlocks();
    for (u32_t blk=0; blk<nblk; blk++) {
-      EDID.genChksum(blk);
+      if (EDID.BlkGroupsAr[blk]->GetCount() != 0) EDID.genChksum(blk);
    }
    for (u32_t blk=0; blk<nblk; blk++) {
       char what[64];
@@ -183,6 +192,10 @@ int main(int argc, char* argv[]) {
    //BDD.max_vsize lives at base block offset 22
    u8_t* pbase = pbuf->blk[EDI_BASE_IDX];
    check(pbase[22] == 66, "SpawnInstance: V-size byte in EDID buffer == 66");
+   if (has_raw_extension) {
+      check(memcmp(raw_extension, pbuf->blk[EDI_EXT1_IDX], sizeof(raw_extension)) == 0,
+            "unsupported extension remains byte-identical");
+   }
 
    printf("---\n%s\n", (failures == 0) ? "ALL OK" : "FAILURES PRESENT");
    return (failures == 0) ? 0 : 1;
