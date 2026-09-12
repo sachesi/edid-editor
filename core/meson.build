@@ -4,6 +4,7 @@ edid_core_sources = [
   'EDID_main.cpp',
   'CEA.cpp',
   'CEA_ET.cpp',
+  'DisplayID.cpp',
   'grpar.cpp',
   'vmap.cpp',
   'vid_fmt.cpp',
@@ -44,6 +45,14 @@ test_reload_ownership = executable(
   install : false,
 )
 
+test_displayid = executable(
+  'test-displayid',
+  'tests/test_displayid.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
 #synthetic EDID sample data (generated, checked in as build tests below)
 sample_data = custom_target(
   'sample-edid-data',
@@ -52,7 +61,9 @@ sample_data = custom_target(
   build_by_default : true,
 )
 
-test('parse-dump', test_parse_dump, args : [sample_data[1]])
+test('parse-dump', test_parse_dump, args : [sample_data[2]])
 test('edit-roundtrip', test_edit_roundtrip, args : [sample_data[1]])
-test('edit-roundtrip-raw-extension', test_edit_roundtrip, args : [sample_data[2]])
+test('edit-roundtrip-displayid', test_edit_roundtrip, args : [sample_data[2]])
+test('displayid-roundtrip', test_displayid,
+     args : [sample_data[2], '--require-raw'])
 test('reload-ownership', test_reload_ownership, args : [sample_data[1]])

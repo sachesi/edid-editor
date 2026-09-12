@@ -98,9 +98,17 @@ int main(int argc, char* argv[]) {
    fprintf(stdout, "ParseEDID_Base: rcode=%d, ext blocks=%u\n",
            retU.detail.rcode, n_extblk);
 
-   if (n_extblk > 0) {
-      retU = EDID.ParseEDID_CEA();
-      fprintf(stdout, "ParseEDID_CEA: rcode=%d\n", retU.detail.rcode);
+   for (u32_t block=1; block<=n_extblk; block++) {
+      if ((block == EDI_EXT0_IDX) && (pbuf->blk[block][0] == 0x02)) {
+         retU = EDID.ParseEDID_CEA();
+         fprintf(stdout, "ParseEDID_CEA: rcode=%d\n", retU.detail.rcode);
+      } else if (pbuf->blk[block][0] == 0x70) {
+         retU = EDID.ParseEDID_DisplayID(block);
+         fprintf(stdout, "ParseEDID_DisplayID(%u): rcode=%d\n",
+                 block, retU.detail.rcode);
+      } else {
+         continue;
+      }
       if (! RCD_IS_OK(retU)) {
          char msg[1024];
          wxedid_RCD_GET_MSG(retU, msg, sizeof(msg));
@@ -115,11 +123,13 @@ int main(int argc, char* argv[]) {
       dump_group(stdout, pgrp, EDID, 0);
    }
 
-   //dump CEA ext block groups (via group' getGrpName, not EDID.gp_name)
-   cnt = EDID.EDI_Ext0GrpAr.GetCount();
-   for (u32_t idx=0; idx<cnt; idx++) {
-      edi_grp_cl* pgrp = EDID.EDI_Ext0GrpAr.Item(idx);
-      dump_group(stdout, pgrp, EDID, 0);
+   //dump parsed extension groups
+   for (u32_t block=1; block<=n_extblk; block++) {
+      cnt = EDID.BlkGroupsAr[block]->GetCount();
+      for (u32_t idx=0; idx<cnt; idx++) {
+         edi_grp_cl* pgrp = EDID.BlkGroupsAr[block]->Item(idx);
+         dump_group(stdout, pgrp, EDID, 0);
+      }
    }
 
    return 0;

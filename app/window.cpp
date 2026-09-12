@@ -397,21 +397,34 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    u32_t parsed_extblk = 0;
 
    retU = wnd->doc->EDID.ParseEDID_Base(parsed_extblk);
-   bool parse_ok = RCD_IS_OK(retU);
-   if (parse_ok && (parsed_extblk > 0) && (pbuf->blk[EDI_EXT0_IDX][0] == 0x02)) {
-      retU = wnd->doc->EDID.ParseEDID_CEA();
-      parse_ok = RCD_IS_OK(retU);
-   }
-   if (parse_ok) {
+   bool base_ok = RCD_IS_OK(retU);
+   if (base_ok) {
+      for (u32_t block=1; block<=parsed_extblk; block++) {
+         u8_t tag = pbuf->blk[block][0];
+         bool parsed = false;
+         if ((block == EDI_EXT0_IDX) && (tag == 0x02)) {
+            retU = wnd->doc->EDID.ParseEDID_CEA();
+            parsed = true;
+         } else if (tag == 0x70) {
+            retU = wnd->doc->EDID.ParseEDID_DisplayID(block);
+            parsed = true;
+         }
+         if (parsed && ! RCD_IS_OK(retU)) {
+            wnd->doc->GLog.PrintRcode(retU);
+            wnd->doc->EDID.BlkGroupsAr[block]->Clear();
+         }
+      }
       wnd->doc->EDID.ForceNumValidBlocks(1U + parsed_extblk);
    }
 
    //rebuild tree model: parsed groups plus read-only preserved extensions
    GListStore* root = g_list_store_new(WXEDID_TYPE_ITEM);
    store_fill_block(root, &wnd->doc->EDID.EDI_BaseGrpAr, &wnd->doc->EDID);
-   store_fill_block(root, &wnd->doc->EDID.EDI_Ext0GrpAr, &wnd->doc->EDID);
+   for (u32_t block=1; block<=parsed_extblk; block++) {
+      store_fill_block(root, wnd->doc->EDID.BlkGroupsAr[block], &wnd->doc->EDID);
+   }
 
-   if (parse_ok) {
+   if (base_ok) {
       for (u32_t block=1; block<=parsed_extblk; block++) {
          if (wnd->doc->EDID.BlkGroupsAr[block]->GetCount() != 0) continue;
 

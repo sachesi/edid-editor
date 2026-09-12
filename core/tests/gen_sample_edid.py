@@ -4,7 +4,7 @@
 Produces three binaries used by the headless core tests:
   sample_base.bin : EDID 1.3 base block (DTD 640x480@60, MND text descriptor)
   sample_cea.bin  : base block + CTA-861 ext (VDB, HDMI VSDB, one DTD)
-  sample_cea_displayid.bin : base + CTA-861 + opaque DisplayID extension
+  sample_cea_displayid.bin : base + CTA-861 + DisplayID extension
 
 Usage: gen_sample_edid.py <out_dir>
 """
@@ -75,8 +75,28 @@ def cea_block():
 def displayid_block():
     e = bytearray(128)
     e[0] = 0x70                            # DisplayID extension tag
-    e[1] = 0x12                            # revision
-    e[2:12] = b"RAW-TEST\x00\x01"
+    e[1] = 0x12                            # DisplayID 1.2
+    e[3] = 0x03                            # standalone display device
+
+    # Type I Detailed Timing Data Block: 2560x1440 at 164.96 and 180 Hz.
+    timing_240 = bytes([
+        0x3d, 0x11, 0x01, 0x84, 0xff, 0x09, 0x9f, 0x00, 0x2f, 0x80,
+        0x1f, 0x00, 0x9f, 0x05, 0x76, 0x00, 0x02, 0x00, 0x04, 0x00,
+    ])
+    timing_180 = bytes([
+        0x53, 0x19, 0x01, 0x04, 0xff, 0x09, 0x9f, 0x00, 0x2f, 0x80,
+        0x1f, 0x00, 0x9f, 0x05, 0x1e, 0x00, 0x02, 0x00, 0x04, 0x00,
+    ])
+    payload = bytes([0x03, 0x00, 40]) + timing_240 + timing_180
+
+    # Unknown data blocks remain structurally parsed and byte-editable.
+    payload += bytes([0x30, 0x00, 2, 0xaa, 0x55])
+    # Exercise the standard zero-padding convention used by real displays.
+    e[2] = 121
+    e[5:5 + len(payload)] = payload
+
+    checksum_offset = 5 + e[2]
+    e[checksum_offset] = (-sum(e[1:checksum_offset])) & 0xff
     return chksum(e)
 
 

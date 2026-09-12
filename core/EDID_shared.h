@@ -168,7 +168,7 @@ WX_DECLARE_OBJARRAY(edi_dynfld_t*, wxArGrpField);
 class edi_grp_cl : public wxTreeItemData {
    protected:
 
-      u8_t    inst_data[32]; //local copy of instance data, including sub-groups
+      u8_t    inst_data[128]; //local copy of one EDID block/group
 
       u32_t   dat_sz;   //total instance data size
       u32_t   hdr_sz;   //hdr data size in inst_data: SpawnInstance() uses this when number of sub-groups is variable
@@ -259,7 +259,7 @@ class edi_grp_cl : public wxTreeItemData {
       //NOTE: def. subg_id.t32 == T_SUB_GRP: needed by SubGrpAr_cl::Paste()
       edi_grp_cl() : dat_sz(0), hdr_sz(0), ahf_sz(0), subg_sz(0), abs_offs(0), rel_offs(0),
                      grp_idx(0), grp_ar(NULL), parent_grp(NULL), dyn_fcnt(0), dyn_fldar(NULL)
-                   { memset(inst_data, 0, 32);
+                   { memset(inst_data, 0, sizeof(inst_data));
                      type_id.t32 = ID_INVALID; };
 
       virtual ~edi_grp_cl() {
@@ -385,6 +385,7 @@ class EDID_cl {
       rcode ParseEDID_Base(u32_t& n_extblk);
       rcode ParseAltDtor  (u8_t *pinst, edi_grp_cl** pp_grp, i32_t offs = -1);
       rcode ParseEDID_CEA ();
+      rcode ParseEDID_DisplayID(u32_t block);
       rcode ParseCEA_DBC  (u8_t *pinst);
       rcode ParseDBC_TAG  (u8_t *pinst, edi_grp_cl** pp_grp);
       rcode AssembleEDID  ();
@@ -477,6 +478,9 @@ class EDID_cl {
       u32_t CEA_VFPD_SVR_decode(u32_t svr, u32_t &ndtd);
       //CEA-ET: T7VTDB
       rcode T7VTB_PixClk  (__EDID_HDL_ARGS);
+      rcode DisplayID_PixelClock(__EDID_HDL_ARGS);
+      rcode DisplayID_ValuePlusOne16(__EDID_HDL_ARGS);
+      rcode DisplayID_ValuePlusOne15(__EDID_HDL_ARGS);
 
       EDID_cl() : num_valid_blocks(0), b_RD_Ignore(false),
                   b_ERR_Ignore(false), b_GrpNameDynamic(true)

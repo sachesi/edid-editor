@@ -1352,7 +1352,7 @@ rcode edi_grp_cl::AssembleGroup() {
    }
 
    dofs = (hdr_sz + ahf_sz);
-   dlen = (31 - dofs);
+   dlen = (sizeof(inst_data) - dofs);
    pbuf = &inst_data[dofs];
 
    for (gpidx=0; gpidx<sub_ar->GetCount(); ++gpidx) {

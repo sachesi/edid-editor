@@ -24,6 +24,7 @@ RCD_AUTOGEN_DEFINE_UNIT
 #include "EDID_class.h"
 #include "CEA_class.h"
 #include "CEA_ET_class.h"
+#include "DisplayID_class.h"
 
 
 const wxc_String EDID_cl::prop_flag_name[] = {
@@ -550,6 +551,140 @@ rcode EDID_cl::ParseEDID_CEA() {
    RCD_RETURN_OK(retU);
 }
 
+rcode EDID_cl::ParseEDID_DisplayID(u32_t block) {
+   rcode retU;
+   if ((block < EDI_EXT0_IDX) || (block > EDI_EXT2_IDX)) {
+      RCD_RETURN_FAULT(retU);
+   }
+
+   u8_t* extension = EDID_buff.blk[block];
+   GroupAr_cl* groups = BlkGroupsAr[block];
+   groups->Clear();
+
+   if (extension[0] != 0x70) {
+      wxedid_RCD_SET_FAULT_VMSG(retU,
+                                "[E!] DisplayID: invalid extension tag=0x%02X",
+                                extension[0]);
+      return retU;
+   }
+
+   u32_t payload_length = extension[2];
+   if (payload_length > 121) {
+      wxedid_RCD_SET_FAULT_VMSG(retU,
+                                "[E!] DisplayID: payload length %u exceeds 121 bytes",
+                                payload_length);
+      return retU;
+   }
+
+   u32_t displayid_sum = 0;
+   for (u32_t idx=1; idx<=(5 + payload_length); idx++) {
+      displayid_sum += extension[idx];
+   }
+   if ((displayid_sum & 0xff) != 0) {
+      wxedid_RCD_SET_FAULT_VMSG(retU, "[E!] DisplayID: invalid structure checksum");
+      return retU;
+   }
+
+   displayid_hdr_cl* header = new displayid_hdr_cl;
+   if (header == NULL) RCD_RETURN_FAULT(retU);
+   header->setAbsOffs(block * EDI_BLK_SIZE);
+   header->setRelOffs(0);
+   retU = header->init(extension, 0, NULL);
+   if (! RCD_IS_OK(retU)) {
+      delete header;
+      return retU;
+   }
+   groups->Append(header);
+
+   pGLog->slog.Printf("DisplayID %u.%u, block %u:",
+                      extension[1] >> 4, extension[1] & 0x0f, block);
+   pGLog->DoLog();
+
+   u32_t offset = 5;
+   u32_t remaining = payload_length;
+   while (remaining > 0) {
+      bool padding_marker = (extension[offset] == 0) &&
+                            ((remaining < 3) || (extension[offset + 2] == 0));
+      if (padding_marker) {
+         bool all_zero = true;
+         for (u32_t idx=0; idx<remaining; idx++) {
+            if (extension[offset + idx] != 0) {
+               all_zero = false;
+               break;
+            }
+         }
+         if (! all_zero) {
+            groups->Clear();
+            wxedid_RCD_SET_FAULT_VMSG(
+               retU, "[E!] DisplayID: non-zero filler at offset %u", offset);
+            return retU;
+         }
+
+         displayid_padding_cl* padding = new displayid_padding_cl;
+         if (padding == NULL) {
+            groups->Clear();
+            RCD_RETURN_FAULT(retU);
+         }
+         padding->setDataSize(remaining);
+         padding->setAbsOffs((block * EDI_BLK_SIZE) + offset);
+         padding->setRelOffs(offset);
+         retU = padding->init(extension + offset, 0, NULL);
+         if (! RCD_IS_OK(retU)) {
+            delete padding;
+            groups->Clear();
+            return retU;
+         }
+         groups->Append(padding);
+         offset += remaining;
+         remaining = 0;
+         break;
+      }
+
+      if (remaining < 3) {
+         groups->Clear();
+         wxedid_RCD_SET_FAULT_VMSG(retU,
+                                   "[E!] DisplayID: %u trailing payload byte(s)",
+                                   remaining);
+         return retU;
+      }
+
+      u32_t block_size = 3 + extension[offset + 2];
+      if (block_size > remaining) {
+         groups->Clear();
+         wxedid_RCD_SET_FAULT_VMSG(
+            retU, "[E!] DisplayID: data block at offset %u exceeds payload", offset);
+         return retU;
+      }
+
+      displayid_data_block_cl* data_block = new displayid_data_block_cl;
+      if (data_block == NULL) {
+         groups->Clear();
+         RCD_RETURN_FAULT(retU);
+      }
+      data_block->setAbsOffs((block * EDI_BLK_SIZE) + offset);
+      data_block->setRelOffs(offset);
+      retU = data_block->init(extension + offset, extension[1], NULL);
+      if (! RCD_IS_OK(retU)) {
+         delete data_block;
+         groups->Clear();
+         return retU;
+      }
+      data_block->setParentAr(groups);
+      groups->Append(data_block);
+
+      pGLog->slog.Printf("[%zu] offs %u: \"%s\", size %u",
+                         groups->GetCount() - 1, offset,
+                         data_block->GroupName.c_str(), block_size);
+      pGLog->DoLog();
+
+      offset += block_size;
+      remaining -= block_size;
+   }
+
+   if (num_valid_blocks < (block + 1)) num_valid_blocks = block + 1;
+   RCD_RETURN_OK(retU);
+}
+
 rcode EDID_cl::ParseEDID_Base(u32_t& n_extblk) {
    rcode       retU;
    edi_grp_cl *pgrp;
@@ -755,6 +890,16 @@ u32_t EDID_cl::genChksum(u32_t block) {
    u32_t csum = 0;
    u8_t *pblk = EDID_buff.blk[block];
 
+   if ((pblk[0] == 0x70) && (pblk[2] <= 121)) {
+      u32_t displayid_checksum_offset = 5 + pblk[2];
+      u32_t displayid_sum = 0;
+      for (u32_t idx=1; idx<displayid_checksum_offset; idx++) {
+         displayid_sum += pblk[idx];
+      }
+      pblk[displayid_checksum_offset] =
+         (u8_t) (0x100 - (displayid_sum & 0xff));
+   }
+
    for (u32_t itb=0; itb<(EDI_BLK_SIZE-1); itb++) {
       csum += pblk[itb];
    }
@@ -896,7 +1041,7 @@ rcode EDID_cl::AssembleEDID() {
          }
          pGLog->DoLog();
 
-         if (block == EDI_EXT0_IDX) {
+         if ((block == EDI_EXT0_IDX) && (pbuf[0] == 0x02)) {
             gtid = pgrp->getTypeID();
             if (gtid.base_id != 0) {
                if (ID_DTD != gtid.base_id) {
@@ -960,7 +1105,7 @@ rcode EDID_cl::AssembleEDID() {
       }
 
       //CEA: clear unused bytes
-      if (block == 1) {
+      if ((block == EDI_EXT0_IDX) && (pbuf[0] == 0x02)) {
 
          pGLog->slog.Printf("[%u] offs: %u [free space]: %u bytes", idx_grp, offs, blk_sz );
          pGLog->DoLog();
@@ -973,6 +1118,18 @@ rcode EDID_cl::AssembleEDID() {
 
          //Update DTD offset
          CEA_Set_DTD_Offset(pbuf, p_grp_ar);
+      } else if ((block > EDI_BASE_IDX) && (pbuf[0] == 0x70)) {
+         u32_t checksum_offset = 5 + pbuf[2];
+         if (offs != checksum_offset) {
+            wxedid_RCD_SET_FAULT_VMSG(
+               retU,
+               "[E!] DisplayID: assembled payload ends at %u, expected %u",
+               offs, checksum_offset);
+            return retU;
+         }
+         for (u32_t pad=checksum_offset + 1; pad<(EDI_BLK_SIZE - 1); pad++) {
+            pbuf[pad] = 0;
+         }
       }
    }
 

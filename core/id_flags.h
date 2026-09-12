@@ -87,6 +87,13 @@ enum { //block and groups IDs & flags
    ID_CEA_UDAT    = 0x007F0000, //unknown data sub-group
    ID_CEA_ET_MASK = 0x0000FF00, //mask for Extended Tag type ID
 
+   //DisplayID extension:
+   ID_DISPLAYID       = 0x00001300,
+   ID_DISPLAYID_DB    = 0x00001400,
+   ID_DISPLAYID_PADDING = 0x00001500,
+   ID_DISPLAYID_RAW   = 0x00170000,
+   ID_DISPLAYID_TYPE1 = 0x00180000,
+
    ID_SUBGRP_MASK = 0x007F0000, //mask for subgroups
    ID_PARENT_MASK = (ID_EDID_MASK|ID_CEA_MASK|ID_CEA_ET_MASK), //mask for parent groups
    //Group init flags:

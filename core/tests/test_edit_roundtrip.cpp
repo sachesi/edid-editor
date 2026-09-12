@@ -82,18 +82,25 @@ int main(int argc, char* argv[]) {
    retU = EDID.ParseEDID_Base(n_extblk);
    check(RCD_IS_OK(retU), "ParseEDID_Base");
 
-   if (n_extblk > 0) {
-      retU = EDID.ParseEDID_CEA();
-      check(RCD_IS_OK(retU), "ParseEDID_CEA");
+   for (u32_t block=1; block<=n_extblk; block++) {
+      if ((block == EDI_EXT0_IDX) && (pbuf->blk[block][0] == 0x02)) {
+         retU = EDID.ParseEDID_CEA();
+         check(RCD_IS_OK(retU), "ParseEDID_CEA");
+      } else if (pbuf->blk[block][0] == 0x70) {
+         retU = EDID.ParseEDID_DisplayID(block);
+         check(RCD_IS_OK(retU), "ParseEDID_DisplayID");
+      }
    }
    check(rd == (1U + n_extblk) * sizeof(ediblk_t),
          "file size matches declared extension count");
    EDID.ForceNumValidBlocks(1U + n_extblk);
 
-   u8_t raw_extension[sizeof(ediblk_t)] = {};
-   bool has_raw_extension = (n_extblk > 1);
-   if (has_raw_extension) {
-      memcpy(raw_extension, pbuf->blk[EDI_EXT1_IDX], sizeof(raw_extension));
+   u8_t displayid_extension[sizeof(ediblk_t)] = {};
+   bool has_displayid = (n_extblk > 1) &&
+                        (pbuf->blk[EDI_EXT1_IDX][0] == 0x70);
+   if (has_displayid) {
+      memcpy(displayid_extension, pbuf->blk[EDI_EXT1_IDX],
+             sizeof(displayid_extension));
    }
    check(saw_dtd_log, "parser log includes DTD group code");
    check(saw_vdb_log, "parser log includes VDB group code");
@@ -192,9 +199,10 @@ int main(int argc, char* argv[]) {
    //BDD.max_vsize lives at base block offset 22
    u8_t* pbase = pbuf->blk[EDI_BASE_IDX];
    check(pbase[22] == 66, "SpawnInstance: V-size byte in EDID buffer == 66");
-   if (has_raw_extension) {
-      check(memcmp(raw_extension, pbuf->blk[EDI_EXT1_IDX], sizeof(raw_extension)) == 0,
-            "unsupported extension remains byte-identical");
+   if (has_displayid) {
+      check(memcmp(displayid_extension, pbuf->blk[EDI_EXT1_IDX],
+                   sizeof(displayid_extension)) == 0,
+            "unedited DisplayID extension remains byte-identical");
    }
 
    printf("---\n%s\n", (failures == 0) ? "ALL OK" : "FAILURES PRESENT");
