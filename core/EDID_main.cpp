@@ -320,7 +320,7 @@ rcode EDID_cl::ParseCEA_DBC(u8_t *pinst) {
    grp_sz = pgrp->getTotalSize();
    pGLog->slog.Printf("[%zu] offs %u: \"%s\", size %u",
                       EDI_Ext0GrpAr.GetCount(), pgrp->getRelOffs(),
-                      pgrp->CodeName, grp_sz );
+                      pgrp->CodeName.c_str(), grp_sz );
    pGLog->DoLog();
 
    pgrp->setParentAr(&EDI_Ext0GrpAr);
@@ -653,7 +653,7 @@ rcode EDID_cl::ParseEDID_Base(u32_t& n_extblk) {
       pdsc += 1;
 
       pGLog->slog.Printf("[%u] offs %u: \"%s\", size %u",
-                         itd, offs, pgrp->CodeName, pgrp->getDataSize());
+                         itd, offs, pgrp->CodeName.c_str(), pgrp->getDataSize());
       pGLog->DoLog();
    }
 
@@ -880,7 +880,7 @@ rcode EDID_cl::AssembleEDID() {
          n_subg = pgrp->getSubGrpCount();
 
          pGLog->slog.Printf("[%u] offs %u: \"%s\", size %u",
-                            idx_grp, offs, pgrp->CodeName, pgrp->getTotalSize());
+                            idx_grp, offs, pgrp->CodeName.c_str(), pgrp->getTotalSize());
          if (n_subg != 0) {
             pGLog->slog << ", sub-groups: " << n_subg;
          }
@@ -892,7 +892,8 @@ rcode EDID_cl::AssembleEDID() {
                if (ID_DTD != gtid.base_id) {
                   pGLog->slog.Printf("[E!] Invalid group for CTA-861 block: '%s: %s', "
                                      "offs: %u",
-                                     pgrp->CodeName, pgrp->GroupName, pgrp->getRelOffs());
+                                     pgrp->CodeName.c_str(), pgrp->GroupName.c_str(),
+                                     pgrp->getRelOffs());
                   pGLog->DoLog();
                   RCD_RETURN_FAULT(retU);
                }
@@ -911,7 +912,7 @@ rcode EDID_cl::AssembleEDID() {
             dat_sz = p_subg->getDataSize();
 
             pGLog->slog.Printf("   [%u] offs %u: \"%s\", size %u",
-                               sg_idx, offs, p_subg->CodeName, dat_sz);
+                               sg_idx, offs, p_subg->CodeName.c_str(), dat_sz);
             pGLog->DoLog();
 
             p_subg->SpawnInstance(&pbuf[offs]);
@@ -1301,7 +1302,7 @@ rcode EDID_cl::getStrFloat(wxc_String& sval, float minv, float maxv, float& val)
    RCD_SET_OK(retU);
 
    if (! sval.ToDouble(&dval)) {
-      RCD_SET_FAULT(retU);
+      RCD_RETURN_FAULT(retU);
    }
 
    val = (float) dval;
@@ -1560,5 +1561,3 @@ rcode EDID_cl::Word24(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_f
    }
    return retU;
 }
-
-

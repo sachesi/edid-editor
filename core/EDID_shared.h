@@ -262,7 +262,7 @@ class edi_grp_cl : public wxTreeItemData {
                    { memset(inst_data, 0, 32);
                      type_id.t32 = ID_INVALID; };
 
-      ~edi_grp_cl() {
+      virtual ~edi_grp_cl() {
          if (dyn_fldar != NULL) { free(dyn_fldar); };
          clear_fields();
          FieldsAr.Clear();

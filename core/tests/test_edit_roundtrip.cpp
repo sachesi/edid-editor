@@ -18,13 +18,18 @@
 #include "CEA_ET_class.h"
 
 static int failures = 0;
+static bool saw_dtd_log = false;
+static bool saw_vdb_log = false;
 
 static void check(bool ok, const char* what) {
    printf("%s: %s\n", ok ? "PASS" : "FAIL", what);
    if (! ok) failures++;
 }
 
-static void log_sink(const char* /*msg*/, void* /*user_data*/) {}
+static void log_sink(const char* msg, void* /*user_data*/) {
+   if (strstr(msg, "\"DTD\"") != NULL) saw_dtd_log = true;
+   if (strstr(msg, "\"VDB\"") != NULL) saw_vdb_log = true;
+}
 
 //find first group of a given base type id in a group array
 static edi_grp_cl* find_group(GroupAr_cl& ar, u32_t base_id) {
@@ -81,6 +86,8 @@ int main(int argc, char* argv[]) {
       retU = EDID.ParseEDID_CEA();
       check(RCD_IS_OK(retU), "ParseEDID_CEA");
    }
+   check(saw_dtd_log, "parser log includes DTD group code");
+   check(saw_vdb_log, "parser log includes VDB group code");
 
    //--- 1) numeric write: max vertical image size (BDD, writable ByteVal) ---
    edi_grp_cl*  pgrp  = find_group(EDID.EDI_BaseGrpAr, ID_BDD);
@@ -99,6 +106,23 @@ int main(int argc, char* argv[]) {
       check(ival == 66, "readback V-size == 66");
    } else {
       check(false, "locate V-size field");
+   }
+
+   //invalid floating-point input must fail without changing gamma
+   pgrp  = find_group(EDID.EDI_BaseGrpAr, ID_BDD);
+   pfld = (pgrp != NULL) ? find_field(pgrp, "gamma") : NULL;
+   if (pfld != NULL) {
+      wxc_String sval("not-a-number");
+      u32_t      ival = 0;
+
+      retU = ( EDID.*pfld->field.handlerfn )(OP_WRSTR, sval, ival, pfld);
+      check(! RCD_IS_OK(retU), "invalid gamma text is rejected");
+
+      sval.Empty();
+      ( EDID.*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
+      check(sval == "2.20", "invalid gamma text leaves value unchanged");
+   } else {
+      check(false, "locate gamma field");
    }
 
    //--- 2) numeric write: max horizontal image size (ByteVal) ---

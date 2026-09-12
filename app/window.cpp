@@ -95,29 +95,18 @@ static bool field_has_selector(const edi_field_t& f) {
    return ((f.flags & F_VS) != 0) && (f.vmap_idx != VS_NO_SELECTOR);
 }
 
-//string representation accepted by the field's write handler (OP_WRSTR)
-static void field_read_str(edi_dynfld_t* pfld, EDID_cl& EDID, wxc_String& sval) {
-   u32_t ival = 0;
-   sval.Empty();
-   ( EDID.*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
-}
-
 //------------
-//entry activated: write the string back via the field handler
-static void row_on_entry_activate(GtkEntry* entry, gpointer user_data) {
+//entry changed: write valid text back via the field handler
+static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
    wxedid_row* r = (wxedid_row*) user_data;
 
-   const char* txt = gtk_editable_get_text(GTK_EDITABLE(entry));
+   const char* txt = gtk_editable_get_text(entry);
    wxc_String  sval(txt);
    u32_t       ival = 0;
 
    rcode retU = ( r->pEDID->*r->pfld->field.handlerfn )(OP_WRSTR, sval, ival, r->pfld);
 
-   //re-read to confirm the value took; wrong input leaves the old value
    if (RCD_IS_OK(retU)) {
-      wxc_String snew;
-      field_read_str(r->pfld, *r->pEDID, snew);
-      gtk_editable_set_text(GTK_EDITABLE(entry), snew.c_str());
       gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
@@ -172,7 +161,8 @@ static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID) {
    for (u32_t idx=0; idx<cnt; idx++) {
       edi_dynfld_t* pfld = pgrp->FieldsAr.Item(idx);
 
-      field_read_str(pfld, *pEDID, sval);
+      sval.Empty();
+      ival = 0;
       rcode retU = ( pEDID->*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
 
       GtkWidget* row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
@@ -234,7 +224,7 @@ static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID) {
 
             wxedid_row* r = new wxedid_row{pfld, pgrp, pEDID, ROW_ENTRY, GTK_WIDGET(entry), 0};
 
-            g_signal_connect(entry, "activate", G_CALLBACK(row_on_entry_activate), r);
+            g_signal_connect(entry, "changed", G_CALLBACK(row_on_entry_changed), r);
             g_object_set_data_full(G_OBJECT(entry), "row", r,
                                    [](gpointer data){ delete (wxedid_row*) data; });
 
@@ -294,15 +284,21 @@ static void store_fill_block(GListStore* root, GroupAr_cl* grp_ar, EDID_cl* pEDI
 // factory: tree cell shows the group name
 static void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
                             GtkListItem* item, gpointer /*user_data*/) {
+   GtkWidget* expander = gtk_tree_expander_new();
    GtkWidget* lbl = gtk_label_new(NULL);
    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
-   gtk_list_item_set_child(item, lbl);
+   gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), lbl);
+   gtk_list_item_set_child(item, expander);
 }
 
 static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
                            GtkListItem* item, gpointer /*user_data*/) {
-   GObject* obj    = G_OBJECT(gtk_list_item_get_item(item));
-   GtkWidget* cell = gtk_list_item_get_child(item);
+   GtkTreeListRow* row = GTK_TREE_LIST_ROW(gtk_list_item_get_item(item));
+   GtkTreeExpander* expander = GTK_TREE_EXPANDER(gtk_list_item_get_child(item));
+   gtk_tree_expander_set_list_row(expander, row);
+
+   GObject* obj    = G_OBJECT(gtk_tree_list_row_get_item(row));
+   GtkWidget* cell = gtk_tree_expander_get_child(expander);
 
    wxedid_item* it = WXEDID_ITEM(obj);
    wxc_String   gname;
@@ -310,6 +306,7 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
       it->pgrp->getGrpName(*it->pEDID, gname);
    }
    gtk_label_set_text(GTK_LABEL(cell), gname.c_str());
+   g_object_unref(obj);
 }
 
 //------------
@@ -322,7 +319,8 @@ struct wxedid_wnd {
    GtkTextView*      log;
 };
 
-static void wnd_on_tree_select(GtkSelectionModel* selmodel, GParamSpec* /*pspec*/, gpointer user_data) {
+static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
+                               guint /*n_items*/, gpointer user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
 
    GtkTreeListRow* row = (GtkTreeListRow*) gtk_single_selection_get_selected_item(GTK_SINGLE_SELECTION(selmodel));
@@ -341,8 +339,8 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    FILE* in = fopen(path, "rb");
    if (in == NULL) return;
 
+   wnd->doc->EDID.Clear();
    edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
-   memset(pbuf, 0, sizeof(edi_buf_t));
    fread(pbuf, 1, sizeof(edi_buf_t), in);
    fclose(in);
 
@@ -351,7 +349,6 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    rcode retU;
    u32_t n_extblk = 0;
 
-   wnd->doc->EDID.Clear();
    retU = wnd->doc->EDID.ParseEDID_Base(n_extblk);
    if (RCD_IS_OK(retU) && (n_extblk > 0)) {
       wnd->doc->EDID.ParseEDID_CEA();
@@ -371,6 +368,9 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
       NULL, NULL);
 
    gtk_single_selection_set_model(wnd->tree_sel, G_LIST_MODEL(wnd->tree_model));
+   if (g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model)) > 0) {
+      gtk_single_selection_set_selected(wnd->tree_sel, 0);
+   }
 }
 
 static void wnd_on_open_response(GtkNativeDialog* native_dlg, int response, gpointer user_data) {
@@ -425,9 +425,13 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
    }
 
    edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
-   size_t wr = fwrite(pbuf->buff, 1,
-                      wnd->doc->EDID.getNumValidBlocks() * sizeof(ediblk_t), out);
-   fclose(out);
+   size_t expected = wnd->doc->EDID.getNumValidBlocks() * sizeof(ediblk_t);
+   size_t wr = fwrite(pbuf->buff, 1, expected, out);
+   int close_rc = fclose(out);
+   if ((wr != expected) || (close_rc != 0)) {
+      wnd->doc->GLog.DoLog("[E!] Failed to write complete EDID file");
+      return false;
+   }
 
    char msg[1152];
    snprintf(msg, sizeof(msg), "[i] Saved %zu bytes to %s", wr, path);
@@ -542,6 +546,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
 
    //selection: refresh the field list on change
    wnd->tree_sel = GTK_SINGLE_SELECTION(gtk_single_selection_new(NULL));
+   gtk_single_selection_set_autoselect(wnd->tree_sel, FALSE);
    gtk_column_view_set_model(wnd->tree, GTK_SELECTION_MODEL(wnd->tree_sel));
    g_signal_connect(wnd->tree_sel, "selection-changed",
                     G_CALLBACK(wnd_on_tree_select), wnd);
