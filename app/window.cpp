@@ -333,6 +333,7 @@ struct wxedid_wnd {
    GtkTreeListModel* tree_model;
    GtkListBox*       fields;
    GtkTextView*      log;
+   AdwOverlaySplitView* split_view;
 };
 
 static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
@@ -347,6 +348,9 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
 
    wxedid_item* it = WXEDID_ITEM(obj);
    fields_refresh(wnd->fields, it->pgrp, *it->pEDID);
+   if (adw_overlay_split_view_get_collapsed(wnd->split_view)) {
+      adw_overlay_split_view_set_show_sidebar(wnd->split_view, FALSE);
+   }
 
    g_object_unref(obj);   //gtk_tree_list_row_get_item() transfers a full ref
 }
@@ -440,33 +444,43 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    }
 }
 
-static void wnd_on_open_response(GtkNativeDialog* native_dlg, int response, gpointer user_data) {
-   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+static void wnd_on_open_response(GObject* source, GAsyncResult* result,
+                                 gpointer user_data) {
+   GtkWindow* window = GTK_WINDOW(user_data);
+   wxedid_wnd* wnd = (wxedid_wnd*)
+      g_object_get_data(G_OBJECT(window), "wxedid-wnd");
+   GError* error = NULL;
+   GFile* file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), result, &error);
 
-   if (response == GTK_RESPONSE_ACCEPT) {
-      GFile* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(native_dlg));
-      char* path = g_file_get_path(file);
-      g_object_unref(file);
-
-      if (path != NULL) {
-         wnd_load_file(wnd, path);
-         g_free(path);
+   if (file != NULL) {
+      if (wnd != NULL) {
+         char* path = g_file_get_path(file);
+         if (path != NULL) {
+            wnd_load_file(wnd, path);
+            g_free(path);
+         } else {
+            wnd->doc->GLog.DoLog("[E!] Only local EDID files can be opened");
+         }
       }
+      g_object_unref(file);
+   } else if ((wnd != NULL) && (error != NULL) &&
+              ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
+              ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
+      wnd->doc->GLog.DoLog(error->message);
    }
-   g_object_unref(native_dlg);
+
+   g_clear_error(&error);
+   g_object_unref(window);
 }
 
-static void wnd_on_open(GtkButton* /*btn*/, gpointer user_data) {
-   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
-
-   GtkFileChooserNative* native_dlg = gtk_file_chooser_native_new(
-      "Open EDID binary",
-      GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(user_data))),
-      GTK_FILE_CHOOSER_ACTION_OPEN,
-      "_Open", "_Cancel");
-
-   g_signal_connect(native_dlg, "response", G_CALLBACK(wnd_on_open_response), wnd);
-   gtk_native_dialog_show(GTK_NATIVE_DIALOG(native_dlg));
+static void wnd_on_open(GtkButton* btn, gpointer /*user_data*/) {
+   GtkWindow* window = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn)));
+   GtkFileDialog* dialog = gtk_file_dialog_new();
+   gtk_file_dialog_set_title(dialog, "Open EDID binary");
+   gtk_file_dialog_set_accept_label(dialog, "Open");
+   gtk_file_dialog_open(dialog, window, NULL, wnd_on_open_response,
+                        g_object_ref(window));
+   g_object_unref(dialog);
 }
 
 //------------
@@ -520,23 +534,36 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
    return true;
 }
 
-static void wnd_on_save_response(GtkNativeDialog* native_dlg, int response, gpointer user_data) {
-   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+static void wnd_on_save_response(GObject* source, GAsyncResult* result,
+                                 gpointer user_data) {
+   GtkWindow* window = GTK_WINDOW(user_data);
+   wxedid_wnd* wnd = (wxedid_wnd*)
+      g_object_get_data(G_OBJECT(window), "wxedid-wnd");
+   GError* error = NULL;
+   GFile* file = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(source), result, &error);
 
-   if (response == GTK_RESPONSE_ACCEPT) {
-      GFile* file = gtk_file_chooser_get_file(GTK_FILE_CHOOSER(native_dlg));
-      char* path = g_file_get_path(file);
-      g_object_unref(file);
-
-      if (path != NULL) {
-         wnd_save_to_file(wnd, path);
-         g_free(path);
+   if (file != NULL) {
+      if (wnd != NULL) {
+         char* path = g_file_get_path(file);
+         if (path != NULL) {
+            wnd_save_to_file(wnd, path);
+            g_free(path);
+         } else {
+            wnd->doc->GLog.DoLog("[E!] Only local EDID files can be saved");
+         }
       }
+      g_object_unref(file);
+   } else if ((wnd != NULL) && (error != NULL) &&
+              ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
+              ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
+      wnd->doc->GLog.DoLog(error->message);
    }
-   g_object_unref(native_dlg);
+
+   g_clear_error(&error);
+   g_object_unref(window);
 }
 
-static void wnd_on_save(GtkButton* /*btn*/, gpointer user_data) {
+static void wnd_on_save(GtkButton* btn, gpointer user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
 
    //already have a path: save in place
@@ -545,15 +572,20 @@ static void wnd_on_save(GtkButton* /*btn*/, gpointer user_data) {
       return;
    }
 
-   GtkFileChooserNative* native_dlg = gtk_file_chooser_native_new(
-      "Save EDID binary",
-      GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(user_data))),
-      GTK_FILE_CHOOSER_ACTION_SAVE,
-      "_Save", "_Cancel");
-   gtk_file_chooser_set_current_name(GTK_FILE_CHOOSER(native_dlg), "edid.bin");
+   GtkWindow* window = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn)));
+   GtkFileDialog* dialog = gtk_file_dialog_new();
+   gtk_file_dialog_set_title(dialog, "Save EDID binary");
+   gtk_file_dialog_set_accept_label(dialog, "Save");
+   gtk_file_dialog_set_initial_name(dialog, "edid.bin");
+   gtk_file_dialog_save(dialog, window, NULL, wnd_on_save_response,
+                        g_object_ref(window));
+   g_object_unref(dialog);
+}
 
-   g_signal_connect(native_dlg, "response", G_CALLBACK(wnd_on_save_response), wnd);
-   gtk_native_dialog_show(GTK_NATIVE_DIALOG(native_dlg));
+static void wnd_on_toggle_sidebar(GtkButton* /*button*/, gpointer user_data) {
+   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+   gboolean visible = adw_overlay_split_view_get_show_sidebar(wnd->split_view);
+   adw_overlay_split_view_set_show_sidebar(wnd->split_view, ! visible);
 }
 
 //------------
@@ -588,7 +620,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    wnd->tree_sel   = NULL;
 
    GtkWidget* window = adw_application_window_new(GTK_APPLICATION(app));
-   gtk_window_set_default_size(GTK_WINDOW(window), 1000, 700);
+   gtk_window_set_default_size(GTK_WINDOW(window), 900, 640);
    gtk_window_set_title(GTK_WINDOW(window), "EDID Editor");
 
    g_object_set_data_full(G_OBJECT(window), "wxedid-wnd", wnd,
@@ -608,9 +640,14 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_signal_connect(btn_save, "clicked", G_CALLBACK(wnd_on_save), wnd);
    adw_header_bar_pack_start(ADW_HEADER_BAR(header), btn_save);
 
-   //layout: left = block tree, right = field list + log
-   GtkWidget* pane = gtk_paned_new(GTK_ORIENTATION_HORIZONTAL);
-   gtk_paned_set_position(GTK_PANED(pane), 380);
+   GtkWidget* btn_sidebar = gtk_button_new_from_icon_name("sidebar-show-symbolic");
+   gtk_widget_set_tooltip_text(btn_sidebar, "Show groups");
+   gtk_accessible_update_property(GTK_ACCESSIBLE(btn_sidebar),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Show groups",
+                                  -1);
+   gtk_widget_set_visible(btn_sidebar, FALSE);
+   g_signal_connect(btn_sidebar, "clicked", G_CALLBACK(wnd_on_toggle_sidebar), wnd);
+   adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_sidebar);
 
    //block tree: column view with lazy expander rows
    GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
@@ -637,6 +674,8 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_vexpand(tree_scroll, TRUE);
 
    GtkWidget* right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+   gtk_widget_set_margin_start(right, 6);
+   gtk_widget_set_margin_end(right, 6);
    gtk_widget_set_margin_top(right, 6);
    gtk_widget_set_margin_bottom(right, 6);
 
@@ -653,22 +692,37 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_text_view_set_monospace(wnd->log, TRUE);
    GtkWidget* log_scroll = gtk_scrolled_window_new();
    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(log_scroll), GTK_WIDGET(wnd->log));
-   gtk_widget_set_vexpand(log_scroll, TRUE);
    gtk_widget_set_size_request(log_scroll, -1, 140);
 
    gtk_box_append(GTK_BOX(right), fields_scroll);
    gtk_box_append(GTK_BOX(right), log_scroll);
 
-   gtk_paned_set_start_child(GTK_PANED(pane), tree_scroll);
-   gtk_paned_set_end_child(GTK_PANED(pane), right);
+   GtkWidget* split_view = adw_overlay_split_view_new();
+   wnd->split_view = ADW_OVERLAY_SPLIT_VIEW(split_view);
+   adw_overlay_split_view_set_sidebar(wnd->split_view, tree_scroll);
+   adw_overlay_split_view_set_content(wnd->split_view, right);
+   adw_overlay_split_view_set_min_sidebar_width(wnd->split_view, 260.0);
+   adw_overlay_split_view_set_max_sidebar_width(wnd->split_view, 380.0);
+   adw_overlay_split_view_set_sidebar_width_fraction(wnd->split_view, 0.34);
+
+   AdwBreakpointCondition* condition = adw_breakpoint_condition_new_length(
+      ADW_BREAKPOINT_CONDITION_MAX_WIDTH, 700.0, ADW_LENGTH_UNIT_SP);
+   AdwBreakpoint* breakpoint = adw_breakpoint_new(condition);
+   adw_breakpoint_add_setters(
+      breakpoint,
+      G_OBJECT(split_view), "collapsed", TRUE,
+      G_OBJECT(split_view), "show-sidebar", FALSE,
+      G_OBJECT(btn_sidebar), "visible", TRUE,
+      NULL);
+   adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), breakpoint);
 
    wnd->doc->GLog.SetSink(log_sink, wnd->log);
    wnd->doc->EDID.SetGuiLogPtr(&wnd->doc->GLog);
 
    GtkWidget* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
    gtk_box_append(GTK_BOX(content), header);
-   gtk_box_append(GTK_BOX(content), pane);
-   gtk_widget_set_vexpand(pane, TRUE);
+   gtk_box_append(GTK_BOX(content), split_view);
+   gtk_widget_set_vexpand(split_view, TRUE);
 
    adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), content);
    gtk_window_present(GTK_WINDOW(window));

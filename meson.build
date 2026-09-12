@@ -7,8 +7,8 @@ project('edid-editor', 'cpp', 'c',
   ],
 )
 
-gtk_dep = dependency('gtk4')
-adw_dep = dependency('libadwaita-1')
+gtk_dep = dependency('gtk4', version : '>=4.10')
+adw_dep = dependency('libadwaita-1', version : '>=1.4')
 
 inc_core = include_directories('core')
 
