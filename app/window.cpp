@@ -405,6 +405,18 @@ static void wnd_on_open(GtkButton* /*btn*/, gpointer user_data) {
 //------------
 // save: write the buffer to a given path, recompute checksums first
 static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
+   edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
+   u32_t declared_blocks = 1U + pbuf->edi.base.num_extblk;
+   u32_t parsed_blocks = wnd->doc->EDID.getNumValidBlocks();
+   if (declared_blocks != parsed_blocks) {
+      char msg[160];
+      snprintf(msg, sizeof(msg),
+               "[E!] Cannot save: EDID declares %u blocks, but only %u were parsed",
+               declared_blocks, parsed_blocks);
+      wnd->doc->GLog.DoLog(msg);
+      return false;
+   }
+
    rcode retU = wnd->doc->EDID.AssembleEDID();
    if (! RCD_IS_OK(retU)) {
       char msg[1024];
@@ -424,7 +436,6 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
       return false;
    }
 
-   edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
    size_t expected = wnd->doc->EDID.getNumValidBlocks() * sizeof(ediblk_t);
    size_t wr = fwrite(pbuf->buff, 1, expected, out);
    int close_rc = fclose(out);
