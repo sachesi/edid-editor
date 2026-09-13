@@ -423,9 +423,20 @@ static void store_fill_block(GListStore* root, GroupAr_cl* grp_ar, EDID_cl* pEDI
 static void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
                             GtkListItem* item, gpointer /*user_data*/) {
    GtkWidget* expander = gtk_tree_expander_new();
+   GtkWidget* content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
    GtkWidget* lbl = gtk_label_new(NULL);
    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
-   gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), lbl);
+   gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
+   gtk_widget_set_hexpand(lbl, TRUE);
+   gtk_box_append(GTK_BOX(content), lbl);
+
+   GtkWidget* offset = gtk_label_new(NULL);
+   gtk_widget_add_css_class(offset, "caption");
+   gtk_widget_add_css_class(offset, "dim-label");
+   gtk_widget_add_css_class(offset, "monospace");
+   gtk_box_append(GTK_BOX(content), offset);
+
+   gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), content);
    gtk_list_item_set_child(item, expander);
 }
 
@@ -437,6 +448,8 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
 
    GObject* obj    = G_OBJECT(gtk_tree_list_row_get_item(row));
    GtkWidget* cell = gtk_tree_expander_get_child(expander);
+   GtkWidget* label = gtk_widget_get_first_child(cell);
+   GtkWidget* offset = gtk_widget_get_last_child(cell);
 
    wxedid_item* it = WXEDID_ITEM(obj);
    wxc_String   gname;
@@ -445,7 +458,17 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
    } else if (it != NULL) {
       gname = it->label;
    }
-   gtk_label_set_text(GTK_LABEL(cell), gname.c_str());
+   gtk_label_set_text(GTK_LABEL(label), gname.c_str());
+   gtk_widget_set_tooltip_text(label, gname.c_str());
+
+   if ((it != NULL) && (it->pgrp != NULL)) {
+      char offset_text[16];
+      snprintf(offset_text, sizeof(offset_text), "0x%03X", it->pgrp->getAbsOffs());
+      gtk_label_set_text(GTK_LABEL(offset), offset_text);
+      gtk_widget_set_visible(offset, TRUE);
+   } else {
+      gtk_widget_set_visible(offset, FALSE);
+   }
    g_object_unref(obj);
 }
 
@@ -1089,7 +1112,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_vexpand(tree_scroll, TRUE);
 
    GtkWidget* sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-   GtkWidget* sidebar_title = gtk_label_new("Groups");
+   GtkWidget* sidebar_title = gtk_label_new("EDID structure");
    gtk_label_set_xalign(GTK_LABEL(sidebar_title), 0.0);
    gtk_widget_add_css_class(sidebar_title, "title-4");
    gtk_widget_set_margin_start(sidebar_title, 18);
@@ -1157,8 +1180,8 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    adw_overlay_split_view_set_sidebar(wnd->split_view, sidebar);
    adw_overlay_split_view_set_content(wnd->split_view, right);
    adw_overlay_split_view_set_min_sidebar_width(wnd->split_view, 260.0);
-   adw_overlay_split_view_set_max_sidebar_width(wnd->split_view, 380.0);
-   adw_overlay_split_view_set_sidebar_width_fraction(wnd->split_view, 0.34);
+   adw_overlay_split_view_set_max_sidebar_width(wnd->split_view, 320.0);
+   adw_overlay_split_view_set_sidebar_width_fraction(wnd->split_view, 0.28);
    g_signal_connect(wnd->split_view, "notify::collapsed",
                     G_CALLBACK(wnd_on_split_collapsed), wnd);
 
