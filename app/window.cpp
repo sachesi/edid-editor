@@ -72,10 +72,12 @@ struct wxedid_itemClass {
 #define WXEDID_ITEM(obj) ((wxedid_item*) (obj))
 
 struct wxedid_item {
-   GObject     parent;
-   edi_grp_cl* pgrp;
-   EDID_cl*    pEDID;
-   char        label[96];
+   GObject      parent;
+   edi_grp_cl*  pgrp;
+   GroupAr_cl*  pgrp_ar;
+   EDID_cl*     pEDID;
+   bool         selectable;
+   char         label[96];
 };
 
 static void wxedid_item_init(wxedid_item*) {}
@@ -85,8 +87,19 @@ G_DEFINE_FINAL_TYPE(wxedid_item, wxedid_item, G_TYPE_OBJECT)
 
 static wxedid_item* wxedid_item_new(edi_grp_cl* pgrp, EDID_cl* pEDID) {
    wxedid_item* item = (wxedid_item*) g_object_new(WXEDID_TYPE_ITEM, NULL);
-   item->pgrp  = pgrp;
-   item->pEDID = pEDID;
+   item->pgrp       = pgrp;
+   item->pgrp_ar    = NULL;
+   item->pEDID      = pEDID;
+   item->selectable = (pgrp != NULL);
+   return item;
+}
+
+static wxedid_item* wxedid_item_new_block(const char* label,
+                                           GroupAr_cl* pgrp_ar,
+                                           EDID_cl* pEDID) {
+   wxedid_item* item = wxedid_item_new(NULL, pEDID);
+   item->pgrp_ar = pgrp_ar;
+   snprintf(item->label, sizeof(item->label), "%s", label);
    return item;
 }
 
@@ -96,6 +109,7 @@ static wxedid_item* wxedid_item_new_raw_extension(u32_t block, u8_t tag,
    const char* type = (tag == 0x70) ? "DisplayID" : "Unsupported";
    snprintf(item->label, sizeof(item->label),
             "Extension %u: %s (0x%02X), preserved read-only", block, type, tag);
+   item->selectable = true;
    return item;
 }
 
@@ -389,6 +403,20 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
 // GtkTreeListModel expand callback: sub-groups of a group
 static GListModel* tree_item_expand(gpointer item, gpointer /*user_data*/) {
    wxedid_item* it = WXEDID_ITEM(item);
+
+   if (it->pgrp_ar != NULL) {
+      GListStore* store = g_list_store_new(WXEDID_TYPE_ITEM);
+      u32_t cnt = it->pgrp_ar->GetCount();
+      for (u32_t idx=0; idx<cnt; idx++) {
+         edi_grp_cl* pgrp = it->pgrp_ar->Item(idx);
+         if (pgrp == NULL) continue;
+         wxedid_item* child = wxedid_item_new(pgrp, it->pEDID);
+         g_list_store_append(store, child);
+         g_object_unref(child);
+      }
+      return G_LIST_MODEL(store);
+   }
+
    edi_grp_cl*  pgrp = it->pgrp;
    if (pgrp == NULL) return NULL;
 
@@ -404,18 +432,6 @@ static GListModel* tree_item_expand(gpointer item, gpointer /*user_data*/) {
       g_object_unref(child);
    }
    return G_LIST_MODEL(store);
-}
-
-//build flat root list of groups for one block array
-static void store_fill_block(GListStore* root, GroupAr_cl* grp_ar, EDID_cl* pEDID) {
-   u32_t cnt = grp_ar->GetCount();
-   for (u32_t idx=0; idx<cnt; idx++) {
-      edi_grp_cl* pgrp = grp_ar->Item(idx);
-      if (pgrp == NULL) continue;
-      wxedid_item* item = wxedid_item_new(pgrp, pEDID);
-      g_list_store_append(root, item);
-      g_object_unref(item);
-   }
 }
 
 //------------
@@ -453,13 +469,26 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
 
    wxedid_item* it = WXEDID_ITEM(obj);
    wxc_String   gname;
+   std::string  display_name;
    if ((it != NULL) && (it->pgrp != NULL) && (it->pEDID != NULL)) {
       it->pgrp->getGrpName(*it->pEDID, gname);
+      if (! it->pgrp->CodeName.IsEmpty()) {
+         display_name = it->pgrp->CodeName.std_str() + ": " + gname.std_str();
+      } else {
+         display_name = gname.std_str();
+      }
    } else if (it != NULL) {
-      gname = it->label;
+      display_name = it->label;
    }
-   gtk_label_set_text(GTK_LABEL(label), gname.c_str());
-   gtk_widget_set_tooltip_text(label, gname.c_str());
+   gtk_label_set_text(GTK_LABEL(label), display_name.c_str());
+   gtk_widget_set_tooltip_text(label, display_name.c_str());
+   gtk_list_item_set_selectable(item, (it != NULL) && it->selectable);
+
+   if ((it != NULL) && (it->pgrp == NULL)) {
+      gtk_widget_add_css_class(label, "heading");
+   } else {
+      gtk_widget_remove_css_class(label, "heading");
+   }
 
    if ((it != NULL) && (it->pgrp != NULL)) {
       char offset_text[16];
@@ -671,11 +700,27 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
       wnd->doc->GLog.PrintRcode(retU);
    }
 
-   //rebuild tree model: parsed groups plus read-only preserved extensions
+   //rebuild tree model: block sections containing groups and sub-groups
    GListStore* root = g_list_store_new(WXEDID_TYPE_ITEM);
-   store_fill_block(root, &wnd->doc->EDID.EDI_BaseGrpAr, &wnd->doc->EDID);
+   if (wnd->doc->EDID.EDI_BaseGrpAr.GetCount() > 0) {
+      wxedid_item* base = wxedid_item_new_block(
+         "Block 0: Base EDID", &wnd->doc->EDID.EDI_BaseGrpAr, &wnd->doc->EDID);
+      g_list_store_append(root, base);
+      g_object_unref(base);
+   }
+
    for (u32_t block=1; block<=parsed_extblk; block++) {
-      store_fill_block(root, wnd->doc->EDID.BlkGroupsAr[block], &wnd->doc->EDID);
+      GroupAr_cl* groups = wnd->doc->EDID.BlkGroupsAr[block];
+      if (groups->GetCount() == 0) continue;
+
+      const char* type = (pbuf->blk[block][0] == 0x02) ? "CTA-861" :
+                         (pbuf->blk[block][0] == 0x70) ? "DisplayID" : "Extension";
+      char label[64];
+      snprintf(label, sizeof(label), "Block %u: %s", block, type);
+      wxedid_item* section = wxedid_item_new_block(
+         label, groups, &wnd->doc->EDID);
+      g_list_store_append(root, section);
+      g_object_unref(section);
    }
 
    if (base_ok) {
@@ -700,14 +745,37 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    wnd->tree_model = gtk_tree_list_model_new(
       G_LIST_MODEL(root),
       FALSE,                   //passthrough: rows are GtkTreeListRow
-      FALSE,                   //not built lazily (small data)
+      FALSE,                   //expand only block sections by default
       tree_item_expand,
       NULL, NULL);
    g_object_unref(root);
 
    gtk_single_selection_set_model(wnd->tree_sel, G_LIST_MODEL(wnd->tree_model));
-   if (g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model)) > 0) {
-      gtk_single_selection_set_selected(wnd->tree_sel, 0);
+
+   guint position = 0;
+   while (position < g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model))) {
+      GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+         g_list_model_get_item(G_LIST_MODEL(wnd->tree_model), position));
+      GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
+      wxedid_item* item = WXEDID_ITEM(obj);
+      if (item->pgrp_ar != NULL) gtk_tree_list_row_set_expanded(row, TRUE);
+      g_object_unref(obj);
+      g_object_unref(row);
+      position++;
+   }
+
+   guint n_items = g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model));
+   for (position=0; position<n_items; position++) {
+      GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+         g_list_model_get_item(G_LIST_MODEL(wnd->tree_model), position));
+      GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
+      bool selectable = WXEDID_ITEM(obj)->selectable;
+      g_object_unref(obj);
+      g_object_unref(row);
+      if (selectable) {
+         gtk_single_selection_set_selected(wnd->tree_sel, position);
+         break;
+      }
    }
 
    wnd->loaded = base_ok;
@@ -1179,8 +1247,8 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    wnd->split_view = ADW_OVERLAY_SPLIT_VIEW(split_view);
    adw_overlay_split_view_set_sidebar(wnd->split_view, sidebar);
    adw_overlay_split_view_set_content(wnd->split_view, right);
-   adw_overlay_split_view_set_min_sidebar_width(wnd->split_view, 260.0);
-   adw_overlay_split_view_set_max_sidebar_width(wnd->split_view, 320.0);
+   adw_overlay_split_view_set_min_sidebar_width(wnd->split_view, 280.0);
+   adw_overlay_split_view_set_max_sidebar_width(wnd->split_view, 340.0);
    adw_overlay_split_view_set_sidebar_width_fraction(wnd->split_view, 0.28);
    g_signal_connect(wnd->split_view, "notify::collapsed",
                     G_CALLBACK(wnd_on_split_collapsed), wnd);
