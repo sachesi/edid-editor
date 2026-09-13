@@ -30,7 +30,7 @@ struct wxedid_doc {
 struct wxedid_wnd {
    wxedid_doc*         doc;
    GtkWindow*          window;
-   GtkColumnView*      tree;
+   GtkListView*        tree;
    GtkSingleSelection* tree_sel;
    GtkTreeListModel*   tree_model;
    GtkFlowBox*         fields;
@@ -284,11 +284,24 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       ival = 0;
       rcode retU = ( pEDID->*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
 
-      AdwActionRow* row = ADW_ACTION_ROW(adw_action_row_new());
-      gtk_widget_add_css_class(GTK_WIDGET(row), "card");
-      gtk_widget_set_size_request(GTK_WIDGET(row), 240, -1);
+      GtkWidget* card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+      gtk_widget_add_css_class(card, "card");
+      gtk_widget_set_size_request(card, 240, -1);
+
+      GtkWidget* card_content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+      gtk_widget_set_margin_start(card_content, 12);
+      gtk_widget_set_margin_end(card_content, 12);
+      gtk_widget_set_margin_top(card_content, 12);
+      gtk_widget_set_margin_bottom(card_content, 12);
+      gtk_box_append(GTK_BOX(card), card_content);
+
       std::string title = field_display_name(pfld->field.name);
-      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title.c_str());
+      GtkWidget* label = gtk_label_new(title.c_str());
+      gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+      gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+      gtk_widget_add_css_class(label, "caption");
+      gtk_widget_add_css_class(label, "dim-label");
+      gtk_box_append(GTK_BOX(card_content), label);
 
       GtkWidget* widget = NULL;
 
@@ -314,7 +327,8 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
             GtkDropDown* dd = GTK_DROP_DOWN(gtk_drop_down_new(
                G_LIST_MODEL(items), NULL));
             gtk_drop_down_set_selected(dd, (cur >= 0) ? (guint) cur : GTK_INVALID_LIST_POSITION);
-            gtk_widget_set_valign(GTK_WIDGET(dd), GTK_ALIGN_CENTER);
+            gtk_widget_set_hexpand(GTK_WIDGET(dd), TRUE);
+            gtk_widget_set_halign(GTK_WIDGET(dd), GTK_ALIGN_FILL);
 
             wxedid_row* r = new wxedid_row{
                pfld, pgrp, pEDID, wnd, ROW_COMBO, GTK_WIDGET(dd), 0, true
@@ -325,7 +339,6 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
                                    [](gpointer data){ delete (wxedid_row*) data; });
 
             g_signal_connect(dd, "notify::selected", G_CALLBACK(row_on_combo_notify), r);
-            adw_action_row_set_activatable_widget(row, GTK_WIDGET(dd));
             widget = GTK_WIDGET(dd);
          }
       }
@@ -335,8 +348,8 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
             //text entry
             GtkEntry* entry = GTK_ENTRY(gtk_entry_new());
             gtk_editable_set_text(GTK_EDITABLE(entry), sval.c_str());
-            gtk_editable_set_width_chars(GTK_EDITABLE(entry), 8);
-            gtk_editable_set_max_width_chars(GTK_EDITABLE(entry), 16);
+            gtk_widget_set_hexpand(GTK_WIDGET(entry), TRUE);
+            gtk_widget_set_halign(GTK_WIDGET(entry), GTK_ALIGN_FILL);
 
             wxedid_row* r = new wxedid_row{
                pfld, pgrp, pEDID, wnd, ROW_ENTRY, GTK_WIDGET(entry), 0, true
@@ -346,18 +359,17 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
             g_object_set_data_full(G_OBJECT(entry), "row", r,
                                    [](gpointer data){ delete (wxedid_row*) data; });
 
-            adw_action_row_set_activatable_widget(row, GTK_WIDGET(entry));
             widget = GTK_WIDGET(entry);
          } else {
             //read-only label
             GtkWidget* lbl_val = gtk_label_new(sval.c_str());
             gtk_label_set_xalign(GTK_LABEL(lbl_val), 0.0);
             gtk_label_set_ellipsize(GTK_LABEL(lbl_val), PANGO_ELLIPSIZE_END);
-            gtk_label_set_width_chars(GTK_LABEL(lbl_val), 14);
             gtk_label_set_selectable(GTK_LABEL(lbl_val), TRUE);
             gtk_label_set_max_width_chars(GTK_LABEL(lbl_val), 48);
             gtk_widget_set_tooltip_text(lbl_val, sval.c_str());
-            gtk_widget_set_valign(lbl_val, GTK_ALIGN_CENTER);
+            gtk_widget_set_hexpand(lbl_val, TRUE);
+            gtk_widget_set_halign(lbl_val, GTK_ALIGN_FILL);
             gtk_widget_add_css_class(lbl_val, "monospace");
             if (! RCD_IS_OK(retU)) {
                gtk_widget_add_css_class(lbl_val, "error");
@@ -366,8 +378,8 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
          }
       }
 
-      adw_action_row_add_suffix(row, widget);
-      gtk_flow_box_append(list, GTK_WIDGET(row));
+      gtk_box_append(GTK_BOX(card_content), widget);
+      gtk_flow_box_append(list, card);
    }
 
    wnd_update_document_ui(wnd);
@@ -1057,22 +1069,17 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_signal_connect(btn_sidebar, "clicked", G_CALLBACK(wnd_on_toggle_sidebar), wnd);
    adw_header_bar_pack_start(ADW_HEADER_BAR(header), btn_sidebar);
 
-   //block tree: column view with lazy expander rows
+   //block tree: list view with lazy expander rows
    GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
    g_signal_connect(factory, "setup", G_CALLBACK(tree_name_setup), NULL);
    g_signal_connect(factory, "bind",  G_CALLBACK(tree_name_bind),  NULL);
 
-   GtkColumnViewColumn* col = gtk_column_view_column_new(NULL, factory);
-   gtk_column_view_column_set_expand(col, TRUE);
-
-   wnd->tree = GTK_COLUMN_VIEW(gtk_column_view_new(NULL));
-   gtk_column_view_append_column(wnd->tree, col);
-   gtk_widget_add_css_class(GTK_WIDGET(wnd->tree), "navigation-sidebar");
-
    //selection: refresh the field list on change
    wnd->tree_sel = GTK_SINGLE_SELECTION(gtk_single_selection_new(NULL));
    gtk_single_selection_set_autoselect(wnd->tree_sel, FALSE);
-   gtk_column_view_set_model(wnd->tree, GTK_SELECTION_MODEL(wnd->tree_sel));
+   wnd->tree = GTK_LIST_VIEW(gtk_list_view_new(
+      GTK_SELECTION_MODEL(wnd->tree_sel), factory));
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->tree), "navigation-sidebar");
    g_signal_connect(wnd->tree_sel, "selection-changed",
                     G_CALLBACK(wnd_on_tree_select), wnd);
 
@@ -1085,10 +1092,10 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    GtkWidget* sidebar_title = gtk_label_new("Groups");
    gtk_label_set_xalign(GTK_LABEL(sidebar_title), 0.0);
    gtk_widget_add_css_class(sidebar_title, "title-4");
-   gtk_widget_set_margin_start(sidebar_title, 12);
-   gtk_widget_set_margin_end(sidebar_title, 12);
-   gtk_widget_set_margin_top(sidebar_title, 12);
-   gtk_widget_set_margin_bottom(sidebar_title, 8);
+   gtk_widget_set_margin_start(sidebar_title, 18);
+   gtk_widget_set_margin_end(sidebar_title, 18);
+   gtk_widget_set_margin_top(sidebar_title, 18);
+   gtk_widget_set_margin_bottom(sidebar_title, 12);
    gtk_box_append(GTK_BOX(sidebar), sidebar_title);
    gtk_box_append(GTK_BOX(sidebar), tree_scroll);
 
