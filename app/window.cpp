@@ -16,6 +16,8 @@
 
 #include <cstdio>
 #include <cstring>
+#include <cerrno>
+#include <string>
 
 //------------
 // per-document state
@@ -24,6 +26,39 @@ struct wxedid_doc {
    guilog_cl  GLog;
    char       path[1024]; //current file, empty if none
 };
+
+struct wxedid_wnd {
+   wxedid_doc*         doc;
+   GtkWindow*          window;
+   GtkColumnView*      tree;
+   GtkSingleSelection* tree_sel;
+   GtkTreeListModel*   tree_model;
+   GtkListBox*         fields;
+   GtkTextView*        log;
+   AdwOverlaySplitView* split_view;
+   AdwWindowTitle*     window_title;
+   GtkLabel*           group_title;
+   GtkStack*           content_stack;
+   AdwBanner*          banner;
+   AdwToastOverlay*    toast_overlay;
+   GtkRevealer*        log_revealer;
+   GtkWidget*          details_button;
+   GtkWidget*          sidebar_button;
+   GtkWidget*          open_button;
+   GtkWidget*          save_button;
+   GSimpleAction*      save_action;
+   GSimpleAction*      details_action;
+   bool                loaded;
+   bool                dirty;
+   bool                banner_is_validation;
+   bool                close_confirmation_open;
+   bool                details_available;
+   u32_t               invalid_fields;
+};
+
+static void wnd_update_document_ui(wxedid_wnd* wnd);
+static void wnd_show_error(wxedid_wnd* wnd, const char* message);
+static void wnd_update_header_controls(wxedid_wnd* wnd);
 
 //tree item: GObject holding an edi_grp_cl* for GtkTreeListModel
 struct wxedid_item;
@@ -65,14 +100,23 @@ static wxedid_item* wxedid_item_new_raw_extension(u32_t block, u8_t tag,
 }
 
 static void log_sink(const char* msg, void* user_data) {
-   GtkTextView* tv = GTK_TEXT_VIEW(user_data);
-   if (tv == NULL) return;
+   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+   if ((wnd == NULL) || (wnd->log == NULL)) return;
 
-   GtkTextBuffer* buf = gtk_text_view_get_buffer(tv);
+   GtkTextBuffer* buf = gtk_text_view_get_buffer(wnd->log);
    GtkTextIter end;
    gtk_text_buffer_get_end_iter(buf, &end);
    gtk_text_buffer_insert(buf, &end, msg, -1);
    gtk_text_buffer_insert(buf, &end, "\n", -1);
+
+   wnd->details_available = true;
+   g_simple_action_set_enabled(wnd->details_action, TRUE);
+   wnd_update_header_controls(wnd);
+   if (g_str_has_prefix(msg, "[E!]")) {
+      const char* detail = msg + 4;
+      while (*detail == ' ') detail++;
+      wnd_show_error(wnd, detail);
+   }
 }
 
 //------------
@@ -87,13 +131,16 @@ struct wxedid_row {
    edi_dynfld_t* pfld;
    edi_grp_cl*   pgrp;
    EDID_cl*      pEDID;
+   wxedid_wnd*   wnd;
    int           kind;
    GtkWidget*    entry;  //GtkEditable | GtkDropDown
    u32_t         sel_idx; //dropdown item value
+   bool          valid;
 };
 
 //re-read all rows of the field list into the widgets' current display
-static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID);
+static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
+                        wxedid_wnd* wnd);
 
 //------------
 // helpers shared by rows
@@ -103,6 +150,23 @@ static bool field_writable(const edi_field_t& f) {
 
 static bool field_has_selector(const edi_field_t& f) {
    return ((f.flags & F_VS) != 0) && (f.vmap_idx != VS_NO_SELECTOR);
+}
+
+static void row_set_valid(wxedid_row* row, bool valid) {
+   if (row->valid == valid) return;
+
+   row->valid = valid;
+   if (valid) {
+      if (row->wnd->invalid_fields > 0) row->wnd->invalid_fields--;
+   } else {
+      row->wnd->invalid_fields++;
+   }
+   wnd_update_document_ui(row->wnd);
+}
+
+static void row_mark_changed(wxedid_row* row) {
+   row->wnd->dirty = true;
+   wnd_update_document_ui(row->wnd);
 }
 
 //------------
@@ -118,8 +182,11 @@ static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
 
    if (RCD_IS_OK(retU)) {
       gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
+      row_set_valid(r, true);
+      row_mark_changed(r);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
+      row_set_valid(r, false);
    }
 }
 
@@ -141,19 +208,61 @@ static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer
 
    if (RCD_IS_OK(retU)) {
       gtk_widget_remove_css_class(GTK_WIDGET(dd), "error");
+      row_set_valid(r, true);
+      row_mark_changed(r);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(dd), "error");
+      row_set_valid(r, false);
    }
 }
 
 //------------
 // field list: rebuilt when a group is selected in the tree
 static void fields_refresh(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl& EDID) {
-   rows_reload(list, pgrp, &EDID);
+   wxedid_wnd* wnd = (wxedid_wnd*) g_object_get_data(G_OBJECT(list), "wxedid-wnd");
+   rows_reload(list, pgrp, &EDID, wnd);
 }
 
-static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID) {
+static std::string field_display_name(const char* name) {
+   struct field_name {
+      const char* raw;
+      const char* display;
+   };
+   static const field_name names[] = {
+      {"header", "Header"},
+      {"mfc_id", "Manufacturer ID"},
+      {"prod_id", "Product ID"},
+      {"serial", "Serial number"},
+      {"prod_week", "Manufacture week"},
+      {"prod_year", "Manufacture year"},
+      {"edid_ver", "EDID version"},
+      {"edid_rev", "EDID revision"},
+      {"num_extblk", "Extension blocks"},
+      {"checksum", "Checksum"},
+      {"Input Type", "Input type"},
+      {"VESA compat", "VESA compatibility"},
+      {"IF Type", "Interface type"},
+      {"Color Depth", "Color depth"},
+   };
+
+   for (const field_name& item : names) {
+      if (0 == strcmp(name, item.raw)) return item.display;
+   }
+
+   std::string display = name;
+   for (char& ch : display) {
+      if (ch == '_') ch = ' ';
+   }
+   if (! display.empty() && (display[0] >= 'a') && (display[0] <= 'z')) {
+      display[0] = (char) (display[0] - 'a' + 'A');
+   }
+   return display;
+}
+
+static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
+                        wxedid_wnd* wnd) {
    //drop old rows
+   wnd->invalid_fields = 0;
    GtkWidget* child = gtk_widget_get_first_child(GTK_WIDGET(list));
    while (child != NULL) {
       GtkWidget* next = gtk_widget_get_next_sibling(child);
@@ -175,18 +284,9 @@ static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID) {
       ival = 0;
       rcode retU = ( pEDID->*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
 
-      GtkWidget* row = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
-      gtk_widget_set_margin_start(row, 8);
-      gtk_widget_set_margin_end(row, 8);
-      gtk_widget_set_margin_top(row, 4);
-      gtk_widget_set_margin_bottom(row, 4);
-
-      GtkWidget* lbl_name = gtk_label_new(pfld->field.name);
-      gtk_label_set_xalign(GTK_LABEL(lbl_name), 0.0);
-      gtk_label_set_ellipsize(GTK_LABEL(lbl_name), PANGO_ELLIPSIZE_END);
-      gtk_widget_add_css_class(lbl_name, "heading");
-
-      gtk_box_append(GTK_BOX(row), lbl_name);
+      AdwActionRow* row = ADW_ACTION_ROW(adw_action_row_new());
+      std::string title = field_display_name(pfld->field.name);
+      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title.c_str());
 
       GtkWidget* widget = NULL;
 
@@ -214,13 +314,16 @@ static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID) {
             gtk_drop_down_set_selected(dd, (cur >= 0) ? (guint) cur : GTK_INVALID_LIST_POSITION);
             gtk_widget_set_valign(GTK_WIDGET(dd), GTK_ALIGN_CENTER);
 
-            wxedid_row* r = new wxedid_row{pfld, pgrp, pEDID, ROW_COMBO, GTK_WIDGET(dd), 0};
+            wxedid_row* r = new wxedid_row{
+               pfld, pgrp, pEDID, wnd, ROW_COMBO, GTK_WIDGET(dd), 0, true
+            };
             g_object_set_data_full(G_OBJECT(dd), "sel-idx", vals,
                                    [](gpointer data){ delete[] (u32_t*) data; });
             g_object_set_data_full(G_OBJECT(dd), "row", r,
                                    [](gpointer data){ delete (wxedid_row*) data; });
 
             g_signal_connect(dd, "notify::selected", G_CALLBACK(row_on_combo_notify), r);
+            adw_action_row_set_activatable_widget(row, GTK_WIDGET(dd));
             widget = GTK_WIDGET(dd);
          }
       }
@@ -230,24 +333,29 @@ static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID) {
             //text entry
             GtkEntry* entry = GTK_ENTRY(gtk_entry_new());
             gtk_editable_set_text(GTK_EDITABLE(entry), sval.c_str());
-            // entry width: default, sval driven
+            gtk_editable_set_width_chars(GTK_EDITABLE(entry), 14);
+            gtk_editable_set_max_width_chars(GTK_EDITABLE(entry), 24);
 
-            wxedid_row* r = new wxedid_row{pfld, pgrp, pEDID, ROW_ENTRY, GTK_WIDGET(entry), 0};
+            wxedid_row* r = new wxedid_row{
+               pfld, pgrp, pEDID, wnd, ROW_ENTRY, GTK_WIDGET(entry), 0, true
+            };
 
             g_signal_connect(entry, "changed", G_CALLBACK(row_on_entry_changed), r);
             g_object_set_data_full(G_OBJECT(entry), "row", r,
                                    [](gpointer data){ delete (wxedid_row*) data; });
 
-            GtkWidget* hbox = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-            gtk_box_append(GTK_BOX(hbox), GTK_WIDGET(entry));
-            widget = hbox;
+            adw_action_row_set_activatable_widget(row, GTK_WIDGET(entry));
+            widget = GTK_WIDGET(entry);
          } else {
             //read-only label
             GtkWidget* lbl_val = gtk_label_new(sval.c_str());
             gtk_label_set_xalign(GTK_LABEL(lbl_val), 0.0);
             gtk_label_set_ellipsize(GTK_LABEL(lbl_val), PANGO_ELLIPSIZE_END);
+            gtk_label_set_width_chars(GTK_LABEL(lbl_val), 14);
             gtk_label_set_selectable(GTK_LABEL(lbl_val), TRUE);
-            gtk_label_set_wrap(GTK_LABEL(lbl_val), TRUE);
+            gtk_label_set_max_width_chars(GTK_LABEL(lbl_val), 48);
+            gtk_widget_set_tooltip_text(lbl_val, sval.c_str());
+            gtk_widget_set_valign(lbl_val, GTK_ALIGN_CENTER);
             gtk_widget_add_css_class(lbl_val, "monospace");
             if (! RCD_IS_OK(retU)) {
                gtk_widget_add_css_class(lbl_val, "error");
@@ -256,9 +364,11 @@ static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID) {
          }
       }
 
-      gtk_box_append(GTK_BOX(row), widget);
-      gtk_list_box_append(list, row);
+      adw_action_row_add_suffix(row, widget);
+      gtk_list_box_append(list, GTK_WIDGET(row));
    }
+
+   wnd_update_document_ui(wnd);
 }
 
 //------------
@@ -325,17 +435,6 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
    g_object_unref(obj);
 }
 
-//------------
-struct wxedid_wnd {
-   wxedid_doc*       doc;
-   GtkColumnView*    tree;
-   GtkSingleSelection* tree_sel;
-   GtkTreeListModel* tree_model;
-   GtkListBox*       fields;
-   GtkTextView*      log;
-   AdwOverlaySplitView* split_view;
-};
-
 static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
                                guint /*n_items*/, gpointer user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
@@ -347,6 +446,13 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
    if (obj == NULL) return;
 
    wxedid_item* it = WXEDID_ITEM(obj);
+   wxc_String group_name;
+   if (it->pgrp != NULL) {
+      it->pgrp->getGrpName(*it->pEDID, group_name);
+   } else {
+      group_name = it->label;
+   }
+   gtk_label_set_text(wnd->group_title, group_name.c_str());
    fields_refresh(wnd->fields, it->pgrp, *it->pEDID);
    if (adw_overlay_split_view_get_collapsed(wnd->split_view)) {
       adw_overlay_split_view_set_show_sidebar(wnd->split_view, FALSE);
@@ -355,21 +461,126 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
    g_object_unref(obj);   //gtk_tree_list_row_get_item() transfers a full ref
 }
 
+static void wnd_update_document_ui(wxedid_wnd* wnd) {
+   bool can_save = wnd->loaded && wnd->dirty && (wnd->invalid_fields == 0);
+   g_simple_action_set_enabled(wnd->save_action, can_save);
+   gtk_widget_set_visible(wnd->save_button, wnd->loaded);
+
+   if (wnd->loaded) {
+      char* basename = g_path_get_basename(wnd->doc->path);
+      char* display_path = g_filename_display_name(wnd->doc->path);
+      char* window_name = g_strdup_printf("%s — EDID Editor", basename);
+      char* subtitle = wnd->dirty
+         ? g_strdup_printf("Modified · %s", display_path)
+         : g_strdup(display_path);
+
+      adw_window_title_set_title(wnd->window_title, basename);
+      adw_window_title_set_subtitle(wnd->window_title, subtitle);
+      gtk_window_set_title(wnd->window, window_name);
+
+      g_free(subtitle);
+      g_free(window_name);
+      g_free(display_path);
+      g_free(basename);
+   } else {
+      adw_window_title_set_title(wnd->window_title, "EDID Editor");
+      adw_window_title_set_subtitle(wnd->window_title, "EDID editor");
+      gtk_window_set_title(wnd->window, "EDID Editor");
+   }
+
+   if (wnd->invalid_fields > 0) {
+      adw_banner_set_title(wnd->banner, "Enter a valid value before saving");
+      adw_banner_set_button_label(wnd->banner, NULL);
+      adw_banner_set_revealed(wnd->banner, TRUE);
+      wnd->banner_is_validation = true;
+   } else if (wnd->banner_is_validation) {
+      adw_banner_set_revealed(wnd->banner, FALSE);
+      wnd->banner_is_validation = false;
+   }
+   wnd_update_header_controls(wnd);
+}
+
+static void wnd_update_header_controls(wxedid_wnd* wnd) {
+   bool collapsed = adw_overlay_split_view_get_collapsed(wnd->split_view);
+   gtk_widget_set_visible(wnd->open_button, wnd->loaded && ! collapsed);
+   gtk_widget_set_visible(wnd->sidebar_button, wnd->loaded && collapsed);
+   gtk_widget_set_visible(wnd->details_button,
+                          wnd->details_available && ! collapsed);
+}
+
+static void wnd_show_error(wxedid_wnd* wnd, const char* message) {
+   adw_banner_set_title(wnd->banner, message);
+   adw_banner_set_button_label(wnd->banner, "Details");
+   adw_banner_set_revealed(wnd->banner, TRUE);
+   wnd->banner_is_validation = false;
+}
+
+static void wnd_clear_feedback(wxedid_wnd* wnd) {
+   GtkTextBuffer* buffer = gtk_text_view_get_buffer(wnd->log);
+   gtk_text_buffer_set_text(buffer, "", -1);
+   g_simple_action_set_state(wnd->details_action, g_variant_new_boolean(FALSE));
+   gtk_revealer_set_reveal_child(wnd->log_revealer, FALSE);
+   g_simple_action_set_enabled(wnd->details_action, FALSE);
+   wnd->details_available = false;
+   wnd_update_header_controls(wnd);
+   adw_banner_set_revealed(wnd->banner, FALSE);
+   wnd->banner_is_validation = false;
+}
+
+static void wnd_on_details_action(GSimpleAction* action, GVariant* /*parameter*/,
+                                  gpointer user_data) {
+   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+   GVariant* state = g_action_get_state(G_ACTION(action));
+   bool visible = ! g_variant_get_boolean(state);
+   g_variant_unref(state);
+   g_simple_action_set_state(action, g_variant_new_boolean(visible));
+   gtk_revealer_set_reveal_child(wnd->log_revealer, visible);
+   gtk_widget_set_tooltip_text(wnd->details_button,
+                               visible ? "Hide details" : "Show details");
+}
+
+static void wnd_on_banner_details(AdwBanner* /*banner*/, gpointer user_data) {
+   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+   GVariant* state = g_action_get_state(G_ACTION(wnd->details_action));
+   bool visible = g_variant_get_boolean(state);
+   g_variant_unref(state);
+   if (! visible) g_action_activate(G_ACTION(wnd->details_action), NULL);
+}
+
 static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
+   wnd_clear_feedback(wnd);
+
    FILE* in = fopen(path, "rb");
    if (in == NULL) {
-      wnd->doc->GLog.DoLog("[E!] Cannot open EDID file");
+      char msg[1400];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t open %s: %s. Check its permissions, then try again.",
+               path, strerror(errno));
+      wnd->doc->GLog.DoLog(msg);
       return;
    }
 
    u8_t file_data[sizeof(edi_t) + 1] = {};
    size_t rd = fread(file_data, 1, sizeof(file_data), in);
    bool read_failed = (ferror(in) != 0);
+   int read_errno = errno;
    fclose(in);
 
-   if (read_failed || (rd > sizeof(edi_t)) || (rd < sizeof(ediblk_t)) ||
+   if (read_failed) {
+      char msg[1400];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t read %s: %s. Check the file, then try again.",
+               path, strerror(read_errno));
+      wnd->doc->GLog.DoLog(msg);
+      return;
+   }
+   if ((rd > sizeof(edi_t)) || (rd < sizeof(ediblk_t)) ||
        ((rd % sizeof(ediblk_t)) != 0)) {
-      wnd->doc->GLog.DoLog("[E!] EDID file must contain 1 to 4 complete 128-byte blocks");
+      char msg[1400];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t open %s: EDID data must contain 1 to 4 complete "
+               "128-byte blocks. Choose another EDID file.", path);
+      wnd->doc->GLog.DoLog(msg);
       return;
    }
 
@@ -381,7 +592,8 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    if ((n_extblk > 3) || (rd != expected)) {
       char msg[192];
       snprintf(msg, sizeof(msg),
-               "[E!] EDID declares %u blocks, but the file contains %zu",
+               "[E!] Couldn’t open this EDID: it declares %u blocks, but the "
+               "file contains %zu. Choose a file with a matching block count.",
                1U + n_extblk, rd / sizeof(ediblk_t));
       wnd->doc->GLog.DoLog(msg);
       return;
@@ -390,8 +602,6 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    wnd->doc->EDID.Clear();
    edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
    memcpy(pbuf->buff, loaded.buff, rd);
-
-   snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
 
    rcode retU;
    u32_t parsed_extblk = 0;
@@ -415,6 +625,13 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
          }
       }
       wnd->doc->EDID.ForceNumValidBlocks(1U + parsed_extblk);
+   } else {
+      char msg[1400];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t parse %s as base EDID data. Choose a valid EDID file.",
+               path);
+      wnd->doc->GLog.DoLog(msg);
+      wnd->doc->GLog.PrintRcode(retU);
    }
 
    //rebuild tree model: parsed groups plus read-only preserved extensions
@@ -455,6 +672,18 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    if (g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model)) > 0) {
       gtk_single_selection_set_selected(wnd->tree_sel, 0);
    }
+
+   wnd->loaded = base_ok;
+   wnd->dirty = false;
+   wnd->invalid_fields = 0;
+   if (base_ok) {
+      snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
+      gtk_stack_set_visible_child_name(wnd->content_stack, "editor");
+   } else {
+      wnd->doc->path[0] = 0;
+      gtk_stack_set_visible_child_name(wnd->content_stack, "empty");
+   }
+   wnd_update_document_ui(wnd);
 }
 
 static void wnd_on_open_response(GObject* source, GAsyncResult* result,
@@ -472,28 +701,67 @@ static void wnd_on_open_response(GObject* source, GAsyncResult* result,
             wnd_load_file(wnd, path);
             g_free(path);
          } else {
-            wnd->doc->GLog.DoLog("[E!] Only local EDID files can be opened");
+            wnd->doc->GLog.DoLog(
+               "[E!] Couldn’t open the selected location: only local EDID files "
+               "are supported. Choose a local file.");
          }
       }
       g_object_unref(file);
    } else if ((wnd != NULL) && (error != NULL) &&
               ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
               ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
-      wnd->doc->GLog.DoLog(error->message);
+      char msg[1200];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t open an EDID file: %s. Try again or choose another file.",
+               error->message);
+      wnd->doc->GLog.DoLog(msg);
    }
 
    g_clear_error(&error);
    g_object_unref(window);
 }
 
-static void wnd_on_open(GtkButton* btn, gpointer /*user_data*/) {
-   GtkWindow* window = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn)));
+static void wnd_present_open_dialog(wxedid_wnd* wnd) {
    GtkFileDialog* dialog = gtk_file_dialog_new();
    gtk_file_dialog_set_title(dialog, "Open EDID binary");
    gtk_file_dialog_set_accept_label(dialog, "Open");
-   gtk_file_dialog_open(dialog, window, NULL, wnd_on_open_response,
-                        g_object_ref(window));
+   gtk_file_dialog_open(dialog, wnd->window, NULL, wnd_on_open_response,
+                        g_object_ref(wnd->window));
    g_object_unref(dialog);
+}
+
+static void wnd_on_discard_open_response(GObject* source, GAsyncResult* result,
+                                         gpointer user_data) {
+   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+   const char* response = adw_alert_dialog_choose_finish(
+      ADW_ALERT_DIALOG(source), result);
+   if (0 == strcmp(response, "discard")) wnd_present_open_dialog(wnd);
+}
+
+static void wnd_request_open(wxedid_wnd* wnd) {
+   if (! wnd->dirty) {
+      wnd_present_open_dialog(wnd);
+      return;
+   }
+
+   AdwAlertDialog* dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
+      "Discard unsaved changes?",
+      "Opening another file will discard changes to the current EDID."));
+   adw_alert_dialog_add_responses(dialog,
+                                  "cancel", "Cancel",
+                                  "discard", "Discard",
+                                  NULL);
+   adw_alert_dialog_set_close_response(dialog, "cancel");
+   adw_alert_dialog_set_default_response(dialog, "cancel");
+   adw_alert_dialog_set_response_appearance(dialog, "discard",
+                                            ADW_RESPONSE_DESTRUCTIVE);
+   adw_alert_dialog_choose(dialog, GTK_WIDGET(wnd->window), NULL,
+                           wnd_on_discard_open_response, wnd);
+}
+
+static void wnd_on_open_action(GSimpleAction* /*action*/, GVariant* /*parameter*/,
+                               gpointer user_data) {
+   wnd_request_open((wxedid_wnd*) user_data);
 }
 
 //------------
@@ -505,7 +773,8 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
    if (declared_blocks != parsed_blocks) {
       char msg[160];
       snprintf(msg, sizeof(msg),
-               "[E!] Cannot save: EDID declares %u blocks, but only %u were parsed",
+               "[E!] Couldn’t save this EDID: it declares %u blocks, but only %u "
+               "were parsed. Reopen valid EDID data, then save again.",
                declared_blocks, parsed_blocks);
       wnd->doc->GLog.DoLog(msg);
       return false;
@@ -513,8 +782,12 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
 
    rcode retU = wnd->doc->EDID.AssembleEDID();
    if (! RCD_IS_OK(retU)) {
-      char msg[1024];
-      wxedid_RCD_GET_MSG(retU, msg, sizeof(msg));
+      char detail[1024];
+      char msg[1400];
+      wxedid_RCD_GET_MSG(retU, detail, sizeof(detail));
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t save this EDID: %s. Fix invalid data, then save again.",
+               detail);
       wnd->doc->GLog.DoLog(msg);
       return false;
    }
@@ -528,7 +801,11 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
 
    FILE* out = fopen(path, "wb");
    if (out == NULL) {
-      wnd->doc->GLog.DoLog("[E!] Cannot open file for writing");
+      char msg[1400];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t save %s: %s. Check its permissions, then save again.",
+               path, strerror(errno));
+      wnd->doc->GLog.DoLog(msg);
       return false;
    }
 
@@ -536,14 +813,28 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
    size_t wr = fwrite(pbuf->buff, 1, expected, out);
    int close_rc = fclose(out);
    if ((wr != expected) || (close_rc != 0)) {
-      wnd->doc->GLog.DoLog("[E!] Failed to write complete EDID file");
+      char msg[1400];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t save %s completely. Check free space and permissions, "
+               "then save again.", path);
+      wnd->doc->GLog.DoLog(msg);
       return false;
    }
 
    char msg[1152];
    snprintf(msg, sizeof(msg), "[i] Saved %zu bytes to %s", wr, path);
    wnd->doc->GLog.DoLog(msg);
-   snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
+   if (path != wnd->doc->path) {
+      snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
+   }
+   wnd->dirty = false;
+   wnd_update_document_ui(wnd);
+
+   char* basename = g_path_get_basename(wnd->doc->path);
+   char* toast_title = g_strdup_printf("Saved %s", basename);
+   adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(toast_title));
+   g_free(toast_title);
+   g_free(basename);
    return true;
 }
 
@@ -562,43 +853,90 @@ static void wnd_on_save_response(GObject* source, GAsyncResult* result,
             wnd_save_to_file(wnd, path);
             g_free(path);
          } else {
-            wnd->doc->GLog.DoLog("[E!] Only local EDID files can be saved");
+            wnd->doc->GLog.DoLog(
+               "[E!] Couldn’t save to the selected location: only local files are "
+               "supported. Choose a local file.");
          }
       }
       g_object_unref(file);
    } else if ((wnd != NULL) && (error != NULL) &&
               ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
               ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
-      wnd->doc->GLog.DoLog(error->message);
+      char msg[1200];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t choose where to save: %s. Try again or choose another location.",
+               error->message);
+      wnd->doc->GLog.DoLog(msg);
    }
 
    g_clear_error(&error);
    g_object_unref(window);
 }
 
-static void wnd_on_save(GtkButton* btn, gpointer user_data) {
-   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
-
+static void wnd_request_save(wxedid_wnd* wnd) {
    //already have a path: save in place
    if (wnd->doc->path[0] != 0) {
       wnd_save_to_file(wnd, wnd->doc->path);
       return;
    }
 
-   GtkWindow* window = GTK_WINDOW(gtk_widget_get_root(GTK_WIDGET(btn)));
    GtkFileDialog* dialog = gtk_file_dialog_new();
    gtk_file_dialog_set_title(dialog, "Save EDID binary");
    gtk_file_dialog_set_accept_label(dialog, "Save");
    gtk_file_dialog_set_initial_name(dialog, "edid.bin");
-   gtk_file_dialog_save(dialog, window, NULL, wnd_on_save_response,
-                        g_object_ref(window));
+   gtk_file_dialog_save(dialog, wnd->window, NULL, wnd_on_save_response,
+                        g_object_ref(wnd->window));
    g_object_unref(dialog);
+}
+
+static void wnd_on_save_action(GSimpleAction* /*action*/, GVariant* /*parameter*/,
+                               gpointer user_data) {
+   wnd_request_save((wxedid_wnd*) user_data);
 }
 
 static void wnd_on_toggle_sidebar(GtkButton* /*button*/, gpointer user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
    gboolean visible = adw_overlay_split_view_get_show_sidebar(wnd->split_view);
    adw_overlay_split_view_set_show_sidebar(wnd->split_view, ! visible);
+}
+
+static void wnd_on_split_collapsed(GObject* /*object*/, GParamSpec* /*pspec*/,
+                                   gpointer user_data) {
+   wnd_update_header_controls((wxedid_wnd*) user_data);
+}
+
+static void wnd_on_discard_close_response(GObject* source, GAsyncResult* result,
+                                          gpointer user_data) {
+   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+   const char* response = adw_alert_dialog_choose_finish(
+      ADW_ALERT_DIALOG(source), result);
+   wnd->close_confirmation_open = false;
+   if (0 == strcmp(response, "discard")) {
+      wnd->dirty = false;
+      gtk_window_destroy(wnd->window);
+   }
+}
+
+static gboolean wnd_on_close_request(GtkWindow* /*window*/, gpointer user_data) {
+   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+   if (! wnd->dirty) return FALSE;
+   if (wnd->close_confirmation_open) return TRUE;
+
+   wnd->close_confirmation_open = true;
+   AdwAlertDialog* dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
+      "Discard unsaved changes?",
+      "Closing this window will discard changes to the current EDID."));
+   adw_alert_dialog_add_responses(dialog,
+                                  "cancel", "Cancel",
+                                  "discard", "Discard",
+                                  NULL);
+   adw_alert_dialog_set_close_response(dialog, "cancel");
+   adw_alert_dialog_set_default_response(dialog, "cancel");
+   adw_alert_dialog_set_response_appearance(dialog, "discard",
+                                            ADW_RESPONSE_DESTRUCTIVE);
+   adw_alert_dialog_choose(dialog, GTK_WIDGET(wnd->window), NULL,
+                           wnd_on_discard_close_response, wnd);
+   return TRUE;
 }
 
 //------------
@@ -626,53 +964,108 @@ void wxedid_app_open(AdwApplication* app, GFile** files, gint n_files,
 
 //------------
 void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
-   wxedid_wnd* wnd = new wxedid_wnd;
+   wxedid_wnd* wnd = new wxedid_wnd{};
    wnd->doc        = new wxedid_doc;
    wnd->doc->path[0] = 0;
-   wnd->tree_model = NULL;
-   wnd->tree_sel   = NULL;
 
    GtkWidget* window = adw_application_window_new(GTK_APPLICATION(app));
+   wnd->window = GTK_WINDOW(window);
    gtk_window_set_default_size(GTK_WINDOW(window), 900, 640);
    gtk_window_set_title(GTK_WINDOW(window), "EDID Editor");
+   g_signal_connect(window, "close-request", G_CALLBACK(wnd_on_close_request), wnd);
 
    g_object_set_data_full(G_OBJECT(window), "wxedid-wnd", wnd,
                            [](gpointer data) {
                               wxedid_wnd* w = (wxedid_wnd*) data;
+                              g_clear_object(&w->tree_model);
                               delete w->doc;
                               delete w;
                            });
 
+   GSimpleAction* open_action = g_simple_action_new("open", NULL);
+   g_signal_connect(open_action, "activate", G_CALLBACK(wnd_on_open_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(open_action));
+   g_object_unref(open_action);
+
+   wnd->save_action = g_simple_action_new("save", NULL);
+   g_signal_connect(wnd->save_action, "activate", G_CALLBACK(wnd_on_save_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->save_action));
+   g_object_unref(wnd->save_action);
+
+   wnd->details_action = g_simple_action_new_stateful(
+      "details", NULL, g_variant_new_boolean(FALSE));
+   g_simple_action_set_enabled(wnd->details_action, FALSE);
+   g_signal_connect(wnd->details_action, "activate",
+                    G_CALLBACK(wnd_on_details_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->details_action));
+   g_object_unref(wnd->details_action);
+
+   const char* open_accels[] = {"<Control>o", NULL};
+   const char* save_accels[] = {"<Control>s", NULL};
+   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.open", open_accels);
+   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.save", save_accels);
+
    //header bar
    GtkWidget* header = adw_header_bar_new();
+   wnd->window_title = ADW_WINDOW_TITLE(adw_window_title_new("EDID Editor", "EDID editor"));
+   adw_header_bar_set_title_widget(ADW_HEADER_BAR(header), GTK_WIDGET(wnd->window_title));
+
    GtkWidget* btn_open = gtk_button_new_with_mnemonic("_Open");
-   g_signal_connect(btn_open, "clicked", G_CALLBACK(wnd_on_open), wnd);
+   wnd->open_button = btn_open;
+   gtk_actionable_set_action_name(GTK_ACTIONABLE(btn_open), "win.open");
+   gtk_widget_set_tooltip_text(btn_open, "Open an EDID file (Ctrl+O)");
    adw_header_bar_pack_start(ADW_HEADER_BAR(header), btn_open);
 
    GtkWidget* btn_save = gtk_button_new_with_mnemonic("_Save");
-   g_signal_connect(btn_save, "clicked", G_CALLBACK(wnd_on_save), wnd);
-   adw_header_bar_pack_start(ADW_HEADER_BAR(header), btn_save);
+   wnd->save_button = btn_save;
+   gtk_actionable_set_action_name(GTK_ACTIONABLE(btn_save), "win.save");
+   gtk_widget_set_tooltip_text(btn_save, "Save changes (Ctrl+S)");
+   gtk_widget_add_css_class(btn_save, "suggested-action");
+   adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_save);
+
+   wnd->details_button = gtk_toggle_button_new();
+   gtk_button_set_icon_name(GTK_BUTTON(wnd->details_button), "dialog-information-symbolic");
+   gtk_actionable_set_action_name(GTK_ACTIONABLE(wnd->details_button), "win.details");
+   gtk_widget_set_tooltip_text(wnd->details_button, "Show details");
+   gtk_accessible_update_property(GTK_ACCESSIBLE(wnd->details_button),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Show details",
+                                  -1);
+   gtk_widget_set_visible(wnd->details_button, FALSE);
+   adw_header_bar_pack_end(ADW_HEADER_BAR(header), wnd->details_button);
+
+   GMenu* primary_menu = g_menu_new();
+   g_menu_append(primary_menu, "Open…", "win.open");
+   g_menu_append(primary_menu, "Show details", "win.details");
+   GtkWidget* btn_menu = gtk_menu_button_new();
+   gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(btn_menu), "open-menu-symbolic");
+   gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(btn_menu), G_MENU_MODEL(primary_menu));
+   gtk_menu_button_set_primary(GTK_MENU_BUTTON(btn_menu), TRUE);
+   gtk_widget_set_tooltip_text(btn_menu, "Main menu");
+   gtk_widget_set_visible(btn_menu, FALSE);
+   g_object_unref(primary_menu);
+   adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_menu);
 
    GtkWidget* btn_sidebar = gtk_button_new_from_icon_name("sidebar-show-symbolic");
+   wnd->sidebar_button = btn_sidebar;
    gtk_widget_set_tooltip_text(btn_sidebar, "Show groups");
    gtk_accessible_update_property(GTK_ACCESSIBLE(btn_sidebar),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Show groups",
                                   -1);
    gtk_widget_set_visible(btn_sidebar, FALSE);
    g_signal_connect(btn_sidebar, "clicked", G_CALLBACK(wnd_on_toggle_sidebar), wnd);
-   adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_sidebar);
+   adw_header_bar_pack_start(ADW_HEADER_BAR(header), btn_sidebar);
 
    //block tree: column view with lazy expander rows
    GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
    g_signal_connect(factory, "setup", G_CALLBACK(tree_name_setup), NULL);
    g_signal_connect(factory, "bind",  G_CALLBACK(tree_name_bind),  NULL);
 
-   GtkColumnViewColumn* col = gtk_column_view_column_new("Group", factory);
+   GtkColumnViewColumn* col = gtk_column_view_column_new(NULL, factory);
    gtk_column_view_column_set_expand(col, TRUE);
 
    wnd->tree = GTK_COLUMN_VIEW(gtk_column_view_new(NULL));
    gtk_column_view_append_column(wnd->tree, col);
-   gtk_column_view_set_show_row_separators(wnd->tree, TRUE);
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->tree), "navigation-sidebar");
 
    //selection: refresh the field list on change
    wnd->tree_sel = GTK_SINGLE_SELECTION(gtk_single_selection_new(NULL));
@@ -686,37 +1079,74 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_hexpand(tree_scroll, TRUE);
    gtk_widget_set_vexpand(tree_scroll, TRUE);
 
-   GtkWidget* right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
-   gtk_widget_set_margin_start(right, 6);
-   gtk_widget_set_margin_end(right, 6);
-   gtk_widget_set_margin_top(right, 6);
-   gtk_widget_set_margin_bottom(right, 6);
+   GtkWidget* sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   GtkWidget* sidebar_title = gtk_label_new("Groups");
+   gtk_label_set_xalign(GTK_LABEL(sidebar_title), 0.0);
+   gtk_widget_add_css_class(sidebar_title, "title-4");
+   gtk_widget_set_margin_start(sidebar_title, 12);
+   gtk_widget_set_margin_end(sidebar_title, 12);
+   gtk_widget_set_margin_top(sidebar_title, 12);
+   gtk_widget_set_margin_bottom(sidebar_title, 8);
+   gtk_box_append(GTK_BOX(sidebar), sidebar_title);
+   gtk_box_append(GTK_BOX(sidebar), tree_scroll);
+
+   GtkWidget* right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+
+   wnd->group_title = GTK_LABEL(gtk_label_new("Select a group"));
+   gtk_label_set_xalign(wnd->group_title, 0.0);
+   gtk_label_set_ellipsize(wnd->group_title, PANGO_ELLIPSIZE_END);
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->group_title), "title-2");
+   gtk_widget_set_margin_start(GTK_WIDGET(wnd->group_title), 18);
+   gtk_widget_set_margin_end(GTK_WIDGET(wnd->group_title), 18);
+   gtk_widget_set_margin_top(GTK_WIDGET(wnd->group_title), 18);
+   gtk_widget_set_margin_bottom(GTK_WIDGET(wnd->group_title), 12);
+   gtk_box_append(GTK_BOX(right), GTK_WIDGET(wnd->group_title));
 
    wnd->fields = GTK_LIST_BOX(gtk_list_box_new());
    gtk_list_box_set_selection_mode(wnd->fields, GTK_SELECTION_NONE);
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->fields), "boxed-list");
+   g_object_set_data(G_OBJECT(wnd->fields), "wxedid-wnd", wnd);
+
+   GtkWidget* fields_clamp = adw_clamp_new();
+   adw_clamp_set_maximum_size(ADW_CLAMP(fields_clamp), 760);
+   adw_clamp_set_tightening_threshold(ADW_CLAMP(fields_clamp), 560);
+   gtk_widget_set_margin_start(fields_clamp, 18);
+   gtk_widget_set_margin_end(fields_clamp, 18);
+   gtk_widget_set_margin_bottom(fields_clamp, 18);
+   adw_clamp_set_child(ADW_CLAMP(fields_clamp), GTK_WIDGET(wnd->fields));
+
    GtkWidget* fields_scroll = gtk_scrolled_window_new();
-   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(fields_scroll), GTK_WIDGET(wnd->fields));
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(fields_scroll), fields_clamp);
    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(fields_scroll),
                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
    gtk_widget_set_vexpand(fields_scroll, TRUE);
+   gtk_box_append(GTK_BOX(right), fields_scroll);
 
    wnd->log = GTK_TEXT_VIEW(gtk_text_view_new());
    gtk_text_view_set_editable(wnd->log, FALSE);
    gtk_text_view_set_monospace(wnd->log, TRUE);
+   gtk_text_view_set_wrap_mode(wnd->log, GTK_WRAP_WORD_CHAR);
+   gtk_text_view_set_left_margin(wnd->log, 12);
+   gtk_text_view_set_right_margin(wnd->log, 12);
+   gtk_text_view_set_top_margin(wnd->log, 8);
+   gtk_text_view_set_bottom_margin(wnd->log, 8);
    GtkWidget* log_scroll = gtk_scrolled_window_new();
    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(log_scroll), GTK_WIDGET(wnd->log));
-   gtk_widget_set_size_request(log_scroll, -1, 140);
-
-   gtk_box_append(GTK_BOX(right), fields_scroll);
-   gtk_box_append(GTK_BOX(right), log_scroll);
+   gtk_widget_set_size_request(log_scroll, -1, 160);
+   wnd->log_revealer = GTK_REVEALER(gtk_revealer_new());
+   gtk_revealer_set_transition_type(wnd->log_revealer,
+                                    GTK_REVEALER_TRANSITION_TYPE_SLIDE_UP);
+   gtk_revealer_set_child(wnd->log_revealer, log_scroll);
 
    GtkWidget* split_view = adw_overlay_split_view_new();
    wnd->split_view = ADW_OVERLAY_SPLIT_VIEW(split_view);
-   adw_overlay_split_view_set_sidebar(wnd->split_view, tree_scroll);
+   adw_overlay_split_view_set_sidebar(wnd->split_view, sidebar);
    adw_overlay_split_view_set_content(wnd->split_view, right);
    adw_overlay_split_view_set_min_sidebar_width(wnd->split_view, 260.0);
    adw_overlay_split_view_set_max_sidebar_width(wnd->split_view, 380.0);
    adw_overlay_split_view_set_sidebar_width_fraction(wnd->split_view, 0.34);
+   g_signal_connect(wnd->split_view, "notify::collapsed",
+                    G_CALLBACK(wnd_on_split_collapsed), wnd);
 
    AdwBreakpointCondition* condition = adw_breakpoint_condition_new_length(
       ADW_BREAKPOINT_CONDITION_MAX_WIDTH, 700.0, ADW_LENGTH_UNIT_SP);
@@ -725,18 +1155,48 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
       breakpoint,
       G_OBJECT(split_view), "collapsed", TRUE,
       G_OBJECT(split_view), "show-sidebar", FALSE,
-      G_OBJECT(btn_sidebar), "visible", TRUE,
+      G_OBJECT(btn_menu), "visible", TRUE,
       NULL);
    adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), breakpoint);
 
-   wnd->doc->GLog.SetSink(log_sink, wnd->log);
+   GtkWidget* empty_page = adw_status_page_new();
+   adw_status_page_set_icon_name(ADW_STATUS_PAGE(empty_page), "video-display-symbolic");
+   adw_status_page_set_title(ADW_STATUS_PAGE(empty_page), "Open an EDID file");
+   adw_status_page_set_description(ADW_STATUS_PAGE(empty_page),
+                                   "Inspect and edit display identification data.");
+   GtkWidget* empty_open = gtk_button_new_with_mnemonic("_Open an EDID File");
+   gtk_actionable_set_action_name(GTK_ACTIONABLE(empty_open), "win.open");
+   gtk_widget_add_css_class(empty_open, "suggested-action");
+   gtk_widget_set_halign(empty_open, GTK_ALIGN_CENTER);
+   adw_status_page_set_child(ADW_STATUS_PAGE(empty_page), empty_open);
+
+   wnd->content_stack = GTK_STACK(gtk_stack_new());
+   gtk_stack_add_named(wnd->content_stack, empty_page, "empty");
+   gtk_stack_add_named(wnd->content_stack, split_view, "editor");
+   gtk_stack_set_visible_child_name(wnd->content_stack, "empty");
+   gtk_widget_set_vexpand(GTK_WIDGET(wnd->content_stack), TRUE);
+
+   wnd->banner = ADW_BANNER(adw_banner_new(""));
+   g_signal_connect(wnd->banner, "button-clicked",
+                    G_CALLBACK(wnd_on_banner_details), wnd);
+
+   GtkWidget* body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->banner));
+   gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->content_stack));
+   gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->log_revealer));
+
+   wnd->toast_overlay = ADW_TOAST_OVERLAY(adw_toast_overlay_new());
+   adw_toast_overlay_set_child(wnd->toast_overlay, body);
+
+   wnd->doc->GLog.SetSink(log_sink, wnd);
    wnd->doc->EDID.SetGuiLogPtr(&wnd->doc->GLog);
 
    GtkWidget* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
    gtk_box_append(GTK_BOX(content), header);
-   gtk_box_append(GTK_BOX(content), split_view);
-   gtk_widget_set_vexpand(split_view, TRUE);
+   gtk_box_append(GTK_BOX(content), GTK_WIDGET(wnd->toast_overlay));
+   gtk_widget_set_vexpand(GTK_WIDGET(wnd->toast_overlay), TRUE);
 
    adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), content);
+   wnd_update_document_ui(wnd);
    gtk_window_present(GTK_WINDOW(window));
 }
