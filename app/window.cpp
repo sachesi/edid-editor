@@ -84,7 +84,9 @@ struct wxedid_timing {
    edi_grp_cl*   pgrp;
    edi_dynfld_t* fields[TIMING_FIELD_COUNT];
    GtkSpinButton* spins[TIMING_FIELD_COUNT];
+   GtkWidget*    row_widgets[TIMING_FIELD_COUNT][4];
    GtkLabel*     derived[TIMING_FIELD_COUNT];
+   GtkLabel*     clock_unit;
    GtkLabel*     refresh;
    GtkLabel*     htotal;
    GtkLabel*     hfreq;
@@ -93,6 +95,7 @@ struct wxedid_timing {
    GtkWidget*    drawing;
    GtkWidget*    sections;
    GtkWidget*    page;
+   double        pixel_hz_factor;
    bool          updating;
 };
 
@@ -463,7 +466,8 @@ static void timing_set_text(GtkLabel* label, const char* format, double value) {
 }
 
 static void timing_update_outputs(wxedid_timing* timing) {
-   const double pixclk = timing_value(timing, TIMING_PIXCLK) * 10000.0;
+   const double pixclk = timing_value(timing, TIMING_PIXCLK) *
+                         timing->pixel_hz_factor;
    const u32_t hactive = timing_value(timing, TIMING_HACTIVE);
    const u32_t hblank = timing_value(timing, TIMING_HBLANK);
    const u32_t vactive = timing_value(timing, TIMING_VACTIVE);
@@ -647,11 +651,14 @@ static GtkWidget* timing_add_edit_row(wxedid_timing* timing, GtkGrid* grid,
    gtk_accessible_update_property(GTK_ACCESSIBLE(spin),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
    timing->spins[field] = GTK_SPIN_BUTTON(spin);
+   timing->row_widgets[field][0] = label;
+   timing->row_widgets[field][1] = spin;
    g_object_set_data(G_OBJECT(spin), "timing-field", GINT_TO_POINTER(field));
    g_signal_connect(spin, "value-changed", G_CALLBACK(timing_on_changed), timing);
    gtk_grid_attach(grid, spin, 1, row, 1, 1);
 
    GtkWidget* unit_label = gtk_label_new(unit);
+   timing->row_widgets[field][2] = unit_label;
    gtk_widget_add_css_class(unit_label, "dim-label");
    gtk_grid_attach(grid, unit_label, 2, row, 1, 1);
 
@@ -660,6 +667,7 @@ static GtkWidget* timing_add_edit_row(wxedid_timing* timing, GtkGrid* grid,
    gtk_widget_add_css_class(derived, "dim-label");
    gtk_widget_add_css_class(derived, "numeric");
    timing->derived[field] = GTK_LABEL(derived);
+   timing->row_widgets[field][3] = derived;
    gtk_grid_attach(grid, derived, 3, row, 1, 1);
    return spin;
 }
@@ -728,9 +736,9 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_accessible_update_property(GTK_ACCESSIBLE(clock_spin),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Pixel clock", -1);
    gtk_box_append(GTK_BOX(clock_row), clock_spin);
-   GtkWidget* clock_unit = gtk_label_new("×10 kHz");
-   gtk_widget_add_css_class(clock_unit, "dim-label");
-   gtk_box_append(GTK_BOX(clock_row), clock_unit);
+   timing->clock_unit = GTK_LABEL(gtk_label_new("×10 kHz"));
+   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_unit), "dim-label");
+   gtk_box_append(GTK_BOX(clock_row), GTK_WIDGET(timing->clock_unit));
    gtk_box_append(GTK_BOX(clock_box), clock_row);
    gtk_box_append(GTK_BOX(summary), clock_box);
 
@@ -829,21 +837,63 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
 
 static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
                               EDID_cl* pEDID) {
-   if ((pgrp == NULL) || (0 != strcmp(pgrp->CodeName.c_str(), "DTD")) ||
-       (pgrp->FieldsAr.GetCount() <= DTD_IDX_VBORD)) {
+   if (pgrp == NULL) {
       timing->pgrp = NULL;
       return false;
    }
 
-   static const u32_t field_indices[TIMING_FIELD_COUNT] = {
+   static const int dtd_fields[TIMING_FIELD_COUNT] = {
       DTD_IDX_PIXCLK, DTD_IDX_HAPIX, DTD_IDX_HBPIX, DTD_IDX_VALIN,
       DTD_IDX_VBLIN, DTD_IDX_HSOFFS, DTD_IDX_HSWIDTH, DTD_IDX_VSOFFS,
       DTD_IDX_VSWIDTH, DTD_IDX_HBORD, DTD_IDX_VBORD,
    };
+   static const int displayid_type1_fields[TIMING_FIELD_COUNT] = {
+      0, 5, 6, 10, 11, 7, 8, 12, 13, -1, -1,
+   };
+   static const int t7_fields[TIMING_FIELD_COUNT] = {
+      T7F_IDX_PIXCLK, T7F_IDX_HAPIX, T7F_IDX_HBPIX, T7F_IDX_VALIN,
+      T7F_IDX_VBLIN, T7F_IDX_HSOFFS, T7F_IDX_HSWIDTH, T7F_IDX_VSOFFS,
+      T7F_IDX_VSWIDTH, -1, -1,
+   };
+
+   const int* field_indices = NULL;
+   const char* code = pgrp->CodeName.c_str();
+   if (0 == strcmp(code, "DTD")) {
+      field_indices = dtd_fields;
+      timing->pixel_hz_factor = 10000.0;
+      gtk_label_set_text(timing->clock_unit, "×10 kHz");
+   } else if (0 == strcmp(code, "DID-T1")) {
+      field_indices = displayid_type1_fields;
+      timing->pixel_hz_factor = 1000.0;
+      gtk_label_set_text(timing->clock_unit, "kHz");
+   } else if (0 == strcmp(code, "T7VTB")) {
+      field_indices = t7_fields;
+      timing->pixel_hz_factor = 1000.0;
+      gtk_label_set_text(timing->clock_unit, "kHz");
+   } else {
+      timing->pgrp = NULL;
+      return false;
+   }
 
    timing->updating = true;
    timing->pgrp = pgrp;
    for (int idx = 0; idx < TIMING_FIELD_COUNT; idx++) {
+      bool available = field_indices[idx] >= 0;
+      if ((idx == TIMING_HBORDER) || (idx == TIMING_VBORDER)) {
+         for (GtkWidget* widget : timing->row_widgets[idx]) {
+            gtk_widget_set_visible(widget, available);
+         }
+      }
+      if (! available) {
+         timing->fields[idx] = NULL;
+         gtk_spin_button_set_value(timing->spins[idx], 0);
+         continue;
+      }
+      if (static_cast<u32_t>(field_indices[idx]) >= pgrp->FieldsAr.GetCount()) {
+         timing->pgrp = NULL;
+         timing->updating = false;
+         return false;
+      }
       edi_dynfld_t* field = pgrp->FieldsAr.Item(field_indices[idx]);
       timing->fields[idx] = field;
       wxc_String text;
@@ -856,9 +906,16 @@ static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
       }
       double minimum = field->field.minv;
       if (idx == TIMING_PIXCLK) minimum = 1;
+      double maximum = field->field.maxv;
+      double step = 1;
+      if ((idx == TIMING_PIXCLK) && (0 == strcmp(code, "DID-T1"))) {
+         maximum = 167772160;
+         step = 10;
+      }
       GtkAdjustment* adjustment = gtk_spin_button_get_adjustment(timing->spins[idx]);
       gtk_adjustment_set_lower(adjustment, minimum);
-      gtk_adjustment_set_upper(adjustment, field->field.maxv);
+      gtk_adjustment_set_upper(adjustment, maximum);
+      gtk_adjustment_set_step_increment(adjustment, step);
       gtk_spin_button_set_value(timing->spins[idx], value);
    }
    timing_update_outputs(timing);
