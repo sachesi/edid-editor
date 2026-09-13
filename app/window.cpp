@@ -102,6 +102,7 @@ struct wxedid_timing {
 static void wnd_update_document_ui(wxedid_wnd* wnd);
 static void wnd_show_error(wxedid_wnd* wnd, const char* message);
 static void wnd_update_header_controls(wxedid_wnd* wnd);
+static void wnd_refresh_selected_tree_label(wxedid_wnd* wnd);
 static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
                               EDID_cl* pEDID);
 
@@ -128,6 +129,7 @@ struct wxedid_item {
    edi_grp_cl*  pgrp;
    GroupAr_cl*  pgrp_ar;
    EDID_cl*     pEDID;
+   GtkLabel*    bound_label;
    bool         selectable;
    char         label[96];
 };
@@ -251,6 +253,7 @@ static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
       row_set_valid(r, true);
       row_mark_changed(r);
       wnd_refresh_group_title(r->wnd, r->pgrp);
+      wnd_refresh_selected_tree_label(r->wnd);
       timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
@@ -626,6 +629,7 @@ static void timing_on_changed(GtkSpinButton* spin, gpointer user_data) {
       timing->wnd->dirty = true;
       timing_update_outputs(timing);
       wnd_refresh_group_title(timing->wnd, timing->pgrp);
+      wnd_refresh_selected_tree_label(timing->wnd);
       rows_reload(timing->wnd->fields, timing->pgrp, &timing->wnd->doc->EDID,
                   timing->wnd);
    } else {
@@ -992,6 +996,7 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
    GtkWidget* offset = gtk_widget_get_last_child(cell);
 
    wxedid_item* it = WXEDID_ITEM(obj);
+   it->bound_label = GTK_LABEL(label);
    wxc_String   gname;
    std::string  display_name;
    if ((it != NULL) && (it->pgrp != NULL) && (it->pEDID != NULL)) {
@@ -1021,6 +1026,36 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
       gtk_widget_set_visible(offset, TRUE);
    } else {
       gtk_widget_set_visible(offset, FALSE);
+   }
+   g_object_unref(obj);
+}
+
+static void tree_name_unbind(GtkSignalListItemFactory* /*factory*/,
+                             GtkListItem* item, gpointer /*user_data*/) {
+   GtkTreeListRow* row = GTK_TREE_LIST_ROW(gtk_list_item_get_item(item));
+   if (row == NULL) return;
+   GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
+   if (obj == NULL) return;
+   wxedid_item* it = WXEDID_ITEM(obj);
+   it->bound_label = NULL;
+   g_object_unref(obj);
+}
+
+static void wnd_refresh_selected_tree_label(wxedid_wnd* wnd) {
+   GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+      gtk_single_selection_get_selected_item(wnd->tree_sel));
+   if (row == NULL) return;
+   GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
+   if (obj == NULL) return;
+   wxedid_item* item = WXEDID_ITEM(obj);
+   if ((item->pgrp != NULL) && (item->bound_label != NULL)) {
+      wxc_String name;
+      item->pgrp->getGrpName(*item->pEDID, name);
+      std::string display = item->pgrp->CodeName.IsEmpty()
+         ? name.std_str()
+         : item->pgrp->CodeName.std_str() + ": " + name.std_str();
+      gtk_label_set_text(item->bound_label, display.c_str());
+      gtk_widget_set_tooltip_text(GTK_WIDGET(item->bound_label), display.c_str());
    }
    g_object_unref(obj);
 }
@@ -1693,6 +1728,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
    g_signal_connect(factory, "setup", G_CALLBACK(tree_name_setup), NULL);
    g_signal_connect(factory, "bind",  G_CALLBACK(tree_name_bind),  NULL);
+   g_signal_connect(factory, "unbind", G_CALLBACK(tree_name_unbind), NULL);
 
    //selection: refresh the field list on change
    wnd->tree_sel = GTK_SINGLE_SELECTION(gtk_single_selection_new(NULL));
