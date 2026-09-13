@@ -444,7 +444,6 @@ static void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
    gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
    gtk_widget_set_hexpand(lbl, TRUE);
-   gtk_widget_add_css_class(lbl, "caption");
    gtk_box_append(GTK_BOX(content), lbl);
 
    GtkWidget* offset = gtk_label_new(NULL);
