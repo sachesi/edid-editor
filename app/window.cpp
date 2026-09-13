@@ -778,7 +778,7 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(sections), GTK_SELECTION_NONE);
    gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(sections), TRUE);
    gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(sections), 1);
-   gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(sections), 2);
+   gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(sections), 1);
    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(sections), 12);
    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(sections), 12);
    GtkGrid* horizontal = NULL;
@@ -1790,6 +1790,8 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    wnd->timing->page = timing_create_page(wnd->timing);
 
    wnd->editor_stack = ADW_VIEW_STACK(adw_view_stack_new());
+   adw_view_stack_set_hhomogeneous(wnd->editor_stack, FALSE);
+   adw_view_stack_set_vhomogeneous(wnd->editor_stack, FALSE);
    adw_view_stack_add_titled_with_icon(wnd->editor_stack, fields_scroll,
                                        "fields", "Fields", "view-list-symbolic");
    adw_view_stack_add_titled_with_icon(wnd->editor_stack, wnd->timing->page,
