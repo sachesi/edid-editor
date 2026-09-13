@@ -33,7 +33,7 @@ struct wxedid_wnd {
    GtkColumnView*      tree;
    GtkSingleSelection* tree_sel;
    GtkTreeListModel*   tree_model;
-   GtkListBox*         fields;
+   GtkFlowBox*         fields;
    GtkTextView*        log;
    AdwOverlaySplitView* split_view;
    AdwWindowTitle*     window_title;
@@ -139,7 +139,7 @@ struct wxedid_row {
 };
 
 //re-read all rows of the field list into the widgets' current display
-static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
+static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
                         wxedid_wnd* wnd);
 
 //------------
@@ -218,7 +218,7 @@ static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer
 
 //------------
 // field list: rebuilt when a group is selected in the tree
-static void fields_refresh(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl& EDID) {
+static void fields_refresh(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl& EDID) {
    wxedid_wnd* wnd = (wxedid_wnd*) g_object_get_data(G_OBJECT(list), "wxedid-wnd");
    rows_reload(list, pgrp, &EDID, wnd);
 }
@@ -259,14 +259,14 @@ static std::string field_display_name(const char* name) {
    return display;
 }
 
-static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
+static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
                         wxedid_wnd* wnd) {
    //drop old rows
    wnd->invalid_fields = 0;
    GtkWidget* child = gtk_widget_get_first_child(GTK_WIDGET(list));
    while (child != NULL) {
       GtkWidget* next = gtk_widget_get_next_sibling(child);
-      gtk_list_box_remove(list, child);
+      gtk_flow_box_remove(list, child);
       child = next;
    }
 
@@ -285,6 +285,8 @@ static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       rcode retU = ( pEDID->*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
 
       AdwActionRow* row = ADW_ACTION_ROW(adw_action_row_new());
+      gtk_widget_add_css_class(GTK_WIDGET(row), "card");
+      gtk_widget_set_size_request(GTK_WIDGET(row), 240, -1);
       std::string title = field_display_name(pfld->field.name);
       adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title.c_str());
 
@@ -333,8 +335,8 @@ static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
             //text entry
             GtkEntry* entry = GTK_ENTRY(gtk_entry_new());
             gtk_editable_set_text(GTK_EDITABLE(entry), sval.c_str());
-            gtk_editable_set_width_chars(GTK_EDITABLE(entry), 14);
-            gtk_editable_set_max_width_chars(GTK_EDITABLE(entry), 24);
+            gtk_editable_set_width_chars(GTK_EDITABLE(entry), 8);
+            gtk_editable_set_max_width_chars(GTK_EDITABLE(entry), 16);
 
             wxedid_row* r = new wxedid_row{
                pfld, pgrp, pEDID, wnd, ROW_ENTRY, GTK_WIDGET(entry), 0, true
@@ -365,7 +367,7 @@ static void rows_reload(GtkListBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       }
 
       adw_action_row_add_suffix(row, widget);
-      gtk_list_box_append(list, GTK_WIDGET(row));
+      gtk_flow_box_append(list, GTK_WIDGET(row));
    }
 
    wnd_update_document_ui(wnd);
@@ -1102,14 +1104,19 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_margin_bottom(GTK_WIDGET(wnd->group_title), 12);
    gtk_box_append(GTK_BOX(right), GTK_WIDGET(wnd->group_title));
 
-   wnd->fields = GTK_LIST_BOX(gtk_list_box_new());
-   gtk_list_box_set_selection_mode(wnd->fields, GTK_SELECTION_NONE);
-   gtk_widget_add_css_class(GTK_WIDGET(wnd->fields), "boxed-list");
+   wnd->fields = GTK_FLOW_BOX(gtk_flow_box_new());
+   gtk_flow_box_set_selection_mode(wnd->fields, GTK_SELECTION_NONE);
+   gtk_flow_box_set_homogeneous(wnd->fields, TRUE);
+   gtk_flow_box_set_min_children_per_line(wnd->fields, 1);
+   gtk_flow_box_set_max_children_per_line(wnd->fields, 1);
+   gtk_flow_box_set_column_spacing(wnd->fields, 12);
+   gtk_flow_box_set_row_spacing(wnd->fields, 12);
+   gtk_widget_set_valign(GTK_WIDGET(wnd->fields), GTK_ALIGN_START);
    g_object_set_data(G_OBJECT(wnd->fields), "wxedid-wnd", wnd);
 
    GtkWidget* fields_clamp = adw_clamp_new();
-   adw_clamp_set_maximum_size(ADW_CLAMP(fields_clamp), 760);
-   adw_clamp_set_tightening_threshold(ADW_CLAMP(fields_clamp), 560);
+   adw_clamp_set_maximum_size(ADW_CLAMP(fields_clamp), 1100);
+   adw_clamp_set_tightening_threshold(ADW_CLAMP(fields_clamp), 760);
    gtk_widget_set_margin_start(fields_clamp, 18);
    gtk_widget_set_margin_end(fields_clamp, 18);
    gtk_widget_set_margin_bottom(fields_clamp, 18);
@@ -1158,6 +1165,30 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
       G_OBJECT(btn_menu), "visible", TRUE,
       NULL);
    adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), breakpoint);
+
+   AdwBreakpointCondition* medium_min = adw_breakpoint_condition_new_length(
+      ADW_BREAKPOINT_CONDITION_MIN_WIDTH, 560.0, ADW_LENGTH_UNIT_SP);
+   AdwBreakpointCondition* medium_max = adw_breakpoint_condition_new_length(
+      ADW_BREAKPOINT_CONDITION_MAX_WIDTH, 1180.0, ADW_LENGTH_UNIT_SP);
+   AdwBreakpoint* medium_grid = adw_breakpoint_new(
+      adw_breakpoint_condition_new_and(medium_min, medium_max));
+   adw_breakpoint_add_setters(
+      medium_grid,
+      G_OBJECT(wnd->fields), "min-children-per-line", 2U,
+      G_OBJECT(wnd->fields), "max-children-per-line", 2U,
+      NULL);
+   adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), medium_grid);
+
+   AdwBreakpointCondition* wide_grid_condition =
+      adw_breakpoint_condition_new_length(
+         ADW_BREAKPOINT_CONDITION_MIN_WIDTH, 1181.0, ADW_LENGTH_UNIT_SP);
+   AdwBreakpoint* wide_grid = adw_breakpoint_new(wide_grid_condition);
+   adw_breakpoint_add_setters(
+      wide_grid,
+      G_OBJECT(wnd->fields), "min-children-per-line", 3U,
+      G_OBJECT(wnd->fields), "max-children-per-line", 3U,
+      NULL);
+   adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), wide_grid);
 
    GtkWidget* empty_page = adw_status_page_new();
    adw_status_page_set_icon_name(ADW_STATUS_PAGE(empty_page), "video-display-symbolic");
