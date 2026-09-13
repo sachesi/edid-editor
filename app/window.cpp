@@ -444,6 +444,7 @@ static void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
    gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
    gtk_widget_set_hexpand(lbl, TRUE);
+   gtk_widget_add_css_class(lbl, "caption");
    gtk_box_append(GTK_BOX(content), lbl);
 
    GtkWidget* offset = gtk_label_new(NULL);
@@ -1179,16 +1180,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_hexpand(tree_scroll, TRUE);
    gtk_widget_set_vexpand(tree_scroll, TRUE);
 
-   GtkWidget* sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-   GtkWidget* sidebar_title = gtk_label_new("EDID structure");
-   gtk_label_set_xalign(GTK_LABEL(sidebar_title), 0.0);
-   gtk_widget_add_css_class(sidebar_title, "title-4");
-   gtk_widget_set_margin_start(sidebar_title, 18);
-   gtk_widget_set_margin_end(sidebar_title, 18);
-   gtk_widget_set_margin_top(sidebar_title, 18);
-   gtk_widget_set_margin_bottom(sidebar_title, 12);
-   gtk_box_append(GTK_BOX(sidebar), sidebar_title);
-   gtk_box_append(GTK_BOX(sidebar), tree_scroll);
+   GtkWidget* sidebar = tree_scroll;
 
    GtkWidget* right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
