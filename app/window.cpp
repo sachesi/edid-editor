@@ -285,7 +285,6 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       rcode retU = ( pEDID->*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
 
       GtkWidget* card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-      gtk_widget_add_css_class(card, "card");
       gtk_widget_set_size_request(card, 240, -1);
 
       GtkWidget* card_content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -380,6 +379,7 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
 
       gtk_box_append(GTK_BOX(card_content), widget);
       gtk_flow_box_append(list, card);
+      gtk_widget_add_css_class(gtk_widget_get_parent(card), "card");
    }
 
    wnd_update_document_ui(wnd);
