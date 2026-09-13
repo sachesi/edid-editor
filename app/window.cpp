@@ -17,7 +17,12 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <algorithm>
+#include <cmath>
 #include <string>
+#include <pango/pangocairo.h>
+
+struct wxedid_timing;
 
 //------------
 // per-document state
@@ -34,6 +39,9 @@ struct wxedid_wnd {
    GtkSingleSelection* tree_sel;
    GtkTreeListModel*   tree_model;
    GtkFlowBox*         fields;
+   wxedid_timing*      timing;
+   AdwViewStack*       editor_stack;
+   GtkWidget*          editor_switcher;
    GtkTextView*        log;
    AdwOverlaySplitView* split_view;
    AdwWindowTitle*     window_title;
@@ -56,9 +64,50 @@ struct wxedid_wnd {
    u32_t               invalid_fields;
 };
 
+enum timing_field {
+   TIMING_PIXCLK,
+   TIMING_HACTIVE,
+   TIMING_HBLANK,
+   TIMING_VACTIVE,
+   TIMING_VBLANK,
+   TIMING_HOFFSET,
+   TIMING_HWIDTH,
+   TIMING_VOFFSET,
+   TIMING_VWIDTH,
+   TIMING_HBORDER,
+   TIMING_VBORDER,
+   TIMING_FIELD_COUNT,
+};
+
+struct wxedid_timing {
+   wxedid_wnd*   wnd;
+   edi_grp_cl*   pgrp;
+   edi_dynfld_t* fields[TIMING_FIELD_COUNT];
+   GtkSpinButton* spins[TIMING_FIELD_COUNT];
+   GtkLabel*     derived[TIMING_FIELD_COUNT];
+   GtkLabel*     refresh;
+   GtkLabel*     htotal;
+   GtkLabel*     hfreq;
+   GtkLabel*     vtotal;
+   GtkLabel*     modeline;
+   GtkWidget*    drawing;
+   GtkWidget*    sections;
+   GtkWidget*    page;
+   bool          updating;
+};
+
 static void wnd_update_document_ui(wxedid_wnd* wnd);
 static void wnd_show_error(wxedid_wnd* wnd, const char* message);
 static void wnd_update_header_controls(wxedid_wnd* wnd);
+static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
+                              EDID_cl* pEDID);
+
+static void wnd_refresh_group_title(wxedid_wnd* wnd, edi_grp_cl* pgrp) {
+   if (pgrp == NULL) return;
+   wxc_String group_name;
+   pgrp->getGrpName(wnd->doc->EDID, group_name);
+   gtk_label_set_text(wnd->group_title, group_name.c_str());
+}
 
 //tree item: GObject holding an edi_grp_cl* for GtkTreeListModel
 struct wxedid_item;
@@ -198,6 +247,8 @@ static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
       gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
       row_set_valid(r, true);
       row_mark_changed(r);
+      wnd_refresh_group_title(r->wnd, r->pgrp);
+      timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
       row_set_valid(r, false);
@@ -400,6 +451,422 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
 }
 
 //------------
+// visual editor for EDID Detailed Timing Descriptors
+static u32_t timing_value(const wxedid_timing* timing, timing_field field) {
+   return static_cast<u32_t>(gtk_spin_button_get_value_as_int(timing->spins[field]));
+}
+
+static void timing_set_text(GtkLabel* label, const char* format, double value) {
+   char text[48];
+   snprintf(text, sizeof(text), format, value);
+   gtk_label_set_text(label, text);
+}
+
+static void timing_update_outputs(wxedid_timing* timing) {
+   const double pixclk = timing_value(timing, TIMING_PIXCLK) * 10000.0;
+   const u32_t hactive = timing_value(timing, TIMING_HACTIVE);
+   const u32_t hblank = timing_value(timing, TIMING_HBLANK);
+   const u32_t vactive = timing_value(timing, TIMING_VACTIVE);
+   const u32_t vblank = timing_value(timing, TIMING_VBLANK);
+   const u32_t htotal = hactive + hblank;
+   const u32_t vtotal = vactive + vblank;
+
+   if ((pixclk <= 0.0) || (htotal == 0) || (vtotal == 0)) return;
+
+   const double pixel_us = 1000000.0 / pixclk;
+   const double line_ms = htotal * 1000.0 / pixclk;
+   const double refresh = pixclk / (htotal * static_cast<double>(vtotal));
+
+   timing_set_text(timing->derived[TIMING_HACTIVE], "%.3f us", hactive * pixel_us);
+   timing_set_text(timing->derived[TIMING_HBLANK], "%.4f us", hblank * pixel_us);
+   timing_set_text(timing->derived[TIMING_HOFFSET], "%.4f us",
+                   timing_value(timing, TIMING_HOFFSET) * pixel_us);
+   timing_set_text(timing->derived[TIMING_HWIDTH], "%.4f us",
+                   timing_value(timing, TIMING_HWIDTH) * pixel_us);
+   timing_set_text(timing->derived[TIMING_VACTIVE], "%.3f ms", vactive * line_ms);
+   timing_set_text(timing->derived[TIMING_VBLANK], "%.4f ms", vblank * line_ms);
+   timing_set_text(timing->derived[TIMING_VOFFSET], "%.4f ms",
+                   timing_value(timing, TIMING_VOFFSET) * line_ms);
+   timing_set_text(timing->derived[TIMING_VWIDTH], "%.4f ms",
+                   timing_value(timing, TIMING_VWIDTH) * line_ms);
+
+   char text[64];
+   snprintf(text, sizeof(text), "%.2f Hz", refresh);
+   gtk_label_set_text(timing->refresh, text);
+   snprintf(text, sizeof(text), "%u px  ·  %.3f us", htotal,
+            htotal * pixel_us);
+   gtk_label_set_text(timing->htotal, text);
+   snprintf(text, sizeof(text), "%.2f kHz", pixclk / htotal / 1000.0);
+   gtk_label_set_text(timing->hfreq, text);
+   snprintf(text, sizeof(text), "%u lines  ·  %.3f ms", vtotal,
+            vtotal * line_ms);
+   gtk_label_set_text(timing->vtotal, text);
+
+   const u32_t hsync_start = hactive + timing_value(timing, TIMING_HOFFSET);
+   const u32_t hsync_end = hsync_start + timing_value(timing, TIMING_HWIDTH);
+   const u32_t vsync_start = vactive + timing_value(timing, TIMING_VOFFSET);
+   const u32_t vsync_end = vsync_start + timing_value(timing, TIMING_VWIDTH);
+   char modeline[256];
+   snprintf(modeline, sizeof(modeline),
+            "\"%ux%u@%.2f\" %.2f  %u %u %u %u  %u %u %u %u",
+            hactive, vactive, refresh, pixclk / 1000000.0,
+            hactive, hsync_start, hsync_end, htotal,
+            vactive, vsync_start, vsync_end, vtotal);
+   gtk_label_set_text(timing->modeline, modeline);
+   gtk_widget_queue_draw(timing->drawing);
+}
+
+static void timing_draw(GtkDrawingArea* area, cairo_t* cr, int width, int height,
+                        gpointer user_data) {
+   wxedid_timing* timing = static_cast<wxedid_timing*>(user_data);
+   const double htotal = timing_value(timing, TIMING_HACTIVE) +
+                         timing_value(timing, TIMING_HBLANK);
+   const double vtotal = timing_value(timing, TIMING_VACTIVE) +
+                         timing_value(timing, TIMING_VBLANK);
+   if ((htotal <= 0.0) || (vtotal <= 0.0)) return;
+
+   const double pad = 18.0;
+   const double canvas_w = std::max(1.0, width - (2.0 * pad));
+   const double canvas_h = std::max(1.0, height - (2.0 * pad));
+   const double hback = std::max(0.0,
+      static_cast<double>(timing_value(timing, TIMING_HBLANK)) -
+      timing_value(timing, TIMING_HOFFSET));
+   const double vback = std::max(0.0,
+      static_cast<double>(timing_value(timing, TIMING_VBLANK)) -
+      timing_value(timing, TIMING_VOFFSET));
+   const double active_x = pad + (hback / htotal) * canvas_w;
+   const double active_y = pad + (vback / vtotal) * canvas_h;
+   const double active_w = timing_value(timing, TIMING_HACTIVE) / htotal * canvas_w;
+   const double active_h = timing_value(timing, TIMING_VACTIVE) / vtotal * canvas_h;
+   const double hsync_w = std::max(1.0,
+      timing_value(timing, TIMING_HWIDTH) / htotal * canvas_w);
+   const double vsync_h = std::max(1.0,
+      timing_value(timing, TIMING_VWIDTH) / vtotal * canvas_h);
+
+   GdkRGBA color;
+   gtk_widget_get_color(GTK_WIDGET(area), &color);
+   cairo_set_source_rgba(cr, color.red, color.green, color.blue, 0.08);
+   cairo_rectangle(cr, pad, pad, canvas_w, canvas_h);
+   cairo_fill(cr);
+   cairo_set_source_rgba(cr, color.red, color.green, color.blue, 0.32);
+   cairo_rectangle(cr, pad, pad, hsync_w, canvas_h);
+   cairo_fill(cr);
+   cairo_rectangle(cr, pad, pad, canvas_w, vsync_h);
+   cairo_fill(cr);
+   cairo_set_source_rgba(cr, color.red, color.green, color.blue, 0.20);
+   cairo_rectangle(cr, active_x, active_y, active_w, active_h);
+   cairo_fill_preserve(cr);
+   cairo_set_source_rgba(cr, color.red, color.green, color.blue, 0.72);
+   cairo_set_line_width(cr, 1.0);
+   cairo_stroke(cr);
+
+   char active_text[48];
+   snprintf(active_text, sizeof(active_text), "%u × %u",
+            timing_value(timing, TIMING_HACTIVE),
+            timing_value(timing, TIMING_VACTIVE));
+   PangoLayout* layout = gtk_widget_create_pango_layout(GTK_WIDGET(area), active_text);
+   PangoFontDescription* font = pango_font_description_new();
+   pango_font_description_set_weight(font, PANGO_WEIGHT_BOLD);
+   pango_layout_set_font_description(layout, font);
+   int text_w = 0;
+   int text_h = 0;
+   pango_layout_get_pixel_size(layout, &text_w, &text_h);
+   cairo_set_source_rgba(cr, color.red, color.green, color.blue, color.alpha);
+   cairo_move_to(cr, active_x + ((active_w - text_w) / 2.0),
+                 active_y + ((active_h - text_h) / 2.0));
+   pango_cairo_show_layout(cr, layout);
+   pango_font_description_free(font);
+   g_object_unref(layout);
+}
+
+static void timing_on_changed(GtkSpinButton* spin, gpointer user_data) {
+   wxedid_timing* timing = static_cast<wxedid_timing*>(user_data);
+   if (timing->updating || (timing->pgrp == NULL)) return;
+
+   timing_field changed = static_cast<timing_field>(
+      GPOINTER_TO_INT(g_object_get_data(G_OBJECT(spin), "timing-field")));
+   timing->updating = true;
+
+   u32_t value = timing_value(timing, changed);
+   if (changed == TIMING_HBLANK) {
+      value = std::max(value, timing_value(timing, TIMING_HOFFSET) +
+                              timing_value(timing, TIMING_HWIDTH));
+   } else if (changed == TIMING_HOFFSET) {
+      const u32_t blank = timing_value(timing, TIMING_HBLANK);
+      const u32_t width = timing_value(timing, TIMING_HWIDTH);
+      value = std::min(value, (blank > width) ? blank - width : 0U);
+   } else if (changed == TIMING_HWIDTH) {
+      const u32_t blank = timing_value(timing, TIMING_HBLANK);
+      const u32_t offset = timing_value(timing, TIMING_HOFFSET);
+      value = std::min(value, (blank > offset) ? blank - offset : 0U);
+   } else if (changed == TIMING_VBLANK) {
+      value = std::max(value, timing_value(timing, TIMING_VOFFSET) +
+                              timing_value(timing, TIMING_VWIDTH));
+   } else if (changed == TIMING_VOFFSET) {
+      const u32_t blank = timing_value(timing, TIMING_VBLANK);
+      const u32_t width = timing_value(timing, TIMING_VWIDTH);
+      value = std::min(value, (blank > width) ? blank - width : 0U);
+   } else if (changed == TIMING_VWIDTH) {
+      const u32_t blank = timing_value(timing, TIMING_VBLANK);
+      const u32_t offset = timing_value(timing, TIMING_VOFFSET);
+      value = std::min(value, (blank > offset) ? blank - offset : 0U);
+   }
+   gtk_spin_button_set_value(spin, value);
+
+   edi_dynfld_t* field = timing->fields[changed];
+   wxc_String sval;
+   rcode ret = (timing->wnd->doc->EDID.*field->field.handlerfn)(
+      OP_WRINT, sval, value, field);
+   if (RCD_IS_OK(ret)) {
+      gtk_widget_remove_css_class(GTK_WIDGET(spin), "error");
+      timing->wnd->dirty = true;
+      timing_update_outputs(timing);
+      wnd_refresh_group_title(timing->wnd, timing->pgrp);
+      rows_reload(timing->wnd->fields, timing->pgrp, &timing->wnd->doc->EDID,
+                  timing->wnd);
+   } else {
+      gtk_widget_add_css_class(GTK_WIDGET(spin), "error");
+      timing->wnd->doc->GLog.PrintRcode(ret);
+   }
+   timing->updating = false;
+   wnd_update_document_ui(timing->wnd);
+}
+
+static GtkWidget* timing_add_edit_row(wxedid_timing* timing, GtkGrid* grid,
+                                      int row, timing_field field,
+                                      const char* title, const char* unit) {
+   GtkWidget* label = gtk_label_new(title);
+   gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+   gtk_widget_set_hexpand(label, TRUE);
+   gtk_grid_attach(grid, label, 0, row, 1, 1);
+
+   GtkAdjustment* adjustment = gtk_adjustment_new(0, 0, 65535, 1, 10, 0);
+   GtkWidget* spin = gtk_spin_button_new(adjustment, 1, 0);
+   gtk_widget_set_valign(spin, GTK_ALIGN_CENTER);
+   gtk_widget_set_size_request(spin, 88, -1);
+   gtk_accessible_update_property(GTK_ACCESSIBLE(spin),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, title, -1);
+   timing->spins[field] = GTK_SPIN_BUTTON(spin);
+   g_object_set_data(G_OBJECT(spin), "timing-field", GINT_TO_POINTER(field));
+   g_signal_connect(spin, "value-changed", G_CALLBACK(timing_on_changed), timing);
+   gtk_grid_attach(grid, spin, 1, row, 1, 1);
+
+   GtkWidget* unit_label = gtk_label_new(unit);
+   gtk_widget_add_css_class(unit_label, "dim-label");
+   gtk_grid_attach(grid, unit_label, 2, row, 1, 1);
+
+   GtkWidget* derived = gtk_label_new(NULL);
+   gtk_label_set_xalign(GTK_LABEL(derived), 1.0);
+   gtk_widget_add_css_class(derived, "dim-label");
+   gtk_widget_add_css_class(derived, "numeric");
+   timing->derived[field] = GTK_LABEL(derived);
+   gtk_grid_attach(grid, derived, 3, row, 1, 1);
+   return spin;
+}
+
+static void timing_add_value_row(GtkGrid* grid, int row, const char* title,
+                                 GtkLabel** value) {
+   GtkWidget* label = gtk_label_new(title);
+   gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+   gtk_widget_set_hexpand(label, TRUE);
+   gtk_grid_attach(grid, label, 0, row, 1, 1);
+   *value = GTK_LABEL(gtk_label_new(NULL));
+   gtk_label_set_xalign(*value, 1.0);
+   gtk_widget_add_css_class(GTK_WIDGET(*value), "dim-label");
+   gtk_widget_add_css_class(GTK_WIDGET(*value), "numeric");
+   gtk_grid_attach(grid, GTK_WIDGET(*value), 1, row, 3, 1);
+}
+
+static GtkWidget* timing_section(const char* title, GtkGrid** grid_out) {
+   GtkWidget* card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+   gtk_widget_add_css_class(card, "card");
+   gtk_widget_set_margin_start(card, 0);
+   GtkWidget* heading = gtk_label_new(title);
+   gtk_label_set_xalign(GTK_LABEL(heading), 0.0);
+   gtk_widget_add_css_class(heading, "heading");
+   gtk_widget_set_margin_start(heading, 12);
+   gtk_widget_set_margin_end(heading, 12);
+   gtk_widget_set_margin_top(heading, 12);
+   gtk_box_append(GTK_BOX(card), heading);
+
+   GtkWidget* grid = gtk_grid_new();
+   gtk_grid_set_column_spacing(GTK_GRID(grid), 6);
+   gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
+   gtk_widget_set_margin_start(grid, 12);
+   gtk_widget_set_margin_end(grid, 12);
+   gtk_widget_set_margin_bottom(grid, 12);
+   gtk_box_append(GTK_BOX(card), grid);
+   *grid_out = GTK_GRID(grid);
+   return card;
+}
+
+static GtkWidget* timing_create_page(wxedid_timing* timing) {
+   GtkWidget* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+
+   GtkWidget* summary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 18);
+   gtk_widget_add_css_class(summary, "card");
+   gtk_widget_set_margin_top(summary, 2);
+   gtk_widget_set_margin_start(summary, 0);
+   gtk_widget_set_margin_end(summary, 0);
+   gtk_widget_set_margin_bottom(summary, 0);
+   GtkWidget* clock_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
+   gtk_widget_set_margin_start(clock_box, 12);
+   gtk_widget_set_margin_top(clock_box, 12);
+   gtk_widget_set_margin_bottom(clock_box, 12);
+   GtkWidget* clock_title = gtk_label_new("Pixel clock");
+   gtk_label_set_xalign(GTK_LABEL(clock_title), 0.0);
+   gtk_widget_add_css_class(clock_title, "caption");
+   gtk_widget_add_css_class(clock_title, "dim-label");
+   gtk_box_append(GTK_BOX(clock_box), clock_title);
+   GtkWidget* clock_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   GtkAdjustment* clock_adj = gtk_adjustment_new(1, 1, 65535, 1, 100, 0);
+   GtkWidget* clock_spin = gtk_spin_button_new(clock_adj, 1, 0);
+   timing->spins[TIMING_PIXCLK] = GTK_SPIN_BUTTON(clock_spin);
+   g_object_set_data(G_OBJECT(clock_spin), "timing-field",
+                     GINT_TO_POINTER(TIMING_PIXCLK));
+   g_signal_connect(clock_spin, "value-changed", G_CALLBACK(timing_on_changed), timing);
+   gtk_accessible_update_property(GTK_ACCESSIBLE(clock_spin),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Pixel clock", -1);
+   gtk_box_append(GTK_BOX(clock_row), clock_spin);
+   GtkWidget* clock_unit = gtk_label_new("×10 kHz");
+   gtk_widget_add_css_class(clock_unit, "dim-label");
+   gtk_box_append(GTK_BOX(clock_row), clock_unit);
+   gtk_box_append(GTK_BOX(clock_box), clock_row);
+   gtk_box_append(GTK_BOX(summary), clock_box);
+
+   GtkWidget* refresh_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
+   gtk_widget_set_margin_top(refresh_box, 12);
+   gtk_widget_set_margin_bottom(refresh_box, 12);
+   GtkWidget* refresh_title = gtk_label_new("Vertical refresh");
+   gtk_label_set_xalign(GTK_LABEL(refresh_title), 0.0);
+   gtk_widget_add_css_class(refresh_title, "caption");
+   gtk_widget_add_css_class(refresh_title, "dim-label");
+   gtk_box_append(GTK_BOX(refresh_box), refresh_title);
+   timing->refresh = GTK_LABEL(gtk_label_new(NULL));
+   gtk_label_set_xalign(timing->refresh, 0.0);
+   gtk_widget_add_css_class(GTK_WIDGET(timing->refresh), "title-3");
+   gtk_widget_add_css_class(GTK_WIDGET(timing->refresh), "numeric");
+   gtk_box_append(GTK_BOX(refresh_box), GTK_WIDGET(timing->refresh));
+   gtk_box_append(GTK_BOX(summary), refresh_box);
+   gtk_box_append(GTK_BOX(content), summary);
+
+   timing->drawing = gtk_drawing_area_new();
+   gtk_widget_set_size_request(timing->drawing, -1, 300);
+   gtk_widget_set_hexpand(timing->drawing, TRUE);
+   gtk_widget_add_css_class(timing->drawing, "card");
+   gtk_accessible_update_property(GTK_ACCESSIBLE(timing->drawing),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Active image and blanking diagram", -1);
+   gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(timing->drawing),
+                                  timing_draw, timing, NULL);
+   gtk_box_append(GTK_BOX(content), timing->drawing);
+
+   GtkWidget* sections = gtk_flow_box_new();
+   timing->sections = sections;
+   gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(sections), GTK_SELECTION_NONE);
+   gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(sections), TRUE);
+   gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(sections), 1);
+   gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(sections), 2);
+   gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(sections), 12);
+   gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(sections), 12);
+   GtkGrid* horizontal = NULL;
+   GtkWidget* horizontal_card = timing_section("Horizontal timing", &horizontal);
+   timing_add_edit_row(timing, horizontal, 0, TIMING_HACTIVE, "Active", "px");
+   timing_add_edit_row(timing, horizontal, 1, TIMING_HBORDER, "Border", "px");
+   timing_add_edit_row(timing, horizontal, 2, TIMING_HBLANK, "Blanking", "px");
+   timing_add_edit_row(timing, horizontal, 3, TIMING_HOFFSET, "Sync offset", "px");
+   timing_add_edit_row(timing, horizontal, 4, TIMING_HWIDTH, "Sync width", "px");
+   timing_add_value_row(horizontal, 5, "Total", &timing->htotal);
+   timing_add_value_row(horizontal, 6, "Frequency", &timing->hfreq);
+   gtk_flow_box_append(GTK_FLOW_BOX(sections), horizontal_card);
+
+   GtkGrid* vertical = NULL;
+   GtkWidget* vertical_card = timing_section("Vertical timing", &vertical);
+   timing_add_edit_row(timing, vertical, 0, TIMING_VACTIVE, "Active", "lines");
+   timing_add_edit_row(timing, vertical, 1, TIMING_VBORDER, "Border", "lines");
+   timing_add_edit_row(timing, vertical, 2, TIMING_VBLANK, "Blanking", "lines");
+   timing_add_edit_row(timing, vertical, 3, TIMING_VOFFSET, "Sync offset", "lines");
+   timing_add_edit_row(timing, vertical, 4, TIMING_VWIDTH, "Sync width", "lines");
+   timing_add_value_row(vertical, 5, "Total", &timing->vtotal);
+   gtk_flow_box_append(GTK_FLOW_BOX(sections), vertical_card);
+   gtk_box_append(GTK_BOX(content), sections);
+
+   GtkWidget* modeline_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+   gtk_widget_add_css_class(modeline_card, "card");
+   GtkWidget* modeline_title = gtk_label_new("X11 ModeLine");
+   gtk_label_set_xalign(GTK_LABEL(modeline_title), 0.0);
+   gtk_widget_add_css_class(modeline_title, "caption");
+   gtk_widget_add_css_class(modeline_title, "dim-label");
+   gtk_widget_set_margin_start(modeline_title, 12);
+   gtk_widget_set_margin_end(modeline_title, 12);
+   gtk_widget_set_margin_top(modeline_title, 12);
+   gtk_box_append(GTK_BOX(modeline_card), modeline_title);
+   timing->modeline = GTK_LABEL(gtk_label_new(NULL));
+   gtk_label_set_xalign(timing->modeline, 0.0);
+   gtk_label_set_selectable(timing->modeline, TRUE);
+   gtk_label_set_wrap(timing->modeline, TRUE);
+   gtk_widget_add_css_class(GTK_WIDGET(timing->modeline), "monospace");
+   gtk_widget_set_margin_start(GTK_WIDGET(timing->modeline), 12);
+   gtk_widget_set_margin_end(GTK_WIDGET(timing->modeline), 12);
+   gtk_widget_set_margin_bottom(GTK_WIDGET(timing->modeline), 12);
+   gtk_box_append(GTK_BOX(modeline_card), GTK_WIDGET(timing->modeline));
+   gtk_box_append(GTK_BOX(content), modeline_card);
+
+   GtkWidget* clamp = adw_clamp_new();
+   adw_clamp_set_maximum_size(ADW_CLAMP(clamp), 1100);
+   adw_clamp_set_tightening_threshold(ADW_CLAMP(clamp), 760);
+   gtk_widget_set_margin_start(clamp, 18);
+   gtk_widget_set_margin_end(clamp, 18);
+   gtk_widget_set_margin_bottom(clamp, 18);
+   adw_clamp_set_child(ADW_CLAMP(clamp), content);
+
+   GtkWidget* scroll = gtk_scrolled_window_new();
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(scroll), clamp);
+   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(scroll),
+                                  GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
+   return scroll;
+}
+
+static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
+                              EDID_cl* pEDID) {
+   if ((pgrp == NULL) || (0 != strcmp(pgrp->CodeName.c_str(), "DTD")) ||
+       (pgrp->FieldsAr.GetCount() <= DTD_IDX_VBORD)) {
+      timing->pgrp = NULL;
+      return false;
+   }
+
+   static const u32_t field_indices[TIMING_FIELD_COUNT] = {
+      DTD_IDX_PIXCLK, DTD_IDX_HAPIX, DTD_IDX_HBPIX, DTD_IDX_VALIN,
+      DTD_IDX_VBLIN, DTD_IDX_HSOFFS, DTD_IDX_HSWIDTH, DTD_IDX_VSOFFS,
+      DTD_IDX_VSWIDTH, DTD_IDX_HBORD, DTD_IDX_VBORD,
+   };
+
+   timing->updating = true;
+   timing->pgrp = pgrp;
+   for (int idx = 0; idx < TIMING_FIELD_COUNT; idx++) {
+      edi_dynfld_t* field = pgrp->FieldsAr.Item(field_indices[idx]);
+      timing->fields[idx] = field;
+      wxc_String text;
+      u32_t value = 0;
+      rcode ret = (pEDID->*field->field.handlerfn)(OP_READ, text, value, field);
+      if (! RCD_IS_OK(ret)) {
+         timing->pgrp = NULL;
+         timing->updating = false;
+         return false;
+      }
+      double minimum = field->field.minv;
+      if (idx == TIMING_PIXCLK) minimum = 1;
+      GtkAdjustment* adjustment = gtk_spin_button_get_adjustment(timing->spins[idx]);
+      gtk_adjustment_set_lower(adjustment, minimum);
+      gtk_adjustment_set_upper(adjustment, field->field.maxv);
+      gtk_spin_button_set_value(timing->spins[idx], value);
+   }
+   timing_update_outputs(timing);
+   timing->updating = false;
+   return true;
+}
+
+//------------
 // GtkTreeListModel expand callback: sub-groups of a group
 static GListModel* tree_item_expand(gpointer item, gpointer /*user_data*/) {
    wxedid_item* it = WXEDID_ITEM(item);
@@ -520,6 +987,10 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
    }
    gtk_label_set_text(wnd->group_title, group_name.c_str());
    fields_refresh(wnd->fields, it->pgrp, *it->pEDID);
+   bool has_timing = timing_load_group(wnd->timing, it->pgrp, it->pEDID);
+   gtk_widget_set_visible(wnd->editor_switcher, has_timing);
+   adw_view_stack_set_visible_child_name(wnd->editor_stack,
+                                         has_timing ? "timing" : "fields");
    if (adw_overlay_split_view_get_collapsed(wnd->split_view)) {
       adw_overlay_split_view_set_show_sidebar(wnd->split_view, FALSE);
    }
@@ -1083,6 +1554,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                            [](gpointer data) {
                               wxedid_wnd* w = (wxedid_wnd*) data;
                               g_clear_object(&w->tree_model);
+                              delete w->timing;
                               delete w->doc;
                               delete w;
                            });
@@ -1183,15 +1655,18 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
 
    GtkWidget* right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
+   GtkWidget* editor_heading = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+   gtk_widget_set_margin_start(editor_heading, 18);
+   gtk_widget_set_margin_end(editor_heading, 18);
+   gtk_widget_set_margin_top(editor_heading, 18);
+   gtk_widget_set_margin_bottom(editor_heading, 12);
+
    wnd->group_title = GTK_LABEL(gtk_label_new("Select a group"));
    gtk_label_set_xalign(wnd->group_title, 0.0);
    gtk_label_set_ellipsize(wnd->group_title, PANGO_ELLIPSIZE_END);
+   gtk_widget_set_hexpand(GTK_WIDGET(wnd->group_title), TRUE);
    gtk_widget_add_css_class(GTK_WIDGET(wnd->group_title), "title-2");
-   gtk_widget_set_margin_start(GTK_WIDGET(wnd->group_title), 18);
-   gtk_widget_set_margin_end(GTK_WIDGET(wnd->group_title), 18);
-   gtk_widget_set_margin_top(GTK_WIDGET(wnd->group_title), 18);
-   gtk_widget_set_margin_bottom(GTK_WIDGET(wnd->group_title), 12);
-   gtk_box_append(GTK_BOX(right), GTK_WIDGET(wnd->group_title));
+   gtk_box_append(GTK_BOX(editor_heading), GTK_WIDGET(wnd->group_title));
 
    wnd->fields = GTK_FLOW_BOX(gtk_flow_box_new());
    gtk_flow_box_set_selection_mode(wnd->fields, GTK_SELECTION_NONE);
@@ -1216,7 +1691,27 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(fields_scroll),
                                   GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
    gtk_widget_set_vexpand(fields_scroll, TRUE);
-   gtk_box_append(GTK_BOX(right), fields_scroll);
+
+   wnd->timing = new wxedid_timing{};
+   wnd->timing->wnd = wnd;
+   wnd->timing->page = timing_create_page(wnd->timing);
+
+   wnd->editor_stack = ADW_VIEW_STACK(adw_view_stack_new());
+   adw_view_stack_add_titled_with_icon(wnd->editor_stack, fields_scroll,
+                                       "fields", "Fields", "view-list-symbolic");
+   adw_view_stack_add_titled_with_icon(wnd->editor_stack, wnd->timing->page,
+                                       "timing", "Timing", "video-display-symbolic");
+   gtk_widget_set_vexpand(GTK_WIDGET(wnd->editor_stack), TRUE);
+
+   wnd->editor_switcher = adw_view_switcher_new();
+   adw_view_switcher_set_policy(ADW_VIEW_SWITCHER(wnd->editor_switcher),
+                                ADW_VIEW_SWITCHER_POLICY_WIDE);
+   adw_view_switcher_set_stack(ADW_VIEW_SWITCHER(wnd->editor_switcher),
+                               wnd->editor_stack);
+   gtk_widget_set_visible(wnd->editor_switcher, FALSE);
+   gtk_box_append(GTK_BOX(editor_heading), wnd->editor_switcher);
+   gtk_box_append(GTK_BOX(right), editor_heading);
+   gtk_box_append(GTK_BOX(right), GTK_WIDGET(wnd->editor_stack));
 
    wnd->log = GTK_TEXT_VIEW(gtk_text_view_new());
    gtk_text_view_set_editable(wnd->log, FALSE);
@@ -1252,6 +1747,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
       G_OBJECT(split_view), "collapsed", TRUE,
       G_OBJECT(split_view), "show-sidebar", FALSE,
       G_OBJECT(btn_menu), "visible", TRUE,
+      G_OBJECT(wnd->timing->drawing), "height-request", 220,
       NULL);
    adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), breakpoint);
 
