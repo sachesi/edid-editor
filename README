@@ -43,7 +43,8 @@ Undo and Redo cover these changes as well as field edits.
 
 EDID data that breaks the standard is refused by default. Choose Open Anyway
 when an EDID fails to open, or turn on Ignore EDID Errors in the main menu, to
-edit it regardless. Saving keeps unknown data, but writes a correct CTA-861
+edit it regardless. Notices from opening a file appear under Notes on the
+Overview, and EDID Log in the main menu lists every message. Saving keeps unknown data, but writes a correct CTA-861
 DTD offset and clears non-zero CTA-861 padding. Edit Read-Only Fields unlocks
 fields that are normally derived from other data.
 
