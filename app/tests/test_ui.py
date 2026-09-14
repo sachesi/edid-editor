@@ -580,6 +580,9 @@ def two_cta(Atspi, app, fixture):
         search.get_editable_text_iface().set_text_contents("ADB")
         wait_for(lambda: named(Atspi, "Block 2: CTA-861"),
                  "the second CTA-861 extension was not parsed")
+        search.get_editable_text_iface().set_text_contents("1280x720p")
+        wait_for(lambda: any(name_of(node).startswith("SVD: 1280x720p") for node in nodes(Atspi)),
+                 "a search did not open the group holding the match")
     finally:
         stop_app(process)
 

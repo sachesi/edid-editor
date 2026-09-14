@@ -1711,11 +1711,36 @@ static guint wnd_filtered_position(wxedid_wnd* wnd, edi_grp_cl* group) {
    return GTK_INVALID_LIST_POSITION;
 }
 
+//open groups whose sub-groups match the search, so the matches show
+static void wnd_expand_matches(wxedid_wnd* wnd) {
+   if (wnd->tree_query.empty() || (wnd->tree_model == NULL)) return;
+   guint position = 0;
+   while (position < g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model))) {
+      GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+         g_list_model_get_item(G_LIST_MODEL(wnd->tree_model), position));
+      GObject* object = G_OBJECT(gtk_tree_list_row_get_item(row));
+      edi_grp_cl* group = WXEDID_ITEM(object)->pgrp;
+      if ((group != NULL) && ! gtk_tree_list_row_get_expanded(row)) {
+         for (u32_t index=0; index<group->getSubGrpCount(); index++) {
+            if (tree_group_matches(group->getSubGroup(index), WXEDID_ITEM(object)->pEDID,
+                                   wnd->tree_query.c_str())) {
+               gtk_tree_list_row_set_expanded(row, TRUE);
+               break;
+            }
+         }
+      }
+      g_object_unref(object);
+      g_object_unref(row);
+      position++;
+   }
+}
+
 static void tree_search_changed(GtkSearchEntry* entry, gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
    char* folded = g_utf8_casefold(gtk_editable_get_text(GTK_EDITABLE(entry)), -1);
    wnd->tree_query = folded;
    g_free(folded);
+   wnd_expand_matches(wnd);
    gtk_filter_changed(GTK_FILTER(wnd->tree_filter), GTK_FILTER_CHANGE_DIFFERENT);
    wnd_update_search_state(wnd);
    if ((wnd->last_selected != NULL) &&
