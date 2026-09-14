@@ -187,7 +187,6 @@ struct wxedid_timing {
    GtkLabel*     vtotal;
    GtkLabel*     modeline;
    GtkWidget*    drawing;
-   GtkWidget*    sections;
    GtkWidget*    summary;
    GtkWidget*    page;
    double        pixel_hz_factor;
@@ -1433,6 +1432,7 @@ static GtkWidget* timing_add_edit_row(wxedid_timing* timing, GtkGrid* grid,
                                       const char* title, const char* unit) {
    GtkWidget* label = gtk_label_new(title);
    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+   gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
    gtk_widget_set_hexpand(label, TRUE);
    gtk_grid_attach(grid, label, 0, row, 1, 1);
 
@@ -1470,6 +1470,7 @@ static void timing_add_value_row(GtkGrid* grid, int row, const char* title,
                                  GtkLabel** value) {
    GtkWidget* label = gtk_label_new(title);
    gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+   gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
    gtk_widget_set_hexpand(label, TRUE);
    gtk_grid_attach(grid, label, 0, row, 1, 1);
    *value = GTK_LABEL(gtk_label_new(NULL));
@@ -1494,8 +1495,8 @@ static GtkWidget* timing_section(const char* title, GtkGrid** grid_out) {
    GtkWidget* grid = gtk_grid_new();
    gtk_grid_set_column_spacing(GTK_GRID(grid), 6);
    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
-   gtk_widget_set_margin_start(grid, 9);
-   gtk_widget_set_margin_end(grid, 9);
+   gtk_widget_set_margin_start(grid, 12);
+   gtk_widget_set_margin_end(grid, 12);
    gtk_widget_set_margin_bottom(grid, 12);
    gtk_box_append(GTK_BOX(card), grid);
    *grid_out = GTK_GRID(grid);
@@ -1573,15 +1574,8 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
                                   timing_draw, timing, NULL);
    gtk_box_append(GTK_BOX(content), timing->drawing);
 
-   GtkWidget* sections = gtk_flow_box_new();
-   timing->sections = sections;
-   gtk_flow_box_set_selection_mode(GTK_FLOW_BOX(sections), GTK_SELECTION_NONE);
-   gtk_flow_box_set_homogeneous(GTK_FLOW_BOX(sections), TRUE);
-   gtk_flow_box_set_min_children_per_line(GTK_FLOW_BOX(sections), 1);
-   gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(sections), 1);
-   gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(sections), 12);
-   gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(sections), 12);
-   gtk_widget_add_css_class(sections, "card-grid");
+   //a plain stack: the cards sit directly on the page like the others
+   GtkWidget* sections = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
    GtkGrid* horizontal = NULL;
    GtkWidget* horizontal_card = timing_section("Horizontal timing", &horizontal);
    timing_add_edit_row(timing, horizontal, 0, TIMING_HACTIVE, "Active", "px");
@@ -1591,8 +1585,7 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    timing_add_edit_row(timing, horizontal, 4, TIMING_HWIDTH, "Sync width", "px");
    timing_add_value_row(horizontal, 5, "Total", &timing->htotal);
    timing_add_value_row(horizontal, 6, "Frequency", &timing->hfreq);
-   gtk_flow_box_append(GTK_FLOW_BOX(sections), horizontal_card);
-   gtk_widget_set_focusable(gtk_widget_get_parent(horizontal_card), FALSE);
+   gtk_box_append(GTK_BOX(sections), horizontal_card);
 
    GtkGrid* vertical = NULL;
    GtkWidget* vertical_card = timing_section("Vertical timing", &vertical);
@@ -1602,8 +1595,7 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    timing_add_edit_row(timing, vertical, 3, TIMING_VOFFSET, "Sync offset", "lines");
    timing_add_edit_row(timing, vertical, 4, TIMING_VWIDTH, "Sync width", "lines");
    timing_add_value_row(vertical, 5, "Total", &timing->vtotal);
-   gtk_flow_box_append(GTK_FLOW_BOX(sections), vertical_card);
-   gtk_widget_set_focusable(gtk_widget_get_parent(vertical_card), FALSE);
+   gtk_box_append(GTK_BOX(sections), vertical_card);
    gtk_box_append(GTK_BOX(content), sections);
 
    GtkWidget* modeline_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);

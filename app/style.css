@@ -1,8 +1,13 @@
 /* Field and timing grids: the cards carry the look, so the flow box
    children neither pad nor tint them on hover. */
-flowbox.card-grid > flowboxchild {
+flowbox.card-grid > flowboxchild,
+flowbox.card-grid > flowboxchild:hover,
+flowbox.card-grid > flowboxchild:active,
+flowbox.card-grid > flowboxchild:selected {
   padding: 0;
   background: none;
+  box-shadow: none;
+  outline: none;
   border-radius: 12px;
 }
 
