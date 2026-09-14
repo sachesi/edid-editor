@@ -117,6 +117,12 @@ vmap_GetVmap(u32_t idx, vmap_type vm_type) {
    psel = &vmap_sel[idx]; //NULL for uninitialized vmaps
    vmap = psel->map_ar[vm_type];
 
+   //DMT code maps are built from dmt_table[] on first use
+   if ((NULL == vmap) && (idx >= VS_DMT1_VIDFMT) && (idx <= VS_CVT3_VIDFMT)) {
+      vmap_InitDMT_Vmaps();
+      vmap = psel->map_ar[vm_type];
+   }
+
    return vmap;
 }
 

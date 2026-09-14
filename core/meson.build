@@ -111,6 +111,14 @@ test_display = executable(
   install : false,
 )
 
+test_decode = executable(
+  'test-decode',
+  'tests/test_decode.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
 test_corpus = executable(
   'test-corpus',
   'tests/test_corpus.cpp',
@@ -175,3 +183,4 @@ test('hdmi-forum', test_hdmi_forum,
              sample_data[7]])
 test('displayid2', test_displayid2, args : files('tests/corpus/au-optronics-auofcb7.hex'))
 test('connected-displays', test_display, args : [sample_data[1]])
+test('value-decode', test_decode, args : [sample_data[1]])

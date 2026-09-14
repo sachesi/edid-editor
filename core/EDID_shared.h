@@ -485,6 +485,8 @@ class EDID_cl {
       rcode CEA_DBC_ExTag(__EDID_HDL_ARGS);
       //CEA:VDB
       u32_t CEA_VDB_SVD_decode(u32_t vic, u32_t &native);
+      rcode SVD_VIC      (__EDID_HDL_ARGS);
+      rcode SVD_Native   (__EDID_HDL_ARGS);
       //CEA:ADB:SAD
       rcode SAD_LPCM_MC  (__EDID_HDL_ARGS);
       rcode SAD_BitRate  (__EDID_HDL_ARGS);

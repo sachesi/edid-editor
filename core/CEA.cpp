@@ -1043,18 +1043,19 @@ const dbc_subg_dsc_t cea_svd_cl::SVD_subg = {
 };
 
 const edi_field_t cea_svd_cl::fld_dsc[] = {
-   {&EDID_cl::ByteVal, VS_SVD_VIDFMT, 0, 0, 1, F_BTE|F_INT|F_VS|F_FR|F_DN, 0, 0xFF, "VIC",
+   {&EDID_cl::SVD_VIC, VS_SVD_VIDFMT, 0, 0, 1, F_BTE|F_INT|F_VS|F_FR|F_DN, 0, 0xFF, "VIC",
    "Video ID Code: an index referencing the Table 3 in CEA/CTA-861, containing standard screen resolutions. "
-   "For CEA-861-F and above, VIC value can take 8bits, interpretation:\n"
+   "For CEA-861-F and above, the descriptor byte can take 8bits, interpretation:\n"
    "0\t\t: reserved\n"
    "1-127\t\t: 7bit VIC,\n"
    "128\t\t: reserved\n"
    "129-192\t: 7bit VIC, modes 1-64 with \"native\" bit set to 1 (128+1..128+64)\n"
    "193-219\t: 8bit VIC, no \"native\" bit\n"
-   "220-255\t: reserved" },
-   {&EDID_cl::BitVal, 0, 0, 7, 1, F_BIT|F_RD|F_FR|F_DN, 0, 0, "Native",
+   "220-255\t: reserved\n\n"
+   "This field shows the VIC without the \"native\" bit." },
+   {&EDID_cl::SVD_Native, 0, 0, 7, 1, F_BIT|F_FR|F_DN, 0, 1, "Native",
    "\"native\" mode flag\n\n"
-   "See the VIC field description." }
+   "Only VICs 1-64 can be marked as native. See the VIC field description." }
 };
 
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -1084,9 +1085,7 @@ void cea_svd_cl::getGrpName(EDID_cl& EDID, wxc_String& gp_name) {
    }
 
    p_field = FieldsAr.Item(0);
-   ( EDID.*p_field->field.handlerfn )(OP_READ, gp_name, ival, p_field );
-
-   ival = EDID.CEA_VDB_SVD_decode(ival, natv);
+   ival    = EDID.CEA_VDB_SVD_decode(inst_data[0], natv);
 
    EDID.getValDesc(gp_name, p_field, ival, VD_DESC);
 
@@ -1112,6 +1111,72 @@ u32_t EDID_cl::CEA_VDB_SVD_decode(u32_t vic, u32_t &native) {
 
    native = natv;
    return mode;
+}
+
+//VIC without the native bit: a write keeps the native bit when the new VIC
+//can carry it (1-64)
+rcode EDID_cl::SVD_VIC(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_field) {
+   rcode  retU;
+   u8_t  *inst;
+   u32_t  natv;
+
+   inst = getValPtr(p_field);
+
+   if (op == OP_READ) {
+      ival = CEA_VDB_SVD_decode(inst[0], natv);
+      sval << ival;
+      RCD_RETURN_OK(retU);
+   }
+
+   ulong tmpv;
+   if (op == OP_WRSTR) {
+      retU = getStrUint(sval, 10, p_field->field.minv, p_field->field.maxv, tmpv);
+      if (! RCD_IS_OK(retU)) return retU;
+   } else if (op == OP_WRINT) {
+      tmpv = ival;
+   } else {
+      RCD_RETURN_FAULT(retU); //wrong op code
+   }
+   if ((tmpv > 0xFF) || ((tmpv >= 128) && (tmpv <= 192))) {
+      RCD_RETURN_FAULT_MSG(retU, "[E!] SVD: VICs 128-192 are not valid, "
+                                 "use the Native field to mark VICs 1-64 as native");
+   }
+   CEA_VDB_SVD_decode(inst[0], natv);
+   if (natv && (tmpv >= 1) && (tmpv <= 64)) tmpv |= 0x80;
+   inst[0] = (tmpv & 0xFF);
+   RCD_RETURN_OK(retU);
+}
+
+rcode EDID_cl::SVD_Native(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_field) {
+   rcode  retU;
+   u8_t  *inst;
+   u32_t  natv;
+   u32_t  vic;
+
+   inst = getValPtr(p_field);
+   vic  = CEA_VDB_SVD_decode(inst[0], natv);
+
+   if (op == OP_READ) {
+      ival = natv;
+      sval << ival;
+      RCD_RETURN_OK(retU);
+   }
+
+   ulong tmpv;
+   if (op == OP_WRSTR) {
+      retU = getStrUint(sval, 10, 0, 1, tmpv);
+      if (! RCD_IS_OK(retU)) return retU;
+   } else if (op == OP_WRINT) {
+      if (ival > 1) RCD_RETURN_FAULT(retU);
+      tmpv = ival;
+   } else {
+      RCD_RETURN_FAULT(retU); //wrong op code
+   }
+   if ((tmpv != 0) && ((vic < 1) || (vic > 64))) {
+      RCD_RETURN_FAULT_MSG(retU, "[E!] SVD: only VICs 1-64 can be marked as native");
+   }
+   inst[0] = (vic | ((tmpv != 0) ? 0x80 : 0)) & 0xFF;
+   RCD_RETURN_OK(retU);
 }
 
 //VSD: Vendor Specific Data Block: handlers
