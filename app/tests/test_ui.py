@@ -356,6 +356,16 @@ def functional(Atspi, app, fixture):
             wait_for(lambda: not window_exists("Save EDID binary"),
                      "Save As dialog did not close")
 
+            # key events cannot reach the app here; check the registered bindings
+            press(Atspi, "Main menu")
+            for item, binding in (("Open…", "Control+O"), ("Save As…", "Shift+Control+S"),
+                                  ("Undo", "Control+Z"), ("Redo", "Shift+Control+Z"),
+                                  ("Keyboard Shortcuts", "Control+?")):
+                node = wait_for(lambda: menu_item(Atspi, item), f"{item} was not listed")
+                assert node.get_action_iface().get_key_binding(0).endswith(binding), \
+                    f"{item} is not bound to {binding}"
+            press(Atspi, "Main menu")
+
             activate_menu_item(Atspi, "About EDID Editor")
             wait_for(lambda: named(Atspi, "EDID Editor", Atspi.Role.LABEL),
                      "About dialog did not show the application name")
