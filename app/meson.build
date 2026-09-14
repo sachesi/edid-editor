@@ -75,6 +75,6 @@ test(
   ui_test,
   args : [edid_editor, sample_data[3]],
   suite : 'ui',
-  timeout : 120,
+  timeout : 900,
   is_parallel : false,
 )

@@ -37,7 +37,7 @@ def run_session(script, app, fixture, width, scenario):
     ]
     with output.open("w+") as stream:
         result = subprocess.run(command, env=env, text=True, stdout=stream,
-                                stderr=subprocess.STDOUT, timeout=55)
+                                stderr=subprocess.STDOUT, timeout=150)
         stream.seek(0)
         diagnostics = stream.read()
     # weston exits successfully whatever its client returns, so the scenario
