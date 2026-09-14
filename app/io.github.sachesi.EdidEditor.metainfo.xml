@@ -33,7 +33,8 @@
           reports, opening of damaged EDID data, and field-level validation
           feedback. Decodes HDMI Forum, AMD FreeSync, and DisplayID 2.0 timing
           and range data, parses every CTA-861 extension, and opens the EDID
-          of a connected display.
+          of a connected display. Shows HDR luminance in cd/m², range limits
+          above 255 Hz, native video formats, and standard timing names.
         </p>
       </description>
     </release>
