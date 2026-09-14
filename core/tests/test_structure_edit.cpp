@@ -67,6 +67,12 @@ int main(int argc, char* argv[]) {
          check((group != NULL) && (group->getSubGrpCount() == 1),
                "audio template contains one valid SAD");
       }
+      if ((which == EDID_cl::CEA_TIMING) && (group != NULL)) {
+         wxc_String name;
+         group->getGrpName(EDID, name);
+         check(std::strstr(name.c_str(), "640x480 @ 59.9") != NULL,
+               "timing template is 640x480 at 60 Hz");
+      }
       delete group;
    }
 
