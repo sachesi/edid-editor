@@ -106,7 +106,33 @@ test('reload-ownership', test_reload_ownership, args : [sample_data[1]])
 test('t7-timing-roundtrip', test_t7_timing, args : [sample_data[3]])
 test('structure-edit', test_structure_edit,
      args : [sample_data[2], sample_data[5], sample_data[6]])
+#real-world EDIDs, see tests/corpus/README
+corpus_conformant = files(
+  'tests/corpus/acer-acr0450.hex',
+  'tests/corpus/aoc-aoc2401.hex',
+  'tests/corpus/apple-app9219.hex',
+  'tests/corpus/apple-appa044.hex',
+  'tests/corpus/apple-appae11.hex',
+  'tests/corpus/au-optronics-auo019c.hex',
+  'tests/corpus/au-optronics-auo07b2.hex',
+  'tests/corpus/au-optronics-auofcb7.hex',
+  'tests/corpus/dell-del430f.hex',
+  'tests/corpus/nec-nec6948.hex',
+  'tests/corpus/panasonic-meia296.hex',
+  'tests/corpus/samsung-sam756f.hex',
+  'tests/corpus/tcl-tcl0000.hex',
+  'tests/corpus/xiaomi-xmd0076.hex',
+  'tests/corpus/xiaomi-xmd00e1.hex',
+)
+corpus_nonconformant = files(
+  'tests/corpus/acer-acr03e1.hex',
+  'tests/corpus/apple-appae19.hex',
+  'tests/corpus/chimei-innolux-cmn1540.hex',
+  'tests/corpus/dell-deld082.hex',
+  'tests/corpus/vizio-viz1002.hex',
+)
 test('corpus-roundtrip', test_corpus,
      args : [sample_data[0], sample_data[1], sample_data[2], sample_data[3],
-             sample_data[4], sample_data[5], sample_data[6]])
+             sample_data[4], sample_data[5], sample_data[6],
+             corpus_conformant, '--ignore-errors', corpus_nonconformant])
 test('hex-text-report', test_text, args : [sample_data[2]])

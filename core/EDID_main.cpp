@@ -259,12 +259,11 @@ rcode EDID_cl::ParseDBC_TAG(u8_t *pinst, edi_grp_cl** pp_grp) {
                case DBC_ET_T10VTB: //42 DisplayID Type 10 Video Timing Data Block
                   pgrp = new cea_t10vtb_cl;
                   break;
-            // case DBC_ET_HEOVR: //120 HDMI Forum EDID Extension Override Data Block
-            //    pgrp = NULL;
-            //    break;
-            // case DBC_ET_HSCDB: //121 HDMI Forum Sink Capability Data Block
-            //    pgrp = NULL;
-            //    break;
+               case DBC_ET_HEOVR: //120 HDMI Forum EDID Extension Override Data Block
+               case DBC_ET_HSCDB: //121 HDMI Forum Sink Capability Data Block
+                  //valid blocks without field definitions: kept as raw data
+                  pgrp = new cea_unket_cl;
+                  break;
                default:
                   //CTA-861-H: reserved Extended Tag Codes:
                   //3, 4, 8-12, 18, 21-31, 33, 36..41, 43..119, 122..255
@@ -667,10 +666,14 @@ rcode EDID_cl::ParseEDID_DisplayID(u32_t block) {
             }
          }
          if (! all_zero) {
-            groups->Clear();
             wxedid_RCD_SET_FAULT_VMSG(
                retU, "[E!] DisplayID: non-zero filler at offset %u", offset);
-            return retU;
+            if (! b_ERR_Ignore) {
+               groups->Clear();
+               return retU;
+            }
+            //the padding group keeps the filler bytes unchanged
+            pGLog->PrintRcode(retU);
          }
 
          displayid_padding_cl* padding = new displayid_padding_cl;

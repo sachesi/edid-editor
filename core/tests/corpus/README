@@ -1,0 +1,42 @@
+Real-world EDID test data
+=========================
+
+These EDIDs come from the Linux Hardware EDID repository,
+https://github.com/linuxhw/EDID, collected by linux-hardware.org users and
+published under the Creative Commons Attribution 4.0 International license
+(https://creativecommons.org/licenses/by/4.0/).
+
+Changes from the originals: only the first hex dump of each file is kept, the
+base block serial number is zeroed, serial number text descriptors read
+"SERIAL", serial-like strings in DisplayID vendor data are replaced with
+'0' characters, and the affected checksums are recomputed.
+
+Conformant EDIDs must parse, reassemble to identical bytes, and reparse.
+Non-conformant EDIDs must be rejected by default and open with EDID errors
+ignored.
+
+Conformant:
+
+  tcl-tcl0000.hex                Digital/TCL/TCL0000/3FC9396BD4D7
+  au-optronics-auofcb7.hex       Digital/AU Optronics/AUOFCB7/972539E1EB4E
+  dell-del430f.hex               Digital/Dell/DEL430F/6E431411B951
+  aoc-aoc2401.hex                Digital/AOC/AOC2401/24F699D6C742
+  au-optronics-auo019c.hex       Digital/AU Optronics/AUO019C/FC1013A8EE1B
+  au-optronics-auo07b2.hex       Digital/AU Optronics/AUO07B2/6FFDBB25E454
+  acer-acr0450.hex               Digital/Acer/ACR0450/A8E2921EB242
+  apple-app9219.hex              Digital/Apple/APP9219/36762201661C
+  apple-appa044.hex              Digital/Apple/APPA044/0C3E2AADCE21
+  apple-appae11.hex              Digital/Apple/APPAE11/AAE0DCF6752A
+  nec-nec6948.hex                Digital/NEC/NEC6948/161D4012C37C
+  panasonic-meia296.hex          Digital/Panasonic/MEIA296/C69C3076326F
+  samsung-sam756f.hex            Digital/Samsung/SAM756F/96D8EDC4E9C7
+  xiaomi-xmd0076.hex             Digital/Xiaomi/XMD0076/F7C30D76AE82
+  xiaomi-xmd00e1.hex             Digital/Xiaomi/XMD00E1/BCF70EB63D68
+
+Non-conformant:
+
+  apple-appae19.hex              Digital/Apple/APPAE19/69A93B57514A
+  dell-deld082.hex               Digital/Dell/DELD082/AA4A26616374
+  vizio-viz1002.hex              Digital/Vizio/VIZ1002/196644010179
+  chimei-innolux-cmn1540.hex     Digital/Chimei Innolux/CMN1540/4F88B0C24C62
+  acer-acr03e1.hex               Digital/Acer/ACR03E1/B108EF377A02
