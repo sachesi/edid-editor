@@ -31,7 +31,9 @@
           Adds structural CTA-861 and DisplayID editing with Undo and Redo,
           safe audio and timing templates, hexadecimal import and export, text
           reports, opening of damaged EDID data, and field-level validation
-          feedback.
+          feedback. Decodes HDMI Forum, AMD FreeSync, and DisplayID 2.0 timing
+          and range data, parses every CTA-861 extension, and opens the EDID
+          of a connected display.
         </p>
       </description>
     </release>
