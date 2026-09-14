@@ -118,7 +118,7 @@ def group_count(Atspi, code):
     search.get_editable_text_iface().set_text_contents(code)
     time.sleep(0.4)
     count = sum(role_of(node) == Atspi.Role.LABEL and
-                name_of(node).startswith(code + ":") for node in nodes(Atspi))
+                name_of(node).startswith(code + " · ") for node in nodes(Atspi))
     search.get_editable_text_iface().set_text_contents("")
     time.sleep(0.5)
     return count
@@ -606,7 +606,7 @@ def two_cta(Atspi, app, fixture):
         wait_for(lambda: named(Atspi, "Block 2: CTA-861"),
                  "the second CTA-861 extension was not parsed")
         search.get_editable_text_iface().set_text_contents("1280x720p")
-        wait_for(lambda: any(name_of(node).startswith("SVD: 1280x720p") for node in nodes(Atspi)),
+        wait_for(lambda: any(name_of(node).startswith("1280x720p") for node in nodes(Atspi)),
                  "a search did not open the group holding the match")
     finally:
         stop_app(process)

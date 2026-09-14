@@ -1849,8 +1849,9 @@ static void tree_search_clear(GtkButton*, gpointer user_data) {
 // factory: tree cell shows the group name
 static void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
                             GtkListItem* item, gpointer user_data) {
+   //group name, with its code and offset underneath
    GtkWidget* expander = gtk_tree_expander_new();
-   GtkWidget* content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   GtkWidget* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
    GtkWidget* lbl = gtk_label_new(NULL);
    gtk_label_set_xalign(GTK_LABEL(lbl), 0.0);
    gtk_label_set_ellipsize(GTK_LABEL(lbl), PANGO_ELLIPSIZE_END);
@@ -1858,9 +1859,10 @@ static void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
    gtk_box_append(GTK_BOX(content), lbl);
 
    GtkWidget* offset = gtk_label_new(NULL);
+   gtk_label_set_xalign(GTK_LABEL(offset), 0.0);
+   gtk_label_set_ellipsize(GTK_LABEL(offset), PANGO_ELLIPSIZE_END);
    gtk_widget_add_css_class(offset, "caption");
    gtk_widget_add_css_class(offset, "dim-label");
-   gtk_widget_add_css_class(offset, "monospace");
    gtk_box_append(GTK_BOX(content), offset);
 
    gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), content);
@@ -1891,11 +1893,7 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
    std::string  display_name;
    if ((it != NULL) && (it->pgrp != NULL) && (it->pEDID != NULL)) {
       it->pgrp->getGrpName(*it->pEDID, gname);
-      if (! it->pgrp->CodeName.IsEmpty()) {
-         display_name = it->pgrp->CodeName.std_str() + ": " + gname.std_str();
-      } else {
-         display_name = gname.std_str();
-      }
+      display_name = gname.std_str();
    } else if (it != NULL) {
       display_name = it->label;
    }
@@ -1910,8 +1908,9 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
    }
 
    if ((it != NULL) && (it->pgrp != NULL)) {
-      char offset_text[16];
-      snprintf(offset_text, sizeof(offset_text), "0x%03X", it->pgrp->getAbsOffs());
+      char offset_text[96];
+      snprintf(offset_text, sizeof(offset_text), "%s · 0x%03X",
+               it->pgrp->CodeName.c_str(), it->pgrp->getAbsOffs());
       gtk_label_set_text(GTK_LABEL(offset), offset_text);
       gtk_widget_set_visible(offset, TRUE);
    } else {
@@ -1935,11 +1934,8 @@ static void wnd_refresh_tree_label(wxedid_item* item) {
    if ((item != NULL) && (item->pgrp != NULL) && (item->bound_label != NULL)) {
       wxc_String name;
       item->pgrp->getGrpName(*item->pEDID, name);
-      std::string display = item->pgrp->CodeName.IsEmpty()
-         ? name.std_str()
-         : item->pgrp->CodeName.std_str() + ": " + name.std_str();
-      gtk_label_set_text(item->bound_label, display.c_str());
-      gtk_widget_set_tooltip_text(GTK_WIDGET(item->bound_label), display.c_str());
+      gtk_label_set_text(item->bound_label, name.c_str());
+      gtk_widget_set_tooltip_text(GTK_WIDGET(item->bound_label), name.c_str());
    }
 }
 
