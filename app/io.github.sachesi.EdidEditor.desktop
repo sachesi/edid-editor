@@ -1,7 +1,6 @@
 [Desktop Entry]
 Type=Application
 Name=EDID Editor
-GenericName=EDID Editor
 Comment=Inspect and edit display identification data
 Exec=edid-editor %f
 Icon=io.github.sachesi.EdidEditor

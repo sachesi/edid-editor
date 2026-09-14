@@ -7,17 +7,20 @@
   <project_license>GPL-3.0-or-later</project_license>
   <description>
     <p>
-      EDID Editor is an editor for EDID (Extended Display Identification Data)
-      structures. It supports EDID v1.3+ base blocks, CTA-861 extensions,
-      and DisplayID data blocks. A visual timing editor and synchronized byte
-      view make structured changes easier to inspect.
+      EDID Editor inspects and edits EDID (Extended Display Identification
+      Data) structures. It supports EDID v1.3+ base blocks, CTA-861
+      extensions, and DisplayID data blocks. A visual timing editor and
+      synchronized byte view make structured changes easier to inspect.
+    </p>
+    <p>
+      EDID Editor is based on wxEDID by Tomasz Pawlak.
     </p>
   </description>
   <developer id="io.github.sachesi">
-    <name>EDID Editor contributors</name>
+    <name>sachesi</name>
   </developer>
   <launchable type="desktop-id">io.github.sachesi.EdidEditor.desktop</launchable>
-  <url type="homepage">https://sourceforge.net/projects/wxedid/</url>
+  <url type="homepage">https://github.com/sachesi</url>
   <provides>
     <binary>edid-editor</binary>
   </provides>

@@ -2,7 +2,10 @@
 EDID Editor
 ===========
 
-Build and test the GTK 4 application with Meson:
+EDID Editor is a GTK 4 editor for EDID data, based on wxEDID by Tomasz Pawlak.
+The notes below the build instructions come from wxEDID and apply to both.
+
+Build and test it with Meson:
 
     meson setup builddir
     meson compile -C builddir

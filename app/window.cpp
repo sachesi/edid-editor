@@ -3077,11 +3077,13 @@ static void wnd_on_about_action(GSimpleAction*, GVariant*, gpointer user_data) {
    AdwAboutDialog* dialog = ADW_ABOUT_DIALOG(adw_about_dialog_new());
    adw_about_dialog_set_application_name(dialog, "EDID Editor");
    adw_about_dialog_set_application_icon(dialog, "io.github.sachesi.EdidEditor");
-   adw_about_dialog_set_developer_name(dialog, "EDID Editor contributors");
+   adw_about_dialog_set_developer_name(dialog, "sachesi");
    adw_about_dialog_set_version(dialog, WXEDID_VERSION);
    adw_about_dialog_set_comments(dialog,
-      "Inspect and edit Extended Display Identification Data.");
-   adw_about_dialog_set_website(dialog, "https://sourceforge.net/projects/wxedid/");
+      "Inspect and edit Extended Display Identification Data.\n\n"
+      "Based on wxEDID by Tomasz Pawlak.");
+   adw_about_dialog_add_link(dialog, "wxEDID, the original project",
+                             "https://sourceforge.net/projects/wxedid/");
    adw_about_dialog_set_developers(dialog, developers);
    adw_about_dialog_set_copyright(dialog, "Copyright © 2014–2025 Tomasz Pawlak");
    adw_about_dialog_set_license_type(dialog, GTK_LICENSE_GPL_3_0);
@@ -3335,7 +3337,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
 
    //header bar
    GtkWidget* header = adw_header_bar_new();
-   wnd->window_title = ADW_WINDOW_TITLE(adw_window_title_new("EDID Editor", "EDID editor"));
+   wnd->window_title = ADW_WINDOW_TITLE(adw_window_title_new("EDID Editor", "Display identification data"));
    adw_header_bar_set_title_widget(ADW_HEADER_BAR(header), GTK_WIDGET(wnd->window_title));
 
    GtkWidget* btn_open = gtk_button_new_with_mnemonic("_Open");
