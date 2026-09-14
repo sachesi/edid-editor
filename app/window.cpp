@@ -13,6 +13,7 @@
 #include "EDID_class.h"
 #include "CEA_class.h"
 #include "CEA_ET_class.h"
+#include "wxedid-config.h"
 
 #include <cstdio>
 #include <cstring>
@@ -51,10 +52,16 @@ struct wxedid_wnd {
    GtkListView*        tree;
    GtkSingleSelection* tree_sel;
    GtkTreeListModel*   tree_model;
+   GtkCustomFilter*    tree_filter;
+   GtkFilterListModel* tree_filtered;
+   GtkSearchEntry*     tree_search;
+   GtkStack*           sidebar_stack;
    GtkFlowBox*         fields;
    wxedid_timing*      timing;
    AdwViewStack*       editor_stack;
    GtkWidget*          editor_switcher;
+   GtkTextView*        raw_view;
+   AdwViewStackPage*   timing_stack_page;
    GtkTextView*        log;
    AdwOverlaySplitView* split_view;
    AdwWindowTitle*     window_title;
@@ -72,6 +79,7 @@ struct wxedid_wnd {
    GSimpleAction*      undo_action;
    GSimpleAction*      redo_action;
    GSimpleAction*      details_action;
+   std::string         tree_query;
    std::vector<wxedid_history_entry> history;
    size_t              history_position;
    long                saved_history_position;
@@ -118,12 +126,19 @@ struct wxedid_timing {
    GtkWidget*    page;
    double        pixel_hz_factor;
    bool          updating;
+   bool          editing;
+   timing_field  editing_field;
+   size_t        history_index;
+   wxc_String    before_text;
+   u32_t         before_value;
 };
 
 static void wnd_update_document_ui(wxedid_wnd* wnd);
+static void wnd_update_history_state(wxedid_wnd* wnd);
 static void wnd_show_error(wxedid_wnd* wnd, const char* message);
 static void wnd_update_header_controls(wxedid_wnd* wnd);
 static void wnd_refresh_selected_tree_label(wxedid_wnd* wnd);
+static void wnd_refresh_raw_view(wxedid_wnd* wnd);
 static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
                               EDID_cl* pEDID);
 static void wnd_record_history(wxedid_wnd* wnd, edi_grp_cl* group,
@@ -156,6 +171,7 @@ struct wxedid_item {
    EDID_cl*     pEDID;
    GtkLabel*    bound_label;
    bool         selectable;
+   int          raw_block;
    char         label[96];
 };
 
@@ -170,6 +186,7 @@ static wxedid_item* wxedid_item_new(edi_grp_cl* pgrp, EDID_cl* pEDID) {
    item->pgrp_ar    = NULL;
    item->pEDID      = pEDID;
    item->selectable = (pgrp != NULL);
+   item->raw_block  = -1;
    return item;
 }
 
@@ -189,6 +206,7 @@ static wxedid_item* wxedid_item_new_raw_extension(u32_t block, u8_t tag,
    snprintf(item->label, sizeof(item->label),
             "Extension %u: %s (0x%02X), preserved read-only", block, type, tag);
    item->selectable = true;
+   item->raw_block = static_cast<int>(block);
    return item;
 }
 
@@ -229,6 +247,10 @@ struct wxedid_row {
    GtkWidget*    entry;  //GtkEditable | GtkDropDown
    u32_t         sel_idx; //dropdown item value
    bool          valid;
+   bool          editing;
+   size_t        history_index;
+   wxc_String    before_text;
+   u32_t         before_value;
 };
 
 //re-read all rows of the field list into the widgets' current display
@@ -257,6 +279,64 @@ static void row_set_valid(wxedid_row* row, bool valid) {
    wnd_update_document_ui(row->wnd);
 }
 
+static void wnd_record_edit_history(wxedid_wnd* wnd, edi_grp_cl* group,
+                                    edi_dynfld_t* field, bool integer,
+                                    const wxc_String& session_before_text,
+                                    u32_t session_before_value,
+                                    const wxc_String& immediate_before_text,
+                                    u32_t immediate_before_value,
+                                    const wxc_String& after_text,
+                                    u32_t after_value, size_t* history_index) {
+   const size_t no_index = static_cast<size_t>(-1);
+   bool can_coalesce = (*history_index != no_index) &&
+      (*history_index + 1 == wnd->history_position) &&
+      (wnd->history_position == wnd->history.size()) &&
+      (wnd->history[*history_index].group == group) &&
+      (wnd->history[*history_index].field == field) &&
+      (wnd->saved_history_position != static_cast<long>(wnd->history_position));
+
+   if (can_coalesce) {
+      wxedid_history_entry& entry = wnd->history[*history_index];
+      entry.after_text = after_text.c_str();
+      entry.after_value = after_value;
+      bool unchanged = integer ? (entry.before_value == entry.after_value) :
+                                 (entry.before_text == entry.after_text);
+      if (unchanged) {
+         wnd->history.pop_back();
+         wnd->history_position--;
+         *history_index = no_index;
+      }
+      wnd_update_history_state(wnd);
+      return;
+   }
+
+   const wxc_String& before_text = (*history_index == no_index)
+      ? session_before_text : immediate_before_text;
+   u32_t before_value = (*history_index == no_index)
+      ? session_before_value : immediate_before_value;
+   size_t previous_size = wnd->history.size();
+   wnd_record_history(wnd, group, field, integer, before_text, before_value,
+                      after_text, after_value);
+   *history_index = (wnd->history.size() > previous_size)
+      ? wnd->history.size() - 1 : no_index;
+}
+
+static void row_on_focus_enter(GtkEventControllerFocus*, gpointer user_data) {
+   wxedid_row* row = static_cast<wxedid_row*>(user_data);
+   row->editing = true;
+   row->history_index = static_cast<size_t>(-1);
+   row->before_text.Empty();
+   row->before_value = 0;
+   (row->pEDID->*row->pfld->field.handlerfn)(
+      OP_READ, row->before_text, row->before_value, row->pfld);
+}
+
+static void row_on_focus_leave(GtkEventControllerFocus*, gpointer user_data) {
+   wxedid_row* row = static_cast<wxedid_row*>(user_data);
+   row->editing = false;
+   row->history_index = static_cast<size_t>(-1);
+}
+
 //------------
 //entry changed: write valid text back via the field handler
 static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
@@ -277,13 +357,21 @@ static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
       u32_t after_value = 0;
       ( r->pEDID->*r->pfld->field.handlerfn )(
          OP_READ, after_text, after_value, r->pfld);
-      wnd_record_history(r->wnd, r->pgrp, r->pfld, false,
-                         before_text, before_value, after_text, after_value);
+      if (r->editing) {
+         wnd_record_edit_history(r->wnd, r->pgrp, r->pfld, false,
+                                 r->before_text, r->before_value,
+                                 before_text, before_value,
+                                 after_text, after_value, &r->history_index);
+      } else {
+         wnd_record_history(r->wnd, r->pgrp, r->pfld, false,
+                            before_text, before_value, after_text, after_value);
+      }
       gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
       row_set_valid(r, true);
       wnd_refresh_group_title(r->wnd, r->pgrp);
       wnd_refresh_selected_tree_label(r->wnd);
       timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
+      wnd_refresh_raw_view(r->wnd);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
       row_set_valid(r, false);
@@ -322,6 +410,7 @@ static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer
       wnd_refresh_group_title(r->wnd, r->pgrp);
       wnd_refresh_selected_tree_label(r->wnd);
       timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
+      wnd_refresh_raw_view(r->wnd);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(dd), "error");
       row_set_valid(r, false);
@@ -472,7 +561,8 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
             gtk_widget_set_halign(GTK_WIDGET(dd), GTK_ALIGN_FILL);
 
             wxedid_row* r = new wxedid_row{
-               pfld, pgrp, pEDID, wnd, ROW_COMBO, GTK_WIDGET(dd), 0, true
+               pfld, pgrp, pEDID, wnd, ROW_COMBO, GTK_WIDGET(dd), 0, true,
+               false, static_cast<size_t>(-1), {}, 0
             };
             g_object_set_data_full(G_OBJECT(dd), "sel-idx", vals,
                                    [](gpointer data){ delete[] (u32_t*) data; });
@@ -493,10 +583,15 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
             gtk_widget_set_halign(GTK_WIDGET(entry), GTK_ALIGN_FILL);
 
             wxedid_row* r = new wxedid_row{
-               pfld, pgrp, pEDID, wnd, ROW_ENTRY, GTK_WIDGET(entry), 0, true
+               pfld, pgrp, pEDID, wnd, ROW_ENTRY, GTK_WIDGET(entry), 0, true,
+               false, static_cast<size_t>(-1), {}, 0
             };
 
             g_signal_connect(entry, "changed", G_CALLBACK(row_on_entry_changed), r);
+            GtkEventController* focus = gtk_event_controller_focus_new();
+            g_signal_connect(focus, "enter", G_CALLBACK(row_on_focus_enter), r);
+            g_signal_connect(focus, "leave", G_CALLBACK(row_on_focus_leave), r);
+            gtk_widget_add_controller(GTK_WIDGET(entry), focus);
             g_object_set_data_full(G_OBJECT(entry), "row", r,
                                    [](gpointer data){ delete (wxedid_row*) data; });
 
@@ -710,20 +805,59 @@ static void timing_on_changed(GtkSpinButton* spin, gpointer user_data) {
       u32_t after_value = 0;
       (timing->wnd->doc->EDID.*field->field.handlerfn)(
          OP_READ, after_text, after_value, field);
-      wnd_record_history(timing->wnd, timing->pgrp, field, true,
-                         before_text, before_value, after_text, after_value);
+      if (timing->editing && (timing->editing_field == changed)) {
+         wnd_record_edit_history(timing->wnd, timing->pgrp, field, true,
+                                 timing->before_text, timing->before_value,
+                                 before_text, before_value,
+                                 after_text, after_value,
+                                 &timing->history_index);
+      } else {
+         wnd_record_history(timing->wnd, timing->pgrp, field, true,
+                            before_text, before_value, after_text, after_value);
+      }
       gtk_widget_remove_css_class(GTK_WIDGET(spin), "error");
       timing_update_outputs(timing);
       wnd_refresh_group_title(timing->wnd, timing->pgrp);
       wnd_refresh_selected_tree_label(timing->wnd);
       rows_reload(timing->wnd->fields, timing->pgrp, &timing->wnd->doc->EDID,
                   timing->wnd);
+      wnd_refresh_raw_view(timing->wnd);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(spin), "error");
       timing->wnd->doc->GLog.PrintRcode(ret);
    }
    timing->updating = false;
    wnd_update_document_ui(timing->wnd);
+}
+
+static void timing_on_focus_enter(GtkEventControllerFocus* controller,
+                                  gpointer user_data) {
+   wxedid_timing* timing = static_cast<wxedid_timing*>(user_data);
+   GtkWidget* widget = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(controller));
+   timing->editing_field = static_cast<timing_field>(
+      GPOINTER_TO_INT(g_object_get_data(G_OBJECT(widget), "timing-field")));
+   timing->editing = true;
+   timing->history_index = static_cast<size_t>(-1);
+   timing->before_text.Empty();
+   timing->before_value = 0;
+   edi_dynfld_t* field = timing->fields[timing->editing_field];
+   if ((field != NULL) && (timing->pgrp != NULL)) {
+      (timing->wnd->doc->EDID.*field->field.handlerfn)(
+         OP_READ, timing->before_text, timing->before_value, field);
+   }
+}
+
+static void timing_on_focus_leave(GtkEventControllerFocus*, gpointer user_data) {
+   wxedid_timing* timing = static_cast<wxedid_timing*>(user_data);
+   timing->editing = false;
+   timing->history_index = static_cast<size_t>(-1);
+}
+
+static void timing_add_focus_controller(wxedid_timing* timing, GtkWidget* spin) {
+   GtkEventController* focus = gtk_event_controller_focus_new();
+   g_signal_connect(focus, "enter", G_CALLBACK(timing_on_focus_enter), timing);
+   g_signal_connect(focus, "leave", G_CALLBACK(timing_on_focus_leave), timing);
+   gtk_widget_add_controller(spin, focus);
 }
 
 static GtkWidget* timing_add_edit_row(wxedid_timing* timing, GtkGrid* grid,
@@ -745,6 +879,7 @@ static GtkWidget* timing_add_edit_row(wxedid_timing* timing, GtkGrid* grid,
    timing->row_widgets[field][1] = spin;
    g_object_set_data(G_OBJECT(spin), "timing-field", GINT_TO_POINTER(field));
    g_signal_connect(spin, "value-changed", G_CALLBACK(timing_on_changed), timing);
+   timing_add_focus_controller(timing, spin);
    gtk_grid_attach(grid, spin, 1, row, 1, 1);
 
    GtkWidget* unit_label = gtk_label_new(unit);
@@ -823,6 +958,7 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    g_object_set_data(G_OBJECT(clock_spin), "timing-field",
                      GINT_TO_POINTER(TIMING_PIXCLK));
    g_signal_connect(clock_spin, "value-changed", G_CALLBACK(timing_on_changed), timing);
+   timing_add_focus_controller(timing, clock_spin);
    gtk_accessible_update_property(GTK_ACCESSIBLE(clock_spin),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL, "Pixel clock", -1);
    gtk_box_append(GTK_BOX(clock_row), clock_spin);
@@ -1054,6 +1190,80 @@ static GListModel* tree_item_expand(gpointer item, gpointer /*user_data*/) {
    return G_LIST_MODEL(store);
 }
 
+static bool tree_group_matches(edi_grp_cl* group, EDID_cl* edid,
+                               const char* query) {
+   if (group == NULL) return false;
+   wxc_String name;
+   group->getGrpName(*edid, name);
+   std::string label = group->CodeName.IsEmpty()
+      ? name.std_str() : group->CodeName.std_str() + ": " + name.std_str();
+   char* folded = g_utf8_casefold(label.c_str(), -1);
+   bool matches = strstr(folded, query) != NULL;
+   g_free(folded);
+   if (matches) return true;
+   for (u32_t index=0; index<group->getSubGrpCount(); index++) {
+      if (tree_group_matches(group->getSubGroup(index), edid, query)) return true;
+   }
+   return false;
+}
+
+static gboolean tree_filter_match(gpointer object, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   if (wnd->tree_query.empty()) return TRUE;
+
+   GtkTreeListRow* row = GTK_TREE_LIST_ROW(object);
+   GObject* child = G_OBJECT(gtk_tree_list_row_get_item(row));
+   if (child == NULL) return FALSE;
+   wxedid_item* item = WXEDID_ITEM(child);
+   bool matches = false;
+   if (item->pgrp != NULL) {
+      matches = tree_group_matches(item->pgrp, item->pEDID,
+                                   wnd->tree_query.c_str());
+   } else {
+      char* folded = g_utf8_casefold(item->label, -1);
+      matches = strstr(folded, wnd->tree_query.c_str()) != NULL;
+      g_free(folded);
+      if (! matches && (item->pgrp_ar != NULL)) {
+         for (u32_t index=0; index<item->pgrp_ar->GetCount(); index++) {
+            if (tree_group_matches(item->pgrp_ar->Item(index), item->pEDID,
+                                   wnd->tree_query.c_str())) {
+               matches = true;
+               break;
+            }
+         }
+      }
+   }
+   g_object_unref(child);
+   return matches;
+}
+
+static void wnd_update_search_state(wxedid_wnd* wnd) {
+   bool no_results = ! wnd->tree_query.empty() &&
+      (g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_filtered)) == 0);
+   gtk_stack_set_visible_child_name(wnd->sidebar_stack,
+                                    no_results ? "empty" : "tree");
+}
+
+static void tree_filter_items_changed(GListModel*, guint, guint, guint,
+                                      gpointer user_data) {
+   wnd_update_search_state(static_cast<wxedid_wnd*>(user_data));
+}
+
+static void tree_search_changed(GtkSearchEntry* entry, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   char* folded = g_utf8_casefold(gtk_editable_get_text(GTK_EDITABLE(entry)), -1);
+   wnd->tree_query = folded;
+   g_free(folded);
+   gtk_filter_changed(GTK_FILTER(wnd->tree_filter), GTK_FILTER_CHANGE_DIFFERENT);
+   wnd_update_search_state(wnd);
+}
+
+static void tree_search_clear(GtkButton*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   gtk_editable_set_text(GTK_EDITABLE(wnd->tree_search), "");
+   gtk_widget_grab_focus(GTK_WIDGET(wnd->tree_search));
+}
+
 //------------
 // factory: tree cell shows the group name
 static void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
@@ -1156,6 +1366,54 @@ static edi_grp_cl* wnd_selected_group(wxedid_wnd* wnd) {
    return group;
 }
 
+static void wnd_refresh_raw_view(wxedid_wnd* wnd) {
+   if (wnd->raw_view == NULL) return;
+
+   GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+      gtk_single_selection_get_selected_item(wnd->tree_sel));
+   if (row == NULL) {
+      gtk_text_buffer_set_text(gtk_text_view_get_buffer(wnd->raw_view), "", -1);
+      return;
+   }
+
+   GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
+   if (obj == NULL) return;
+   wxedid_item* item = WXEDID_ITEM(obj);
+   const u8_t* data = NULL;
+   u32_t size = 0;
+   u32_t offset = 0;
+   if (item->pgrp != NULL) {
+      data = item->pgrp->getInstPtr();
+      size = item->pgrp->getTotalSize();
+      offset = item->pgrp->getAbsOffs();
+   } else if (item->raw_block >= 0) {
+      data = item->pEDID->getEDID()->blk[item->raw_block];
+      size = sizeof(ediblk_t);
+      offset = static_cast<u32_t>(item->raw_block) * sizeof(ediblk_t);
+   }
+
+   GString* text = g_string_new("Offset  Hex bytes                                         Text\n");
+   for (u32_t pos=0; pos<size; pos += 16) {
+      g_string_append_printf(text, "%04X    ", offset + pos);
+      for (u32_t byte=0; byte<16; byte++) {
+         if (pos + byte < size) {
+            g_string_append_printf(text, "%02X ", data[pos + byte]);
+         } else {
+            g_string_append(text, "   ");
+         }
+      }
+      g_string_append(text, " ");
+      for (u32_t byte=0; byte<16 && pos + byte<size; byte++) {
+         u8_t value = data[pos + byte];
+         g_string_append_c(text, g_ascii_isprint(value) ? static_cast<char>(value) : '.');
+      }
+      g_string_append_c(text, '\n');
+   }
+   gtk_text_buffer_set_text(gtk_text_view_get_buffer(wnd->raw_view), text->str, -1);
+   g_string_free(text, TRUE);
+   g_object_unref(obj);
+}
+
 static void wnd_refresh_selected_tree_label(wxedid_wnd* wnd) {
    GtkTreeListRow* row = GTK_TREE_LIST_ROW(
       gtk_single_selection_get_selected_item(wnd->tree_sel));
@@ -1237,6 +1495,7 @@ static void wnd_apply_history(wxedid_wnd* wnd, bool redo) {
       wnd_refresh_group_title(wnd, entry.group);
       rows_reload(wnd->fields, entry.group, &wnd->doc->EDID, wnd);
       timing_load_group(wnd->timing, entry.group, &wnd->doc->EDID);
+      wnd_refresh_raw_view(wnd);
    }
    wnd_update_history_state(wnd);
    wnd_update_document_ui(wnd);
@@ -1270,9 +1529,12 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
    gtk_label_set_text(wnd->group_title, group_name.c_str());
    fields_refresh(wnd->fields, it->pgrp, *it->pEDID);
    bool has_timing = timing_load_group(wnd->timing, it->pgrp, it->pEDID);
-   gtk_widget_set_visible(wnd->editor_switcher, has_timing);
+   wnd_refresh_raw_view(wnd);
+   gtk_widget_set_visible(wnd->editor_switcher, TRUE);
+   adw_view_stack_page_set_visible(wnd->timing_stack_page, has_timing);
    adw_view_stack_set_visible_child_name(wnd->editor_stack,
-                                         has_timing ? "timing" : "fields");
+                                         has_timing ? "timing" :
+                                         (it->pgrp != NULL ? "fields" : "bytes"));
    if (adw_overlay_split_view_get_collapsed(wnd->split_view)) {
       adw_overlay_split_view_set_show_sidebar(wnd->split_view, FALSE);
    }
@@ -1519,8 +1781,9 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
       tree_item_expand,
       NULL, NULL);
    g_object_unref(root);
-
-   gtk_single_selection_set_model(wnd->tree_sel, G_LIST_MODEL(wnd->tree_model));
+   gtk_editable_set_text(GTK_EDITABLE(wnd->tree_search), "");
+   gtk_filter_list_model_set_model(wnd->tree_filtered,
+                                   G_LIST_MODEL(wnd->tree_model));
 
    guint position = 0;
    while (position < g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model))) {
@@ -1534,10 +1797,10 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
       position++;
    }
 
-   guint n_items = g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model));
+   guint n_items = g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_filtered));
    for (position=0; position<n_items; position++) {
       GtkTreeListRow* row = GTK_TREE_LIST_ROW(
-         g_list_model_get_item(G_LIST_MODEL(wnd->tree_model), position));
+         g_list_model_get_item(G_LIST_MODEL(wnd->tree_filtered), position));
       GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
       bool selectable = WXEDID_ITEM(obj)->selectable;
       g_object_unref(obj);
@@ -1679,6 +1942,7 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
          wnd->doc->EDID.genChksum(blk);
       }
    }
+   wnd_refresh_raw_view(wnd);
 
    FILE* out = fopen(path, "wb");
    if (out == NULL) {
@@ -1852,6 +2116,27 @@ static gboolean wnd_on_close_request(GtkWindow* /*window*/, gpointer user_data) 
    return TRUE;
 }
 
+static void wnd_on_about_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   static const char* developers[] = {
+      "Tomasz Pawlak",
+      "sachesi",
+      NULL,
+   };
+   AdwAboutDialog* dialog = ADW_ABOUT_DIALOG(adw_about_dialog_new());
+   adw_about_dialog_set_application_name(dialog, "EDID Editor");
+   adw_about_dialog_set_application_icon(dialog, "io.github.sachesi.EdidEditor");
+   adw_about_dialog_set_developer_name(dialog, "EDID Editor contributors");
+   adw_about_dialog_set_version(dialog, WXEDID_VERSION);
+   adw_about_dialog_set_comments(dialog,
+      "Inspect and edit Extended Display Identification Data.");
+   adw_about_dialog_set_website(dialog, "https://sourceforge.net/projects/wxedid/");
+   adw_about_dialog_set_developers(dialog, developers);
+   adw_about_dialog_set_copyright(dialog, "Copyright © 2014–2025 Tomasz Pawlak");
+   adw_about_dialog_set_license_type(dialog, GTK_LICENSE_GPL_3_0);
+   adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(wnd->window));
+}
+
 //------------
 // 'open' signal: files passed on the command line
 void wxedid_app_open(AdwApplication* app, GFile** files, gint n_files,
@@ -1891,6 +2176,8 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_object_set_data_full(G_OBJECT(window), "wxedid-wnd", wnd,
                            [](gpointer data) {
                               wxedid_wnd* w = (wxedid_wnd*) data;
+                              g_clear_object(&w->tree_filtered);
+                              g_clear_object(&w->tree_filter);
                               g_clear_object(&w->tree_model);
                               delete w->timing;
                               delete w->doc;
@@ -1930,6 +2217,11 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                     G_CALLBACK(wnd_on_details_action), wnd);
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->details_action));
    g_object_unref(wnd->details_action);
+
+   GSimpleAction* about_action = g_simple_action_new("about", NULL);
+   g_signal_connect(about_action, "activate", G_CALLBACK(wnd_on_about_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(about_action));
+   g_object_unref(about_action);
 
    const char* open_accels[] = {"<Control>o", NULL};
    const char* save_accels[] = {"<Control>s", NULL};
@@ -1977,6 +2269,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_menu_append(primary_menu, "Undo", "win.undo");
    g_menu_append(primary_menu, "Redo", "win.redo");
    g_menu_append(primary_menu, "Show details", "win.details");
+   g_menu_append(primary_menu, "About EDID Editor", "win.about");
    GtkWidget* btn_menu = gtk_menu_button_new();
    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(btn_menu), "open-menu-symbolic");
    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(btn_menu), G_MENU_MODEL(primary_menu));
@@ -2002,7 +2295,13 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_signal_connect(factory, "unbind", G_CALLBACK(tree_name_unbind), NULL);
 
    //selection: refresh the field list on change
-   wnd->tree_sel = GTK_SINGLE_SELECTION(gtk_single_selection_new(NULL));
+   wnd->tree_filter = gtk_custom_filter_new(tree_filter_match, wnd, NULL);
+   wnd->tree_filtered = gtk_filter_list_model_new(
+      NULL, GTK_FILTER(g_object_ref(wnd->tree_filter)));
+   g_signal_connect(wnd->tree_filtered, "items-changed",
+                    G_CALLBACK(tree_filter_items_changed), wnd);
+   wnd->tree_sel = GTK_SINGLE_SELECTION(gtk_single_selection_new(
+      G_LIST_MODEL(g_object_ref(wnd->tree_filtered))));
    gtk_single_selection_set_autoselect(wnd->tree_sel, FALSE);
    wnd->tree = GTK_LIST_VIEW(gtk_list_view_new(
       GTK_SELECTION_MODEL(wnd->tree_sel), factory));
@@ -2015,7 +2314,39 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_hexpand(tree_scroll, TRUE);
    gtk_widget_set_vexpand(tree_scroll, TRUE);
 
-   GtkWidget* sidebar = tree_scroll;
+   wnd->tree_search = GTK_SEARCH_ENTRY(gtk_search_entry_new());
+   gtk_search_entry_set_placeholder_text(wnd->tree_search, "Search groups");
+   gtk_accessible_update_property(GTK_ACCESSIBLE(wnd->tree_search),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Search groups", -1);
+   gtk_widget_set_margin_start(GTK_WIDGET(wnd->tree_search), 12);
+   gtk_widget_set_margin_end(GTK_WIDGET(wnd->tree_search), 12);
+   gtk_widget_set_margin_top(GTK_WIDGET(wnd->tree_search), 12);
+   gtk_widget_set_margin_bottom(GTK_WIDGET(wnd->tree_search), 6);
+   g_signal_connect(wnd->tree_search, "search-changed",
+                    G_CALLBACK(tree_search_changed), wnd);
+
+   GtkWidget* search_empty = adw_status_page_new();
+   adw_status_page_set_icon_name(ADW_STATUS_PAGE(search_empty),
+                                 "edit-find-symbolic");
+   adw_status_page_set_title(ADW_STATUS_PAGE(search_empty),
+                             "No matching groups");
+   adw_status_page_set_description(ADW_STATUS_PAGE(search_empty),
+                                   "Try a different search.");
+   GtkWidget* clear_search = gtk_button_new_with_mnemonic("_Clear Search");
+   gtk_widget_set_halign(clear_search, GTK_ALIGN_CENTER);
+   g_signal_connect(clear_search, "clicked", G_CALLBACK(tree_search_clear), wnd);
+   adw_status_page_set_child(ADW_STATUS_PAGE(search_empty), clear_search);
+
+   wnd->sidebar_stack = GTK_STACK(gtk_stack_new());
+   gtk_stack_add_named(wnd->sidebar_stack, tree_scroll, "tree");
+   gtk_stack_add_named(wnd->sidebar_stack, search_empty, "empty");
+   gtk_stack_set_visible_child_name(wnd->sidebar_stack, "tree");
+   gtk_widget_set_vexpand(GTK_WIDGET(wnd->sidebar_stack), TRUE);
+
+   GtkWidget* sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->tree_search));
+   gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->sidebar_stack));
 
    GtkWidget* right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 
@@ -2058,15 +2389,37 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
 
    wnd->timing = new wxedid_timing{};
    wnd->timing->wnd = wnd;
+   wnd->timing->history_index = static_cast<size_t>(-1);
    wnd->timing->page = timing_create_page(wnd->timing);
+
+   wnd->raw_view = GTK_TEXT_VIEW(gtk_text_view_new());
+   gtk_text_view_set_editable(wnd->raw_view, FALSE);
+   gtk_text_view_set_cursor_visible(wnd->raw_view, FALSE);
+   gtk_text_view_set_monospace(wnd->raw_view, TRUE);
+   gtk_text_view_set_wrap_mode(wnd->raw_view, GTK_WRAP_NONE);
+   gtk_text_view_set_left_margin(wnd->raw_view, 18);
+   gtk_text_view_set_right_margin(wnd->raw_view, 18);
+   gtk_text_view_set_top_margin(wnd->raw_view, 12);
+   gtk_text_view_set_bottom_margin(wnd->raw_view, 18);
+   gtk_accessible_update_property(GTK_ACCESSIBLE(wnd->raw_view),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Selected group bytes", -1);
+   GtkWidget* raw_scroll = gtk_scrolled_window_new();
+   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(raw_scroll),
+                                  GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(raw_scroll),
+                                 GTK_WIDGET(wnd->raw_view));
 
    wnd->editor_stack = ADW_VIEW_STACK(adw_view_stack_new());
    adw_view_stack_set_hhomogeneous(wnd->editor_stack, FALSE);
    adw_view_stack_set_vhomogeneous(wnd->editor_stack, FALSE);
    adw_view_stack_add_titled_with_icon(wnd->editor_stack, fields_scroll,
                                        "fields", "Fields", "view-list-symbolic");
-   adw_view_stack_add_titled_with_icon(wnd->editor_stack, wnd->timing->page,
-                                       "timing", "Timing", "video-display-symbolic");
+   wnd->timing_stack_page = adw_view_stack_add_titled_with_icon(
+      wnd->editor_stack, wnd->timing->page,
+      "timing", "Timing", "video-display-symbolic");
+   adw_view_stack_add_titled_with_icon(wnd->editor_stack, raw_scroll,
+                                       "bytes", "Bytes", "document-properties-symbolic");
    gtk_widget_set_vexpand(GTK_WIDGET(wnd->editor_stack), TRUE);
 
    wnd->editor_switcher = adw_view_switcher_new();

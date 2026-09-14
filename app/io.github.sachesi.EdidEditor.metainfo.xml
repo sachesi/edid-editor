@@ -2,20 +2,20 @@
 <component type="desktop-application">
   <id>io.github.sachesi.EdidEditor</id>
   <name>EDID Editor</name>
-  <summary>Extended Display Identification Data editor</summary>
+  <summary>Edit display identification data</summary>
   <metadata_license>FSFAP</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
   <description>
     <p>
       EDID Editor is an editor for EDID (Extended Display Identification Data)
-      structures. It supports EDID v1.3+ base blocks and CTA-861 extension
-      blocks, including the Data Block Collection (audio, video, vendor
-      specific and other data blocks).
-    </p>
-    <p>
-      This is the GTK4/libadwaita port of wxEDID.
+      structures. It supports EDID v1.3+ base blocks, CTA-861 extensions,
+      and DisplayID data blocks. A visual timing editor and synchronized byte
+      view make structured changes easier to inspect.
     </p>
   </description>
+  <developer id="io.github.sachesi">
+    <name>EDID Editor contributors</name>
+  </developer>
   <launchable type="desktop-id">io.github.sachesi.EdidEditor.desktop</launchable>
   <url type="homepage">https://sourceforge.net/projects/wxedid/</url>
   <provides>
@@ -24,7 +24,10 @@
   <releases>
     <release version="0.1.0" date="2026-09-11">
       <description>
-        <p>Initial GTK4/libadwaita port of the EDID/CTA-861 core parser.</p>
+        <p>
+          Initial GTK application with structured field editing, visual timing
+          controls, search, byte inspection, and Undo and Redo support.
+        </p>
       </description>
     </release>
   </releases>

@@ -1,4 +1,22 @@
 
+EDID Editor
+===========
+
+Build and test the GTK 4 application with Meson:
+
+    meson setup builddir
+    meson compile -C builddir
+    meson test -C builddir
+
+Run it with an EDID binary:
+
+    builddir/app/edid-editor path/to/edid.bin
+
+Install to the configured prefix with:
+
+    meson install -C builddir
+
+
 CTA-861 version:
 CTA-861-H Standard from January 2021
 
@@ -72,5 +90,4 @@ CTA-861-H Standard from January 2021
 
 If You'll find any bugs, please don't hesitate to contact me:
 tomasz.pawlak@wp.eu
-
 

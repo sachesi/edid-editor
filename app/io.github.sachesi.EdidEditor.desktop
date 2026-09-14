@@ -2,9 +2,10 @@
 Type=Application
 Name=EDID Editor
 GenericName=EDID Editor
-Comment=Extended Display Identification Data editor
+Comment=Inspect and edit display identification data
 Exec=edid-editor %f
-Icon=video-display
+Icon=io.github.sachesi.EdidEditor
 Terminal=false
+StartupNotify=true
 Categories=System;HardwareSettings;GTK;
-Keywords=EDID;display;monitor;CTA-861;
+Keywords=EDID;display;monitor;CTA-861;DisplayID;
