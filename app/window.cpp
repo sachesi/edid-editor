@@ -473,6 +473,7 @@ static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
       timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
       wnd_refresh_raw_view(r->wnd);
       wnd_request_refresh(r->wnd, r->pgrp, r->pfld, RCD_IS_TRUE(retU), false);
+      wnd_update_document_ui(r->wnd);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
       row_set_valid(r, false);
@@ -515,6 +516,7 @@ static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer
       timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
       wnd_refresh_raw_view(r->wnd);
       wnd_request_refresh(r->wnd, r->pgrp, r->pfld, RCD_IS_TRUE(retU), true);
+      wnd_update_document_ui(r->wnd);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(dd), "error");
       row_set_valid(r, false);

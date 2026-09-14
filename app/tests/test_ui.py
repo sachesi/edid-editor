@@ -321,6 +321,10 @@ def functional(Atspi, app, fixture):
             pixel_entry.get_editable_text_iface().set_text_contents(original_pixel_text)
             wait_for(lambda: named(Atspi, "Enter a valid value", Atspi.Role.LABEL) is None,
                      "field-local validation detail did not clear")
+            pixel_entry.get_editable_text_iface().set_text_contents("241.51")
+            wait_for(lambda: any(name_of(node).startswith("Modified") for node in nodes(Atspi)),
+                     "a valid entry edit did not mark the EDID as modified")
+            activate_menu_item(Atspi, "Undo")
 
             press(Atspi, "Bytes")
             raw = wait_for(lambda: named(Atspi, "Selected group bytes"),
