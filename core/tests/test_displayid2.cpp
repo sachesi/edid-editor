@@ -154,6 +154,15 @@ int main(int argc, char* argv[]) {
          (value_of(EDID, amd, "Version") == 3) && (value_of(EDID, amd, "Min_Refresh") == 40) &&
          (value_of(EDID, amd, "Max_Refresh") == 60),
          "AMD block inside DisplayID decodes its refresh range");
+   wxc_String luminance;
+   u32_t code = 0;
+   edi_dynfld_t* max_lum = find_field(amd, "Max_Luminance");
+   edi_dynfld_t* min_lum = find_field(amd, "Min_Luminance");
+   if (max_lum != NULL) (EDID.*max_lum->field.handlerfn)(OP_READ, luminance, code, max_lum);
+   wxc_String minimum;
+   if (min_lum != NULL) (EDID.*min_lum->field.handlerfn)(OP_READ, minimum, code, min_lum);
+   check((luminance == wxc_String("400.00")) && (minimum == wxc_String("0.4238")),
+         "AMD luminance decodes to cd/m^2");
    edi_buf_t before;
    std::memcpy(&before, EDID.getEDID(), sizeof(before));
    edi_dynfld_t* version = find_field(amd, "Version");

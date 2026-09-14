@@ -19,6 +19,7 @@
 RCD_AUTOGEN_DEFINE_UNIT
 
 #include <stddef.h>
+#include <cmath>
 
 #include "CEA.h"
 #include "CEA_class.h"
@@ -1284,6 +1285,80 @@ rcode EDID_cl::HF_VRRmax(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* 
    return retU;
 }
 
+//Luminance codes (CTA-861.3, AMD FreeSync): the maximum is 50 * 2^(code/32)
+//cd/m^2, the minimum is relative to a maximum: max * (code/255)^2 / 100.
+//The integer value is the stored code.
+static double max_luminance(u32_t code) {
+   return 50.0 * std::pow(2.0, code / 32.0);
+}
+
+rcode EDID_cl::Luminance(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_field) {
+   rcode  retU;
+   u8_t  *inst;
+
+   inst = getValPtr(p_field);
+
+   if (op == OP_READ) {
+      ival = inst[0];
+      sval.Printf("%.2f", max_luminance(ival));
+      RCD_RETURN_OK(retU);
+   }
+
+   long code;
+   if (op == OP_WRSTR) {
+      float value;
+      retU = getStrFloat(sval, 50.0, max_luminance(255) + 0.005, value);
+      if (! RCD_IS_OK(retU)) return retU;
+      code = std::lround(32.0 * std::log2(value / 50.0));
+   } else if (op == OP_WRINT) {
+      code = ival;
+   } else {
+      RCD_RETURN_FAULT(retU); //wrong op code
+   }
+   if ((code < 0) || (code > 255)) RCD_RETURN_FAULT(retU);
+   inst[0] = code;
+   RCD_RETURN_OK(retU);
+}
+
+rcode EDID_cl::MinLuminance(u32_t op, wxc_String& sval, u32_t& ival, u8_t* inst,
+                            u32_t max_code) {
+   rcode  retU;
+   double maxv = max_luminance(max_code);
+
+   if (op == OP_READ) {
+      ival = inst[0];
+      sval.Printf("%.4f", maxv * std::pow(ival / 255.0, 2) / 100.0);
+      RCD_RETURN_OK(retU);
+   }
+
+   long code;
+   if (op == OP_WRSTR) {
+      float value;
+      retU = getStrFloat(sval, 0.0, (maxv / 100.0) + 0.00005, value);
+      if (! RCD_IS_OK(retU)) return retU;
+      code = std::lround(255.0 * std::sqrt(value * 100.0 / maxv));
+   } else if (op == OP_WRINT) {
+      code = ival;
+   } else {
+      RCD_RETURN_FAULT(retU); //wrong op code
+   }
+   if ((code < 0) || (code > 255)) RCD_RETURN_FAULT(retU);
+   inst[0] = code;
+   RCD_RETURN_OK(retU);
+}
+
+//HDRS: the maximum luminance is 2 bytes before the minimum
+rcode EDID_cl::HDRS_MinLum(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_field) {
+   u8_t* inst = getValPtr(p_field);
+   return MinLuminance(op, sval, ival, inst, inst[-2]);
+}
+
+//AMD VSD: the maximum luminance is the byte before the minimum
+rcode EDID_cl::AMD_MinLum(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_field) {
+   u8_t* inst = getValPtr(p_field);
+   return MinLuminance(op, sval, ival, inst, inst[-1]);
+}
+
 //HDMI Forum payload, shared by the HF-VSDB (VSD with OUI C4-5D-D8) and the
 //HF-SCDB (Extended Tag Code 121): both place it at byte 4 of the block.
 static const char HF_FRL_Desc[] =
@@ -1551,14 +1626,18 @@ static const edi_field_t AMD_hdr_fld[] = {
    {&EDID_cl::ByteVal, 0, 9, 0, 1, F_BTE|F_HEX, 0, 0xFF, "Flags_2x",
    "FreeSync 2.x flags:\nbit2= PQ EOTF\nbits6-7: 1= Mini LED, 2= OLED\n"
    "other bits are undocumented" },
-   {&EDID_cl::ByteVal, 0, 10, 0, 1, F_BTE|F_INT, 0, 0xFF, "Max_Luminance",
-   "Maximum luminance code: 50 * 2^(value/32) cd/m^2." },
-   {&EDID_cl::ByteVal, 0, 11, 0, 1, F_BTE|F_INT, 0, 0xFF, "Min_Luminance",
-   "Minimum luminance code, relative to the maximum luminance." },
-   {&EDID_cl::ByteVal, 0, 12, 0, 1, F_BTE|F_INT, 0, 0xFF, "Max_Luminance_2",
-   "Maximum luminance without local dimming, or at minimum backlight." },
-   {&EDID_cl::ByteVal, 0, 13, 0, 1, F_BTE|F_INT, 0, 0xFF, "Min_Luminance_2",
-   "Minimum luminance without local dimming, or at minimum backlight." }
+   {&EDID_cl::Luminance, 0, 10, 0, 1, F_FLT|F_CDM2|F_FR, 0, 0xFF, "Max_Luminance",
+   "Maximum luminance: 50 * 2^(code/32) cd/m^2.\n"
+   "A new value is rounded to the nearest code." },
+   {&EDID_cl::AMD_MinLum, 0, 11, 0, 1, F_FLT|F_CDM2, 0, 0xFF, "Min_Luminance",
+   "Minimum luminance: Max_Luminance * (code/255)^2 / 100 cd/m^2.\n"
+   "A new value is rounded to the nearest code." },
+   {&EDID_cl::Luminance, 0, 12, 0, 1, F_FLT|F_CDM2|F_FR, 0, 0xFF, "Max_Luminance_2",
+   "Maximum luminance without local dimming, or at minimum backlight: "
+   "50 * 2^(code/32) cd/m^2." },
+   {&EDID_cl::AMD_MinLum, 0, 13, 0, 1, F_FLT|F_CDM2, 0, 0xFF, "Min_Luminance_2",
+   "Minimum luminance without local dimming, or at minimum backlight: "
+   "Max_Luminance_2 * (code/255)^2 / 100 cd/m^2." }
 };
 
 static const edi_field_t AMD_max3_fld[] = {

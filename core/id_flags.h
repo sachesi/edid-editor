@@ -166,9 +166,9 @@ enum { //EDID field flags
    F_STR    = 0x00040000, //text/byte string
    F_LE     = 0x00080000, //Little Endian byte order : reverse the byte order in byte strings
    //byte2, byte3.bit0: val unit
-   F_UN_CNT = 9,
+   F_UN_CNT = 10,
    F_UN_SFT = 20,
-   F_UN_MSK = 0x1FF,
+   F_UN_MSK = 0x3FF,
    F_PIX    = 0x00100000, //pixels
    F_MM     = 0x00200000, //
    F_CM     = 0x00400000, //
@@ -178,8 +178,9 @@ enum { //EDID field flags
    F_MHZ    = 0x04000000, //
    F_MLS    = 0x08000000, //milliseconds
    F_PCT    = 0x10000000, //percent
-   //byte3.bit1..7: other flags
-   F_VSVM   = 0x20000000  //value selector: value stored in vmap_ent_t, not in item id
+   F_CDM2   = 0x20000000, //candela per square metre
+   //byte3.bit2..7: other flags
+   F_VSVM   = 0x40000000  //value selector: value stored in vmap_ent_t, not in item id
 };
 
 #endif /* ID_FLAGS_H */

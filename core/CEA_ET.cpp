@@ -789,12 +789,15 @@ const edi_field_t cea_hdrs_cl::fld_byte_2_3_dsc[] = {
 
 const edi_field_t cea_hdrs_cl::fld_opt_byte_4_5_6_dsc[] = {
    //byte 4,5,6
-   {&EDID_cl::ByteVal, 0, 4, 0, 1, F_BTE|F_INT|F_RD, 0, 0xFF, "max_lum",
-   "(Optional) Desired Content Max Luminance data (8 bits)" },
-   {&EDID_cl::ByteVal, 0, 5, 0, 1, F_BTE|F_INT|F_RD, 0, 0xFF, "avg_lum",
-   "(Optional) Desired Content Max Frame-average Luminance data (8 bits)" },
-   {&EDID_cl::ByteVal, 0, 6, 0, 1, F_BTE|F_INT|F_RD, 0, 0xFF, "min_lum",
-   "(Optional) Desired Content Min Luminance data (8 bits)" }
+   {&EDID_cl::Luminance, 0, 4, 0, 1, F_FLT|F_CDM2|F_FR, 0, 0xFF, "max_lum",
+   "(Optional) Desired Content Max Luminance: 50 * 2^(code/32) cd/m^2.\n"
+   "A new value is rounded to the nearest code." },
+   {&EDID_cl::Luminance, 0, 5, 0, 1, F_FLT|F_CDM2, 0, 0xFF, "avg_lum",
+   "(Optional) Desired Content Max Frame-average Luminance: 50 * 2^(code/32) cd/m^2.\n"
+   "A new value is rounded to the nearest code." },
+   {&EDID_cl::HDRS_MinLum, 0, 6, 0, 1, F_FLT|F_CDM2, 0, 0xFF, "min_lum",
+   "(Optional) Desired Content Min Luminance: max_lum * (code/255)^2 / 100 cd/m^2.\n"
+   "A new value is rounded to the nearest code." }
 };
 
 const dbc_flatgp_dsc_t cea_hdrs_cl::HDRS_grp = {

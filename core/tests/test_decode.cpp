@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_decode.cpp
- * Purpose:   value decoding: standard timing codes, native SVDs, labels
+ * Purpose:   value decoding: standard timing codes, native SVDs, labels,
+ *            HDR luminance
  * License:   GPLv3+
  **************************************************************/
 
@@ -75,6 +76,22 @@ static bool write(EDID_cl& EDID, edi_grp_cl* group, const char* name, u32_t valu
    return RCD_IS_OK((EDID.*field->field.handlerfn)(OP_WRINT, text, value, field));
 }
 
+static wxc_String text_of(EDID_cl& EDID, edi_grp_cl* group, const char* name) {
+   wxc_String text;
+   u32_t value = 0;
+   edi_dynfld_t* field = find_field(group, name);
+   if (field != NULL) (EDID.*field->field.handlerfn)(OP_READ, text, value, field);
+   return text;
+}
+
+static bool write_text(EDID_cl& EDID, edi_grp_cl* group, const char* name, const char* text) {
+   edi_dynfld_t* field = find_field(group, name);
+   if (field == NULL) return false;
+   wxc_String value = text;
+   u32_t unused = 0;
+   return RCD_IS_OK((EDID.*field->field.handlerfn)(OP_WRSTR, value, unused, field));
+}
+
 static wxc_String label_of(EDID_cl& EDID, edi_grp_cl* group, const char* name) {
    wxc_String label;
    edi_dynfld_t* field = find_field(group, name);
@@ -113,6 +130,11 @@ int main(int argc, char* argv[]) {
    std::memcpy(&buffer->blk[0][38], std_timings, sizeof(std_timings));
    buffer->blk[1][5] = 0x90;  //VIC 16, native
    buffer->blk[1][6] = 193;   //8-bit VIC
+   //HDR static metadata block before the DTD
+   static const u8_t hdr_static[] = {0xE6, 0x06, 0x07, 0x01, 99, 93, 14};
+   std::memmove(&buffer->blk[1][16 + sizeof(hdr_static)], &buffer->blk[1][16], 18);
+   std::memcpy(&buffer->blk[1][16], hdr_static, sizeof(hdr_static));
+   buffer->blk[1][2] = 16 + sizeof(hdr_static);
    EDID.genChksum(0);
    EDID.genChksum(1);
    check(parse(EDID), "parse the patched fixture");
@@ -158,6 +180,29 @@ int main(int argc, char* argv[]) {
          (svd_byte(EDID, 5) == 0x90), "native flag sets the native bit");
    check(write(EDID, native, "Native", 0) && (svd_byte(EDID, 5) == 16),
          "native flag clears the native bit");
+
+   //HDR luminance in cd/m^2, values as printed by edid-decode
+   edi_grp_cl* hdr = find_group(cta, "HDRS", 0);
+   check((text_of(EDID, hdr, "max_lum") == wxc_String("426.86")) &&
+         (text_of(EDID, hdr, "avg_lum") == wxc_String("374.83")) &&
+         (text_of(EDID, hdr, "min_lum") == wxc_String("0.0129")),
+         "HDR luminance decodes to cd/m^2");
+   wxc_String unit;
+   edi_dynfld_t* max_lum = find_field(hdr, "max_lum");
+   if (max_lum != NULL) EDID.getValUnitName(unit, max_lum->field.flags);
+   check(unit == wxc_String("cd/m²"), "luminance has a unit");
+   check(write_text(EDID, hdr, "max_lum", "400") && (value_of(EDID, hdr, "max_lum") == 96) &&
+         (text_of(EDID, hdr, "max_lum") == wxc_String("400.00")),
+         "maximum luminance is stored as the nearest code");
+   check(text_of(EDID, hdr, "min_lum") == wxc_String("0.0121"),
+         "minimum luminance follows the maximum");
+   check(write_text(EDID, hdr, "min_lum", "0.05") && (value_of(EDID, hdr, "min_lum") == 29),
+         "minimum luminance is stored as the nearest code");
+   check(! write_text(EDID, hdr, "max_lum", "20") && ! write_text(EDID, hdr, "min_lum", "5") &&
+         (value_of(EDID, hdr, "max_lum") == 96) && (value_of(EDID, hdr, "min_lum") == 29),
+         "luminance outside the code range is refused");
+   check(RCD_IS_OK(EDID.AssembleEDID()) && (buffer->blk[1][20] == 96) &&
+         (buffer->blk[1][22] == 29), "luminance codes are written back");
 
    std::printf("---\n%s\n", failures == 0 ? "ALL OK" : "FAILURES PRESENT");
    return failures == 0 ? 0 : 1;

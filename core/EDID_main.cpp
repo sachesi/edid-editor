@@ -59,7 +59,8 @@ const wxc_String EDID_cl::val_unit_name[] = {
    "kHz", //F_KHZ
    "MHz", //F_MHZ
    "ms",  //F_MLS
-   "%"    //F_PCT
+   "%",    //F_PCT
+   "cd/m²" //F_CDM2
 };
 
 void EDID_cl::getValUnitName(wxc_String& sval, const u32_t flags) {

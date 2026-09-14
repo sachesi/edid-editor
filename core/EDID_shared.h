@@ -494,6 +494,11 @@ class EDID_cl {
       rcode VSD_ltncy    (__EDID_HDL_ARGS);
       rcode VSD_MaxTMDS  (__EDID_HDL_ARGS);
       rcode HF_VRRmax    (__EDID_HDL_ARGS);
+      //CEA:HDRS, AMD VSD: luminance codes
+      rcode Luminance    (__EDID_HDL_ARGS);
+      rcode HDRS_MinLum  (__EDID_HDL_ARGS);
+      rcode AMD_MinLum   (__EDID_HDL_ARGS);
+      rcode MinLuminance (u32_t op, wxc_String& sval, u32_t& ival, u8_t* inst, u32_t max_code);
       //CEA-ET: VDDD
       rcode VDDD_IF_MaxF   (__EDID_HDL_ARGS);
       rcode VDDD_HVpix_cnt (__EDID_HDL_ARGS);
