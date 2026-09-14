@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      window.cpp
  * Purpose:   main application window (GTK4/libadwaita)
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

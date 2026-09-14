@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      DisplayID_class.h
  * Purpose:   DisplayID extension groups
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

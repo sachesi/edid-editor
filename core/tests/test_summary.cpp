@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_summary.cpp
  * Purpose:   EDID overview items
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

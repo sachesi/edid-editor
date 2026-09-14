@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_corpus.cpp
  * Purpose:   parse, assemble, checksum, and reparse EDID corpus
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

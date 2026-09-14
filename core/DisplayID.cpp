@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      DisplayID.cpp
  * Purpose:   DisplayID extension parsing and editable groups
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

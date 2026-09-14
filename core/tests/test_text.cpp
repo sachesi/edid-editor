@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_text.cpp
  * Purpose:   hexadecimal import/export and text report tests
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

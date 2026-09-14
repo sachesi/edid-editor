@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      EDID_text.h
  * Purpose:   EDID hexadecimal text import/export and text reports
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

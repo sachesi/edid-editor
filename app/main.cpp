@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      main.cpp
  * Purpose:   EDID Editor GTK4/libadwaita application entry point
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

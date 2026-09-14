@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_hdmi_forum.cpp
  * Purpose:   vendor-specific and HDMI Forum data block decoding
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

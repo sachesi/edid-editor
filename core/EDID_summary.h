@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      EDID_summary.h
  * Purpose:   short overview of a parsed EDID
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_displayid.cpp
  * Purpose:   DisplayID parse, edit, reassembly, and validation
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

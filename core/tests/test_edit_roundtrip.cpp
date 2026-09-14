@@ -2,6 +2,7 @@
  * Name:      test_edit_roundtrip.cpp
  * Purpose:   headless edit-path test: read field, write new value
  *            (OP_WRINT/OP_WRSTR), assemble, checksum, verify.
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

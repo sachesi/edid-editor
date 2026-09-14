@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_rebuild.cpp
  * Purpose:   group rebuilds after type and layout field changes
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

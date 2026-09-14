@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_reload_ownership.cpp
  * Purpose:   verify owned group cleanup and repeated EDID parsing.
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

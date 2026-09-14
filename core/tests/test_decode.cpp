@@ -2,6 +2,7 @@
  * Name:      test_decode.cpp
  * Purpose:   value decoding: standard timing codes, range limits,
  *            native SVDs, labels, HDR luminance
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

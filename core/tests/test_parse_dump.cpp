@@ -2,6 +2,7 @@
  * Name:      test_parse_dump.cpp
  * Purpose:   headless smoke test: parse EDID binaries with the
  *            ported core, dump group tree + field values.
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

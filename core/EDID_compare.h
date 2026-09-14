@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      EDID_compare.h
  * Purpose:   field-level differences between two parsed EDIDs
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

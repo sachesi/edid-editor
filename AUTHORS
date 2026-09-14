@@ -1,3 +1,8 @@
-Developers:
+EDID Editor:
+
+	sachesi <xsachesi@pm.me>
+
+wxEDID, the editor EDID Editor is based on; its EDID parser is the core
+in core/ (Copyright (C) 2014-2025 Tomasz Pawlak):
 
 	Tomasz Pawlak <tomasz.pawlak@wp.eu>

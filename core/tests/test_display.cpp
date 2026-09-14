@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_display.cpp
  * Purpose:   connected display listing from a sysfs-like tree
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

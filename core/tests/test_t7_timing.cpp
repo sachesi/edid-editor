@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_t7_timing.cpp
  * Purpose:   CTA Type VII timing parse, edit, and reassembly
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

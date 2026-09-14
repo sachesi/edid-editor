@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_displayid2.cpp
  * Purpose:   DisplayID 2.x Type VII timing and range limit blocks
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

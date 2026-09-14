@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      EDID_display.cpp
  * Purpose:   EDID data of connected displays, read from sysfs
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

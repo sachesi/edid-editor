@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_compare.cpp
  * Purpose:   differences between two EDIDs
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

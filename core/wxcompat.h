@@ -4,6 +4,7 @@
  *            wxEDID core parser (de-wx'ed GTK4 port).
  *            Implements exactly the wxString API subset used by
  *            the EDID/CEA core, with wxWidgets semantics.
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 

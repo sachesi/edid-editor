@@ -1,6 +1,7 @@
 /***************************************************************
  * Name:      test_structure_edit.cpp
  * Purpose:   structural group editing and safe template tests
+ * Copyright: sachesi (C) 2026
  * License:   GPLv3+
  **************************************************************/
 
