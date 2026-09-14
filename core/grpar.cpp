@@ -449,8 +449,67 @@ bool EDID_GrpAr_cl::CanInsertDn(u32_t idx, edi_grp_cl* pgrp) {
    return bret;
 }
 
-//CEA groups  array
+//CTA and DisplayID extension groups array
+bool CEA_GrpAr_cl::IsDisplayID() {
+   if (GetCount() == 0) return false;
+   return ((Item(0)->getTypeID().t32 & ID_PARENT_MASK) == ID_DISPLAYID);
+}
+
+i32_t CEA_GrpAr_cl::DisplayIDInsertSpace() {
+   i32_t available = free_sz;
+   if ((GetCount() > 1) &&
+       ((Item(GetCount() - 1)->getTypeID().t32 & ID_PARENT_MASK) ==
+        ID_DISPLAYID_PADDING)) {
+      available += Item(GetCount() - 1)->getTotalSize();
+   }
+   return available;
+}
+
+bool CEA_GrpAr_cl::DisplayIDTypeCheck(edi_grp_cl* pgrp) {
+   return (pgrp != NULL) &&
+      ((pgrp->getTypeID().t32 & ID_PARENT_MASK) == ID_DISPLAYID_DB) &&
+      (static_cast<i32_t>(pgrp->getTotalSize()) <= DisplayIDInsertSpace());
+}
+
+void CEA_GrpAr_cl::DisplayIDReserve(u32_t size) {
+   u32_t count = GetCount();
+   if ((count > 1) &&
+       ((Item(count - 1)->getTypeID().t32 & ID_PARENT_MASK) ==
+        ID_DISPLAYID_PADDING)) {
+      edi_grp_cl* padding = Item(count - 1);
+      u32_t padding_size = padding->getTotalSize();
+      if (padding_size > size) {
+         padding->setDataSize(padding_size - size);
+         CalcDataSZ(NULL);
+         return;
+      }
+      delete base_Cut(count - 1);
+      size -= padding_size;
+      if (size == 0) return;
+   }
+
+   Item(0)->getInstPtr()[2] += size;
+   CalcDataSZ(NULL);
+}
+
+void CEA_GrpAr_cl::DisplayIDRelease(u32_t size) {
+   u32_t count = GetCount();
+   if ((count > 1) &&
+       ((Item(count - 1)->getTypeID().t32 & ID_PARENT_MASK) ==
+        ID_DISPLAYID_PADDING)) {
+      edi_grp_cl* padding = Item(count - 1);
+      padding->setDataSize(padding->getTotalSize() + size);
+   } else {
+      Item(0)->getInstPtr()[2] -= size;
+   }
+   CalcDataSZ(NULL);
+}
+
 bool CEA_GrpAr_cl::CanMoveUp(u32_t idx) {
+   if (IsDisplayID()) {
+      if ((idx <= 1) || (idx >= GetCount())) return false;
+      return ((Item(idx)->getTypeID().t32 & ID_PARENT_MASK) == ID_DISPLAYID_DB);
+   }
    edi_grp_cl *pgrp;
    bool        b_DTD;
    gtid_t      tid;
@@ -482,6 +541,11 @@ bool CEA_GrpAr_cl::CanMoveUp(u32_t idx) {
 }
 
 bool CEA_GrpAr_cl::CanMoveDn(u32_t idx) {
+   if (IsDisplayID()) {
+      if ((idx == 0) || (idx + 1 >= GetCount())) return false;
+      return ((Item(idx)->getTypeID().t32 & ID_PARENT_MASK) == ID_DISPLAYID_DB) &&
+         ((Item(idx + 1)->getTypeID().t32 & ID_PARENT_MASK) == ID_DISPLAYID_DB);
+   }
    bool        bret;
    gtid_t      tid;
    edi_grp_cl *pgrp;
@@ -511,6 +575,10 @@ void CEA_GrpAr_cl::CalcDataSZ(edi_grp_cl *pgrp) {
 #pragma GCC diagnostic warning "-Wunused-parameter"
 
 bool CEA_GrpAr_cl::CanInsertUp(u32_t idx, edi_grp_cl* pgrp) {
+   if (IsDisplayID()) {
+      if ((idx == 0) || (idx >= GetCount())) return false;
+      return DisplayIDTypeCheck(pgrp);
+   }
    bool        bret;
    gtid_t      tid;
    gtid_t      tid_dst;
@@ -546,6 +614,12 @@ bool CEA_GrpAr_cl::CanInsertUp(u32_t idx, edi_grp_cl* pgrp) {
 }
 
 bool CEA_GrpAr_cl::CanInsertDn(u32_t idx, edi_grp_cl* pgrp) {
+   if (IsDisplayID()) {
+      if ((idx == 0) || (idx >= GetCount())) return false;
+      if ((Item(idx)->getTypeID().t32 & ID_PARENT_MASK) == ID_DISPLAYID_PADDING)
+         return false;
+      return DisplayIDTypeCheck(pgrp);
+   }
    bool        bret;
    gtid_t      tid;
    gtid_t      tid_dst;
@@ -584,6 +658,33 @@ bool CEA_GrpAr_cl::CanInsertDn(u32_t idx, edi_grp_cl* pgrp) {
    bret  = (ID_DTD != tid_dst.base_id);
 
    return bret;
+}
+
+edi_grp_cl* CEA_GrpAr_cl::Cut(u32_t idx) {
+   if (! IsDisplayID()) return base_Cut(idx);
+   u32_t size = Item(idx)->getTotalSize();
+   edi_grp_cl* result = base_Cut(idx);
+   DisplayIDRelease(size);
+   return result;
+}
+
+void CEA_GrpAr_cl::Delete(u32_t idx) {
+   if (! IsDisplayID()) {
+      base_Delete(idx);
+      return;
+   }
+   edi_grp_cl* group = Cut(idx);
+   delete group;
+}
+
+void CEA_GrpAr_cl::InsertUp(u32_t idx, edi_grp_cl* pgrp) {
+   if (IsDisplayID()) DisplayIDReserve(pgrp->getTotalSize());
+   base_InsertUp(idx, pgrp);
+}
+
+void CEA_GrpAr_cl::InsertDn(u32_t idx, edi_grp_cl* pgrp) {
+   if (IsDisplayID()) DisplayIDReserve(pgrp->getTotalSize());
+   base_InsertDn(idx, pgrp);
 }
 
 //DBC sub-groups array

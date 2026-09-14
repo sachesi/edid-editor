@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """Generate synthetic EDID test data.
 
-Produces four binaries used by the headless core tests:
+Produces seven binaries used by the headless core tests:
   sample_base.bin : EDID 1.3 base block (DTD 640x480@60, MND text descriptor)
   sample_cea.bin  : base block + CTA-861 ext (VDB, HDMI VSDB, one DTD)
   sample_cea_displayid.bin : base + CTA-861 + DisplayID extension
   sample_cea_t7.bin : base + CTA-861 Type VII detailed timing
+  sample_cea_audio.bin : base + CTA-861 LPCM and extended audio descriptors
+  sample_displayid_compact.bin : base + DisplayID without trailing payload padding
+  sample_displayid_short_padding.bin : base + DisplayID with four padding bytes
 
 Usage: gen_sample_edid.py <out_dir>
 """
@@ -90,6 +93,22 @@ def cea_t7_block():
     return chksum(e)
 
 
+def cea_audio_block():
+    e = bytearray(128)
+    e[0] = 0x02
+    e[1] = 0x03
+    payload = bytes([
+        0x26,                         # ADB, two SADs
+        0x09, 0x07, 0x07,             # LPCM, 2 channels, 32/44.1/48 kHz
+        0x79, 0x07, 0x20,             # AFC 15, ACE 4, 2 channels
+        0x41, 16,                     # VDB, 1080p60
+        0x83, 0x01, 0x00, 0x00,       # speaker allocation
+    ])
+    e[4:4 + len(payload)] = payload
+    e[2] = 4 + len(payload)
+    return chksum(e)
+
+
 def displayid_block():
     e = bytearray(128)
     e[0] = 0x70                            # DisplayID extension tag
@@ -118,6 +137,24 @@ def displayid_block():
     return chksum(e)
 
 
+def compact_displayid_block():
+    e = displayid_block()
+    e[2] = 48                         # two data blocks, no zero padding
+    e[54:127] = bytes(73)
+    checksum_offset = 5 + e[2]
+    e[checksum_offset] = (-sum(e[1:checksum_offset])) & 0xff
+    return chksum(e)
+
+
+def short_padding_displayid_block():
+    e = compact_displayid_block()
+    e[2] = 52                         # two data blocks, four padding bytes
+    e[53] = 0
+    checksum_offset = 5 + e[2]
+    e[checksum_offset] = (-sum(e[1:checksum_offset])) & 0xff
+    return chksum(e)
+
+
 def main():
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
     base = base_block()
@@ -135,6 +172,15 @@ def main():
     with open(os.path.join(out_dir, "sample_cea_t7.bin"), "wb") as f:
         f.write(bytes(base_cea) + bytes(cea_t7_block()))
 
+    with open(os.path.join(out_dir, "sample_cea_audio.bin"), "wb") as f:
+        f.write(bytes(base_cea) + bytes(cea_audio_block()))
+
+    with open(os.path.join(out_dir, "sample_displayid_compact.bin"), "wb") as f:
+        f.write(bytes(base_cea) + bytes(compact_displayid_block()))
+
+    with open(os.path.join(out_dir, "sample_displayid_short_padding.bin"), "wb") as f:
+        f.write(bytes(base_cea) + bytes(short_padding_displayid_block()))
+
     base_multi = bytearray(base)
     base_multi[126] = 2                    # two extension blocks
     chksum(base_multi)
@@ -142,8 +188,7 @@ def main():
     with open(os.path.join(out_dir, "sample_cea_displayid.bin"), "wb") as f:
         f.write(bytes(base_multi) + bytes(cea_block()) + bytes(displayid_block()))
 
-    print("wrote sample_base.bin, sample_cea.bin, sample_cea_displayid.bin, "
-          "sample_cea_t7.bin to", out_dir)
+    print("wrote seven EDID samples to", out_dir)
 
 
 if __name__ == "__main__":

@@ -79,6 +79,14 @@ struct wxedid_wnd {
    GSimpleAction*      undo_action;
    GSimpleAction*      redo_action;
    GSimpleAction*      details_action;
+   GSimpleAction*      duplicate_action;
+   GSimpleAction*      delete_action;
+   GSimpleAction*      move_up_action;
+   GSimpleAction*      move_down_action;
+   GSimpleAction*      add_cta_action;
+   GSimpleAction*      add_displayid_action;
+   GtkPopoverMenu*     group_menu;
+   edi_grp_cl*         pending_delete;
    std::string         tree_query;
    std::vector<wxedid_history_entry> history;
    size_t              history_position;
@@ -139,12 +147,18 @@ static void wnd_show_error(wxedid_wnd* wnd, const char* message);
 static void wnd_update_header_controls(wxedid_wnd* wnd);
 static void wnd_refresh_selected_tree_label(wxedid_wnd* wnd);
 static void wnd_refresh_raw_view(wxedid_wnd* wnd);
+static void wnd_update_group_actions(wxedid_wnd* wnd);
+static void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group);
+static void wnd_popup_group_menu(wxedid_wnd* wnd, double x, double y);
+static void wnd_on_tree_item_context(GtkGestureClick*, int, double, double,
+                                     gpointer user_data);
 static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
                               EDID_cl* pEDID);
 static void wnd_record_history(wxedid_wnd* wnd, edi_grp_cl* group,
                                edi_dynfld_t* field, bool integer,
                                const wxc_String& before_text, u32_t before_value,
                                const wxc_String& after_text, u32_t after_value);
+static std::string field_display_name(const char* name);
 
 static void wnd_refresh_group_title(wxedid_wnd* wnd, edi_grp_cl* pgrp) {
    if (pgrp == NULL) return;
@@ -245,6 +259,7 @@ struct wxedid_row {
    wxedid_wnd*   wnd;
    int           kind;
    GtkWidget*    entry;  //GtkEditable | GtkDropDown
+   GtkLabel*     error_label;
    u32_t         sel_idx; //dropdown item value
    bool          valid;
    bool          editing;
@@ -277,6 +292,26 @@ static void row_set_valid(wxedid_row* row, bool valid) {
       row->wnd->invalid_fields++;
    }
    wnd_update_document_ui(row->wnd);
+}
+
+static void row_show_validation(wxedid_row* row, rcode result) {
+   char detail[512];
+   wxedid_RCD_GET_MSG(result, detail, sizeof(detail));
+   const char* message = detail;
+   if (g_str_has_prefix(message, "[E!] ")) message += 5;
+   gtk_label_set_text(row->error_label, message);
+   gtk_widget_set_visible(GTK_WIDGET(row->error_label), TRUE);
+
+   std::string field = field_display_name(row->pfld->field.name);
+   char banner[680];
+   snprintf(banner, sizeof(banner), "%s: %s", field.c_str(), message);
+   adw_banner_set_title(row->wnd->banner, banner);
+   adw_banner_set_button_label(row->wnd->banner, NULL);
+}
+
+static void row_clear_validation(wxedid_row* row) {
+   gtk_label_set_text(row->error_label, "");
+   gtk_widget_set_visible(GTK_WIDGET(row->error_label), FALSE);
 }
 
 static void wnd_record_edit_history(wxedid_wnd* wnd, edi_grp_cl* group,
@@ -367,6 +402,7 @@ static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
                             before_text, before_value, after_text, after_value);
       }
       gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
+      row_clear_validation(r);
       row_set_valid(r, true);
       wnd_refresh_group_title(r->wnd, r->pgrp);
       wnd_refresh_selected_tree_label(r->wnd);
@@ -375,6 +411,7 @@ static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
       row_set_valid(r, false);
+      row_show_validation(r, retU);
    }
 }
 
@@ -406,6 +443,7 @@ static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer
       wnd_record_history(r->wnd, r->pgrp, r->pfld, true,
                          before_text, before_value, after_text, after_value);
       gtk_widget_remove_css_class(GTK_WIDGET(dd), "error");
+      row_clear_validation(r);
       row_set_valid(r, true);
       wnd_refresh_group_title(r->wnd, r->pgrp);
       wnd_refresh_selected_tree_label(r->wnd);
@@ -414,6 +452,7 @@ static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(dd), "error");
       row_set_valid(r, false);
+      row_show_validation(r, retU);
    }
 }
 
@@ -533,6 +572,14 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       gtk_widget_add_css_class(label, "dim-label");
       gtk_box_append(GTK_BOX(card_content), label);
 
+      GtkWidget* validation = gtk_label_new(NULL);
+      gtk_label_set_xalign(GTK_LABEL(validation), 0.0);
+      gtk_label_set_wrap(GTK_LABEL(validation), TRUE);
+      gtk_label_set_wrap_mode(GTK_LABEL(validation), PANGO_WRAP_WORD_CHAR);
+      gtk_widget_add_css_class(validation, "caption");
+      gtk_widget_add_css_class(validation, "error");
+      gtk_widget_set_visible(validation, FALSE);
+
       GtkWidget* widget = NULL;
 
       if (field_has_selector(pfld->field)) {
@@ -561,7 +608,8 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
             gtk_widget_set_halign(GTK_WIDGET(dd), GTK_ALIGN_FILL);
 
             wxedid_row* r = new wxedid_row{
-               pfld, pgrp, pEDID, wnd, ROW_COMBO, GTK_WIDGET(dd), 0, true,
+               pfld, pgrp, pEDID, wnd, ROW_COMBO, GTK_WIDGET(dd),
+               GTK_LABEL(validation), 0, true,
                false, static_cast<size_t>(-1), {}, 0
             };
             g_object_set_data_full(G_OBJECT(dd), "sel-idx", vals,
@@ -583,7 +631,8 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
             gtk_widget_set_halign(GTK_WIDGET(entry), GTK_ALIGN_FILL);
 
             wxedid_row* r = new wxedid_row{
-               pfld, pgrp, pEDID, wnd, ROW_ENTRY, GTK_WIDGET(entry), 0, true,
+               pfld, pgrp, pEDID, wnd, ROW_ENTRY, GTK_WIDGET(entry),
+               GTK_LABEL(validation), 0, true,
                false, static_cast<size_t>(-1), {}, 0
             };
 
@@ -615,6 +664,10 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       }
 
       gtk_box_append(GTK_BOX(card_content), widget);
+      gtk_box_append(GTK_BOX(card_content), validation);
+      gtk_accessible_update_property(GTK_ACCESSIBLE(widget),
+                                     GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                     title.c_str(), -1);
       if (! help.empty()) {
          gtk_widget_set_tooltip_text(widget, help.c_str());
          gtk_accessible_update_property(GTK_ACCESSIBLE(widget),
@@ -1267,7 +1320,7 @@ static void tree_search_clear(GtkButton*, gpointer user_data) {
 //------------
 // factory: tree cell shows the group name
 static void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
-                            GtkListItem* item, gpointer /*user_data*/) {
+                            GtkListItem* item, gpointer user_data) {
    GtkWidget* expander = gtk_tree_expander_new();
    GtkWidget* content = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
    GtkWidget* lbl = gtk_label_new(NULL);
@@ -1284,6 +1337,13 @@ static void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
 
    gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), content);
    gtk_list_item_set_child(item, expander);
+   g_object_set_data(G_OBJECT(item), "wxedid-wnd", user_data);
+   GtkGesture* context = gtk_gesture_click_new();
+   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(context),
+                                 GDK_BUTTON_SECONDARY);
+   g_signal_connect(context, "pressed",
+                    G_CALLBACK(wnd_on_tree_item_context), item);
+   gtk_widget_add_controller(expander, GTK_EVENT_CONTROLLER(context));
 }
 
 static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
@@ -1364,6 +1424,43 @@ static edi_grp_cl* wnd_selected_group(wxedid_wnd* wnd) {
    edi_grp_cl* group = WXEDID_ITEM(obj)->pgrp;
    g_object_unref(obj);
    return group;
+}
+
+static edi_grp_cl* wnd_root_group(edi_grp_cl* group) {
+   while ((group != NULL) && (group->getParentGrp() != NULL))
+      group = group->getParentGrp();
+   return group;
+}
+
+static u8_t wnd_selected_extension_tag(wxedid_wnd* wnd) {
+   edi_grp_cl* root = wnd_root_group(wnd_selected_group(wnd));
+   if (root == NULL) return 0;
+   u32_t block = root->getAbsOffs() / sizeof(ediblk_t);
+   if ((block == 0) || (block >= wnd->doc->EDID.getNumValidBlocks())) return 0;
+   return wnd->doc->EDID.getEDID()->blk[block][0];
+}
+
+static void wnd_update_group_actions(wxedid_wnd* wnd) {
+   if (wnd->duplicate_action == NULL) return;
+   edi_grp_cl* group = wnd_selected_group(wnd);
+   GroupAr_cl* array = (group != NULL) ? group->getParentAr() : NULL;
+   u32_t index = (group != NULL) ? group->getParentArIdx() : 0;
+   gtid_t type = {};
+   if (group != NULL) type = group->getTypeID();
+
+   bool duplicate = (array != NULL) && ! type.t_gp_fixed && ! type.t_no_copy &&
+                    array->CanInsertDn(index, group);
+   g_simple_action_set_enabled(wnd->duplicate_action, duplicate);
+   g_simple_action_set_enabled(wnd->delete_action,
+                               (array != NULL) && array->CanDelete(index));
+   g_simple_action_set_enabled(wnd->move_up_action,
+                               (array != NULL) && array->CanMoveUp(index));
+   g_simple_action_set_enabled(wnd->move_down_action,
+                               (array != NULL) && array->CanMoveDn(index));
+
+   u8_t tag = wnd_selected_extension_tag(wnd);
+   g_simple_action_set_enabled(wnd->add_cta_action, tag == 0x02);
+   g_simple_action_set_enabled(wnd->add_displayid_action, tag == 0x70);
 }
 
 static void wnd_refresh_raw_view(wxedid_wnd* wnd) {
@@ -1538,8 +1635,231 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
    if (adw_overlay_split_view_get_collapsed(wnd->split_view)) {
       adw_overlay_split_view_set_show_sidebar(wnd->split_view, FALSE);
    }
+   wnd_update_group_actions(wnd);
 
    g_object_unref(obj);   //gtk_tree_list_row_get_item() transfers a full ref
+}
+
+static void wnd_finish_structure_change(wxedid_wnd* wnd,
+                                        edi_grp_cl* selection,
+                                        const char* message) {
+   wnd->history.clear();
+   wnd->history_position = 0;
+   wnd->saved_history_position = -1;
+   wnd->invalid_fields = 0;
+   wnd_rebuild_tree(wnd, selection);
+   wnd_update_history_state(wnd);
+   wnd_update_document_ui(wnd);
+   adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(message));
+}
+
+static void wnd_on_duplicate_group(GSimpleAction*, GVariant*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   edi_grp_cl* group = wnd_selected_group(wnd);
+   GroupAr_cl* array = (group != NULL) ? group->getParentAr() : NULL;
+   if (array == NULL) return;
+
+   rcode result;
+   edi_grp_cl* copy = group->Clone(result, T_MODE_EDIT);
+   if ((copy == NULL) || ! RCD_IS_OK(result) ||
+       ! array->CanInsertDn(group->getParentArIdx(), copy)) {
+      delete copy;
+      wnd_show_error(wnd, "This group cannot be duplicated in the available space");
+      return;
+   }
+   array->InsertDn(group->getParentArIdx(), copy);
+   wnd_finish_structure_change(wnd, copy, "Group duplicated");
+}
+
+static void wnd_move_group(wxedid_wnd* wnd, bool up) {
+   edi_grp_cl* group = wnd_selected_group(wnd);
+   GroupAr_cl* array = (group != NULL) ? group->getParentAr() : NULL;
+   if (array == NULL) return;
+   u32_t index = group->getParentArIdx();
+   if (up ? array->CanMoveUp(index) : array->CanMoveDn(index)) {
+      if (up) array->MoveUp(index); else array->MoveDn(index);
+      wnd_finish_structure_change(wnd, group,
+                                  up ? "Group moved up" : "Group moved down");
+   }
+}
+
+static void wnd_on_move_group_up(GSimpleAction*, GVariant*, gpointer user_data) {
+   wnd_move_group(static_cast<wxedid_wnd*>(user_data), true);
+}
+
+static void wnd_on_move_group_down(GSimpleAction*, GVariant*, gpointer user_data) {
+   wnd_move_group(static_cast<wxedid_wnd*>(user_data), false);
+}
+
+static void wnd_on_delete_group_response(GObject* source, GAsyncResult* result,
+                                         gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   const char* response = adw_alert_dialog_choose_finish(
+      ADW_ALERT_DIALOG(source), result);
+   edi_grp_cl* group = wnd->pending_delete;
+   wnd->pending_delete = NULL;
+   if ((0 != strcmp(response, "delete")) || (group == NULL)) return;
+   GroupAr_cl* array = group->getParentAr();
+   if ((array == NULL) || ! array->CanDelete(group->getParentArIdx())) return;
+
+   u32_t index = group->getParentArIdx();
+   edi_grp_cl* next = (index + 1 < array->GetCount()) ? array->Item(index + 1) :
+                      (index > 0) ? array->Item(index - 1) : NULL;
+   wnd->history.clear();
+   wnd->history_position = 0;
+   array->Delete(index);
+   wnd_finish_structure_change(wnd, next, "Group deleted");
+}
+
+static void wnd_on_delete_group(GSimpleAction*, GVariant*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   if (wnd->pending_delete != NULL) return;
+   edi_grp_cl* group = wnd_selected_group(wnd);
+   if ((group == NULL) || (group->getParentAr() == NULL) ||
+       ! group->getParentAr()->CanDelete(group->getParentArIdx())) return;
+
+   wxc_String name;
+   group->getGrpName(wnd->doc->EDID, name);
+   char body[512];
+   snprintf(body, sizeof(body),
+            "“%s” and its fields will be removed from this EDID.", name.c_str());
+   AdwAlertDialog* dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
+      "Delete this group?", body));
+   adw_alert_dialog_add_responses(dialog,
+                                  "cancel", "Cancel",
+                                  "delete", "Delete",
+                                  NULL);
+   adw_alert_dialog_set_close_response(dialog, "cancel");
+   adw_alert_dialog_set_default_response(dialog, "cancel");
+   adw_alert_dialog_set_response_appearance(dialog, "delete",
+                                            ADW_RESPONSE_DESTRUCTIVE);
+   wnd->pending_delete = group;
+   adw_alert_dialog_choose(dialog, GTK_WIDGET(wnd->window), NULL,
+                           wnd_on_delete_group_response, wnd);
+}
+
+static GroupAr_cl* wnd_selected_root_array(wxedid_wnd* wnd) {
+   edi_grp_cl* root = wnd_root_group(wnd_selected_group(wnd));
+   return (root != NULL) ? root->getParentAr() : NULL;
+}
+
+static bool wnd_insert_group(GroupAr_cl* array, edi_grp_cl* group) {
+   if ((array == NULL) || (group == NULL) || (array->GetCount() == 0)) return false;
+   gtid_t type = group->getTypeID();
+   bool timing = (type.base_id == ID_DTD);
+   u32_t last_data = 0;
+   for (u32_t index=1; index<array->GetCount(); index++) {
+      gtid_t candidate = array->Item(index)->getTypeID();
+      if ((candidate.base_id == ID_DTD) ||
+          ((candidate.t32 & ID_PARENT_MASK) == ID_DISPLAYID_PADDING)) {
+         if (array->CanInsertUp(index, group)) {
+            array->InsertUp(index, group);
+            return true;
+         }
+         break;
+      }
+      last_data = index;
+   }
+   if (timing && (last_data + 1 < array->GetCount())) return false;
+   if (array->CanInsertDn(last_data, group)) {
+      array->InsertDn(last_data, group);
+      return true;
+   }
+   return false;
+}
+
+static void wnd_on_add_cta_group(GSimpleAction*, GVariant* parameter,
+                                 gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   const char* value = g_variant_get_string(parameter, NULL);
+   EDID_cl::group_template which = EDID_cl::CEA_AUDIO_LPCM;
+   if (0 == strcmp(value, "audio-extended")) which = EDID_cl::CEA_AUDIO_EXTENDED;
+   else if (0 == strcmp(value, "video")) which = EDID_cl::CEA_VIDEO;
+   else if (0 == strcmp(value, "timing")) which = EDID_cl::CEA_TIMING;
+
+   edi_grp_cl* group = NULL;
+   rcode result = wnd->doc->EDID.CreateGroup(which, 0, &group);
+   GroupAr_cl* array = wnd_selected_root_array(wnd);
+   if (! RCD_IS_OK(result) || ! wnd_insert_group(array, group)) {
+      delete group;
+      wnd_show_error(wnd, "This CTA group does not fit in the selected block");
+      return;
+   }
+   wnd_finish_structure_change(wnd, group, "CTA group added");
+}
+
+static void wnd_on_add_displayid_group(GSimpleAction*, GVariant*,
+                                       gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   GroupAr_cl* array = wnd_selected_root_array(wnd);
+   if ((array == NULL) || (array->GetCount() == 0)) return;
+   u8_t version = array->Item(0)->getInstPtr()[1];
+   edi_grp_cl* group = NULL;
+   rcode result = wnd->doc->EDID.CreateGroup(
+      EDID_cl::DISPLAYID_DATA, version, &group);
+   if (! RCD_IS_OK(result) || ! wnd_insert_group(array, group)) {
+      delete group;
+      wnd_show_error(wnd, "A DisplayID block does not fit in the selected section");
+      return;
+   }
+   wnd_finish_structure_change(wnd, group, "DisplayID data block added");
+}
+
+static void wnd_popup_group_menu(wxedid_wnd* wnd, double x, double y) {
+   if ((wnd->group_menu == NULL) || (wnd_selected_group(wnd) == NULL)) return;
+   GdkRectangle point = {
+      static_cast<int>(x), static_cast<int>(y), 1, 1,
+   };
+   gtk_popover_set_pointing_to(GTK_POPOVER(wnd->group_menu), &point);
+   gtk_popover_popup(GTK_POPOVER(wnd->group_menu));
+}
+
+static void wnd_on_tree_item_context(GtkGestureClick* gesture, int /*presses*/,
+                                     double x, double y, gpointer user_data) {
+   GtkListItem* item = GTK_LIST_ITEM(user_data);
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(
+      g_object_get_data(G_OBJECT(item), "wxedid-wnd"));
+   if ((wnd == NULL) || ! gtk_list_item_get_selectable(item)) return;
+   gtk_single_selection_set_selected(wnd->tree_sel,
+                                     gtk_list_item_get_position(item));
+   GtkWidget* source = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
+   graphene_point_t source_point = GRAPHENE_POINT_INIT(
+      static_cast<float>(x), static_cast<float>(y));
+   graphene_point_t tree_point;
+   if (! gtk_widget_compute_point(source, GTK_WIDGET(wnd->tree),
+                                  &source_point, &tree_point))
+      tree_point = source_point;
+   wnd_popup_group_menu(wnd, tree_point.x, tree_point.y);
+}
+
+static gboolean wnd_on_tree_key(GtkEventControllerKey*, guint keyval,
+                                guint /*keycode*/, GdkModifierType state,
+                                gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   GdkModifierType modifiers = static_cast<GdkModifierType>(
+      state & gtk_accelerator_get_default_mod_mask());
+   if ((keyval == GDK_KEY_Delete) && (modifiers == 0)) {
+      g_action_activate(G_ACTION(wnd->delete_action), NULL);
+      return TRUE;
+   }
+   if ((keyval == GDK_KEY_d) && (modifiers == GDK_CONTROL_MASK)) {
+      g_action_activate(G_ACTION(wnd->duplicate_action), NULL);
+      return TRUE;
+   }
+   if ((keyval == GDK_KEY_Up) && (modifiers == GDK_ALT_MASK)) {
+      g_action_activate(G_ACTION(wnd->move_up_action), NULL);
+      return TRUE;
+   }
+   if ((keyval == GDK_KEY_Down) && (modifiers == GDK_ALT_MASK)) {
+      g_action_activate(G_ACTION(wnd->move_down_action), NULL);
+      return TRUE;
+   }
+   if ((keyval == GDK_KEY_Menu) ||
+       ((keyval == GDK_KEY_F10) && (modifiers == GDK_SHIFT_MASK))) {
+      wnd_popup_group_menu(wnd, 24, 24);
+      return TRUE;
+   }
+   return FALSE;
 }
 
 static void wnd_update_document_ui(wxedid_wnd* wnd) {
@@ -1645,6 +1965,76 @@ static void wnd_on_banner_details(AdwBanner* /*banner*/, gpointer user_data) {
    if (! visible) g_action_activate(G_ACTION(wnd->details_action), NULL);
 }
 
+static void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group = NULL) {
+   EDID_cl& edid = wnd->doc->EDID;
+   edi_buf_t* buffer = edid.getEDID();
+   GListStore* root = g_list_store_new(WXEDID_TYPE_ITEM);
+
+   if (edid.EDI_BaseGrpAr.GetCount() > 0) {
+      wxedid_item* base = wxedid_item_new_block(
+         "Block 0: Base EDID", &edid.EDI_BaseGrpAr, &edid);
+      g_list_store_append(root, base);
+      g_object_unref(base);
+   }
+
+   for (u32_t block=1; block<edid.getNumValidBlocks(); block++) {
+      GroupAr_cl* groups = edid.BlkGroupsAr[block];
+      if (groups->GetCount() > 0) {
+         const char* type = (buffer->blk[block][0] == 0x02) ? "CTA-861" :
+                            (buffer->blk[block][0] == 0x70) ? "DisplayID" :
+                                                             "Extension";
+         char label[64];
+         snprintf(label, sizeof(label), "Block %u: %s", block, type);
+         wxedid_item* section = wxedid_item_new_block(label, groups, &edid);
+         g_list_store_append(root, section);
+         g_object_unref(section);
+      } else {
+         wxedid_item* item = wxedid_item_new_raw_extension(
+            block, buffer->blk[block][0], &edid);
+         g_list_store_append(root, item);
+         g_object_unref(item);
+      }
+   }
+
+   gtk_single_selection_set_selected(wnd->tree_sel, GTK_INVALID_LIST_POSITION);
+   gtk_filter_list_model_set_model(wnd->tree_filtered, NULL);
+   g_clear_object(&wnd->tree_model);
+   wnd->tree_model = gtk_tree_list_model_new(
+      G_LIST_MODEL(root), FALSE, FALSE, tree_item_expand, NULL, NULL);
+   g_object_unref(root);
+   gtk_editable_set_text(GTK_EDITABLE(wnd->tree_search), "");
+   gtk_filter_list_model_set_model(wnd->tree_filtered,
+                                   G_LIST_MODEL(wnd->tree_model));
+
+   guint position = 0;
+   while (position < g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model))) {
+      GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+         g_list_model_get_item(G_LIST_MODEL(wnd->tree_model), position));
+      GObject* object = G_OBJECT(gtk_tree_list_row_get_item(row));
+      if (WXEDID_ITEM(object)->pgrp_ar != NULL)
+         gtk_tree_list_row_set_expanded(row, TRUE);
+      g_object_unref(object);
+      g_object_unref(row);
+      position++;
+   }
+
+   guint first = GTK_INVALID_LIST_POSITION;
+   guint selected = GTK_INVALID_LIST_POSITION;
+   guint count = g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_filtered));
+   for (position=0; position<count; position++) {
+      GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+         g_list_model_get_item(G_LIST_MODEL(wnd->tree_filtered), position));
+      GObject* object = G_OBJECT(gtk_tree_list_row_get_item(row));
+      wxedid_item* item = WXEDID_ITEM(object);
+      if ((first == GTK_INVALID_LIST_POSITION) && item->selectable) first = position;
+      if (item->pgrp == select_group) selected = position;
+      g_object_unref(object);
+      g_object_unref(row);
+   }
+   if (selected == GTK_INVALID_LIST_POSITION) selected = first;
+   gtk_single_selection_set_selected(wnd->tree_sel, selected);
+}
+
 static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    wnd_clear_feedback(wnd);
 
@@ -1732,82 +2122,15 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
       wnd->doc->GLog.PrintRcode(retU);
    }
 
-   //rebuild tree model: block sections containing groups and sub-groups
-   GListStore* root = g_list_store_new(WXEDID_TYPE_ITEM);
-   if (wnd->doc->EDID.EDI_BaseGrpAr.GetCount() > 0) {
-      wxedid_item* base = wxedid_item_new_block(
-         "Block 0: Base EDID", &wnd->doc->EDID.EDI_BaseGrpAr, &wnd->doc->EDID);
-      g_list_store_append(root, base);
-      g_object_unref(base);
-   }
-
-   for (u32_t block=1; block<=parsed_extblk; block++) {
-      GroupAr_cl* groups = wnd->doc->EDID.BlkGroupsAr[block];
-      if (groups->GetCount() == 0) continue;
-
-      const char* type = (pbuf->blk[block][0] == 0x02) ? "CTA-861" :
-                         (pbuf->blk[block][0] == 0x70) ? "DisplayID" : "Extension";
-      char label[64];
-      snprintf(label, sizeof(label), "Block %u: %s", block, type);
-      wxedid_item* section = wxedid_item_new_block(
-         label, groups, &wnd->doc->EDID);
-      g_list_store_append(root, section);
-      g_object_unref(section);
-   }
-
    if (base_ok) {
       for (u32_t block=1; block<=parsed_extblk; block++) {
          if (wnd->doc->EDID.BlkGroupsAr[block]->GetCount() != 0) continue;
-
          u8_t tag = pbuf->blk[block][0];
-         wxedid_item* item =
-            wxedid_item_new_raw_extension(block, tag, &wnd->doc->EDID);
-         g_list_store_append(root, item);
-         g_object_unref(item);
-
          char msg[144];
          snprintf(msg, sizeof(msg),
                   "[i] Extension block %u (tag 0x%02X) preserved read-only",
                   block, tag);
          wnd->doc->GLog.DoLog(msg);
-      }
-   }
-
-   if (wnd->tree_model != NULL) g_object_unref(wnd->tree_model);
-   wnd->tree_model = gtk_tree_list_model_new(
-      G_LIST_MODEL(root),
-      FALSE,                   //passthrough: rows are GtkTreeListRow
-      FALSE,                   //expand only block sections by default
-      tree_item_expand,
-      NULL, NULL);
-   g_object_unref(root);
-   gtk_editable_set_text(GTK_EDITABLE(wnd->tree_search), "");
-   gtk_filter_list_model_set_model(wnd->tree_filtered,
-                                   G_LIST_MODEL(wnd->tree_model));
-
-   guint position = 0;
-   while (position < g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model))) {
-      GtkTreeListRow* row = GTK_TREE_LIST_ROW(
-         g_list_model_get_item(G_LIST_MODEL(wnd->tree_model), position));
-      GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
-      wxedid_item* item = WXEDID_ITEM(obj);
-      if (item->pgrp_ar != NULL) gtk_tree_list_row_set_expanded(row, TRUE);
-      g_object_unref(obj);
-      g_object_unref(row);
-      position++;
-   }
-
-   guint n_items = g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_filtered));
-   for (position=0; position<n_items; position++) {
-      GtkTreeListRow* row = GTK_TREE_LIST_ROW(
-         g_list_model_get_item(G_LIST_MODEL(wnd->tree_filtered), position));
-      GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
-      bool selectable = WXEDID_ITEM(obj)->selectable;
-      g_object_unref(obj);
-      g_object_unref(row);
-      if (selectable) {
-         gtk_single_selection_set_selected(wnd->tree_sel, position);
-         break;
       }
    }
 
@@ -1822,6 +2145,7 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
       snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
       wnd->source_writable = (g_access(path, W_OK) == 0);
       gtk_stack_set_visible_child_name(wnd->content_stack, "editor");
+      wnd_rebuild_tree(wnd);
    } else {
       wnd->doc->path[0] = 0;
       gtk_stack_set_visible_child_name(wnd->content_stack, "empty");
@@ -2218,6 +2542,42 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->details_action));
    g_object_unref(wnd->details_action);
 
+   wnd->duplicate_action = g_simple_action_new("duplicate-group", NULL);
+   g_signal_connect(wnd->duplicate_action, "activate",
+                    G_CALLBACK(wnd_on_duplicate_group), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->duplicate_action));
+   g_object_unref(wnd->duplicate_action);
+
+   wnd->delete_action = g_simple_action_new("delete-group", NULL);
+   g_signal_connect(wnd->delete_action, "activate",
+                    G_CALLBACK(wnd_on_delete_group), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->delete_action));
+   g_object_unref(wnd->delete_action);
+
+   wnd->move_up_action = g_simple_action_new("move-group-up", NULL);
+   g_signal_connect(wnd->move_up_action, "activate",
+                    G_CALLBACK(wnd_on_move_group_up), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->move_up_action));
+   g_object_unref(wnd->move_up_action);
+
+   wnd->move_down_action = g_simple_action_new("move-group-down", NULL);
+   g_signal_connect(wnd->move_down_action, "activate",
+                    G_CALLBACK(wnd_on_move_group_down), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->move_down_action));
+   g_object_unref(wnd->move_down_action);
+
+   wnd->add_cta_action = g_simple_action_new("add-cta-group", G_VARIANT_TYPE_STRING);
+   g_signal_connect(wnd->add_cta_action, "activate",
+                    G_CALLBACK(wnd_on_add_cta_group), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->add_cta_action));
+   g_object_unref(wnd->add_cta_action);
+
+   wnd->add_displayid_action = g_simple_action_new("add-displayid-group", NULL);
+   g_signal_connect(wnd->add_displayid_action, "activate",
+                    G_CALLBACK(wnd_on_add_displayid_group), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->add_displayid_action));
+   g_object_unref(wnd->add_displayid_action);
+
    GSimpleAction* about_action = g_simple_action_new("about", NULL);
    g_signal_connect(about_action, "activate", G_CALLBACK(wnd_on_about_action), wnd);
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(about_action));
@@ -2290,7 +2650,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
 
    //block tree: list view with lazy expander rows
    GtkListItemFactory* factory = gtk_signal_list_item_factory_new();
-   g_signal_connect(factory, "setup", G_CALLBACK(tree_name_setup), NULL);
+   g_signal_connect(factory, "setup", G_CALLBACK(tree_name_setup), wnd);
    g_signal_connect(factory, "bind",  G_CALLBACK(tree_name_bind),  NULL);
    g_signal_connect(factory, "unbind", G_CALLBACK(tree_name_unbind), NULL);
 
@@ -2308,6 +2668,29 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_add_css_class(GTK_WIDGET(wnd->tree), "navigation-sidebar");
    g_signal_connect(wnd->tree_sel, "selection-changed",
                     G_CALLBACK(wnd_on_tree_select), wnd);
+
+   GMenu* add_menu = g_menu_new();
+   g_menu_append(add_menu, "LPCM Audio Block", "win.add-cta-group::audio-lpcm");
+   g_menu_append(add_menu, "Extended Audio Block", "win.add-cta-group::audio-extended");
+   g_menu_append(add_menu, "Video Block", "win.add-cta-group::video");
+   g_menu_append(add_menu, "Detailed Timing", "win.add-cta-group::timing");
+   g_menu_append(add_menu, "DisplayID Data Block", "win.add-displayid-group");
+
+   GMenu* group_menu_model = g_menu_new();
+   g_menu_append_submenu(group_menu_model, "Add", G_MENU_MODEL(add_menu));
+   g_menu_append(group_menu_model, "Duplicate", "win.duplicate-group");
+   g_menu_append(group_menu_model, "Move Up", "win.move-group-up");
+   g_menu_append(group_menu_model, "Move Down", "win.move-group-down");
+   g_menu_append(group_menu_model, "Delete", "win.delete-group");
+   wnd->group_menu = GTK_POPOVER_MENU(
+      gtk_popover_menu_new_from_model(G_MENU_MODEL(group_menu_model)));
+   gtk_widget_set_parent(GTK_WIDGET(wnd->group_menu), GTK_WIDGET(wnd->tree));
+   gtk_popover_set_has_arrow(GTK_POPOVER(wnd->group_menu), FALSE);
+   g_object_unref(group_menu_model);
+
+   GtkEventController* tree_keys = gtk_event_controller_key_new();
+   g_signal_connect(tree_keys, "key-pressed", G_CALLBACK(wnd_on_tree_key), wnd);
+   gtk_widget_add_controller(GTK_WIDGET(wnd->tree), tree_keys);
 
    GtkWidget* tree_scroll = gtk_scrolled_window_new();
    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(tree_scroll), GTK_WIDGET(wnd->tree));
@@ -2347,6 +2730,41 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    GtkWidget* sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
    gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->tree_search));
    gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->sidebar_stack));
+
+   GtkWidget* group_toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   gtk_widget_set_margin_start(group_toolbar, 12);
+   gtk_widget_set_margin_end(group_toolbar, 12);
+   gtk_widget_set_margin_top(group_toolbar, 6);
+   gtk_widget_set_margin_bottom(group_toolbar, 12);
+   GtkWidget* add_button = gtk_menu_button_new();
+   gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(add_button), "list-add-symbolic");
+   gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(add_button), G_MENU_MODEL(add_menu));
+   gtk_widget_set_tooltip_text(add_button, "Add a group");
+   gtk_accessible_update_property(GTK_ACCESSIBLE(add_button),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Add a group", -1);
+   gtk_box_append(GTK_BOX(group_toolbar), add_button);
+   g_object_unref(add_menu);
+
+   struct group_button {
+      const char* icon;
+      const char* label;
+      const char* action;
+   };
+   static const group_button group_buttons[] = {
+      {"edit-copy-symbolic", "Duplicate group (Ctrl+D)", "win.duplicate-group"},
+      {"go-up-symbolic", "Move group up (Alt+Up)", "win.move-group-up"},
+      {"go-down-symbolic", "Move group down (Alt+Down)", "win.move-group-down"},
+      {"user-trash-symbolic", "Delete group (Delete)", "win.delete-group"},
+   };
+   for (const group_button& spec : group_buttons) {
+      GtkWidget* button = gtk_button_new_from_icon_name(spec.icon);
+      gtk_actionable_set_action_name(GTK_ACTIONABLE(button), spec.action);
+      gtk_widget_set_tooltip_text(button, spec.label);
+      gtk_accessible_update_property(GTK_ACCESSIBLE(button),
+                                     GTK_ACCESSIBLE_PROPERTY_LABEL, spec.label, -1);
+      gtk_box_append(GTK_BOX(group_toolbar), button);
+   }
+   gtk_box_append(GTK_BOX(sidebar), group_toolbar);
 
    GtkWidget* right = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
 

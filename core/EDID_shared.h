@@ -358,6 +358,13 @@ class EDID_cl {
       rcode wrByteStrLE (wxc_String& sval, u8_t* pstrb, u32_t slen);
 
    public:
+      enum group_template {
+         CEA_AUDIO_LPCM,
+         CEA_AUDIO_EXTENDED,
+         CEA_VIDEO,
+         CEA_TIMING,
+         DISPLAYID_DATA,
+      };
       wxc_String       gp_name; //global for xxx::getGrpName()
 
       bool           b_RD_Ignore;
@@ -367,8 +374,8 @@ class EDID_cl {
       GroupAr_cl*    BlkGroupsAr[4];
       EDID_GrpAr_cl  EDI_BaseGrpAr;
       CEA_GrpAr_cl   EDI_Ext0GrpAr;
-      GroupAr_cl     EDI_Ext1GrpAr;
-      GroupAr_cl     EDI_Ext2GrpAr;
+      CEA_GrpAr_cl   EDI_Ext1GrpAr;
+      CEA_GrpAr_cl   EDI_Ext2GrpAr;
 
       inline  edi_buf_t* getEDID() {return &EDID_buff;};
       inline  void       SetGuiLogPtr(guilog_cl *p_glog) {pGLog = p_glog;};
@@ -388,6 +395,8 @@ class EDID_cl {
       rcode ParseEDID_DisplayID(u32_t block);
       rcode ParseCEA_DBC  (u8_t *pinst);
       rcode ParseDBC_TAG  (u8_t *pinst, edi_grp_cl** pp_grp);
+      rcode CreateGroup   (group_template which, u8_t displayid_version,
+                           edi_grp_cl** pp_grp);
       rcode AssembleEDID  ();
 
       //field properties

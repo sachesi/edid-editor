@@ -61,11 +61,29 @@ test_t7_timing = executable(
   install : false,
 )
 
+test_structure_edit = executable(
+  'test-structure-edit',
+  'tests/test_structure_edit.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
+test_corpus = executable(
+  'test-corpus',
+  'tests/test_corpus.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
 #synthetic EDID sample data (generated, checked in as build tests below)
 sample_data = custom_target(
   'sample-edid-data',
   output : ['sample_base.bin', 'sample_cea.bin', 'sample_cea_displayid.bin',
-            'sample_cea_t7.bin'],
+            'sample_cea_t7.bin', 'sample_cea_audio.bin',
+            'sample_displayid_compact.bin',
+            'sample_displayid_short_padding.bin'],
   command : [find_program('python3'), files('tests/gen_sample_edid.py'), '@OUTDIR@'],
   build_by_default : true,
 )
@@ -77,3 +95,8 @@ test('displayid-roundtrip', test_displayid,
      args : [sample_data[2], '--require-raw'])
 test('reload-ownership', test_reload_ownership, args : [sample_data[1]])
 test('t7-timing-roundtrip', test_t7_timing, args : [sample_data[3]])
+test('structure-edit', test_structure_edit,
+     args : [sample_data[2], sample_data[5], sample_data[6]])
+test('corpus-roundtrip', test_corpus,
+     args : [sample_data[0], sample_data[1], sample_data[2], sample_data[3],
+             sample_data[4], sample_data[5], sample_data[6]])

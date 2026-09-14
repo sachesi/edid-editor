@@ -107,6 +107,13 @@ class EDID_GrpAr_cl : public GroupAr_cl {
 
 //CEA Extension block groups array
 class CEA_GrpAr_cl : public GroupAr_cl {
+   private:
+      bool IsDisplayID();
+      i32_t DisplayIDInsertSpace();
+      bool DisplayIDTypeCheck(edi_grp_cl* pgrp);
+      void DisplayIDReserve(u32_t size);
+      void DisplayIDRelease(u32_t size);
+
    public:
       void  CalcDataSZ (edi_grp_cl *pgrp = NULL);
 
@@ -115,14 +122,14 @@ class CEA_GrpAr_cl : public GroupAr_cl {
       bool  CanInsertUp(u32_t idx, edi_grp_cl* pgrp);
       bool  CanInsertDn(u32_t idx, edi_grp_cl* pgrp);
 
-      edi_grp_cl* Cut  (u32_t idx) {return base_Cut(idx);};
+      edi_grp_cl* Cut  (u32_t idx);
 
       void  Paste      (u32_t idx, edi_grp_cl* pgrp) { base_Paste   (idx, pgrp);};
-      void  Delete     (u32_t idx) { base_Delete  (idx);};
+      void  Delete     (u32_t idx);
       void  MoveUp     (u32_t idx) { base_MoveUp  (idx);};
       void  MoveDn     (u32_t idx) { base_MoveDn  (idx);};
-      void  InsertUp   (u32_t idx, edi_grp_cl* pgrp) { base_InsertUp(idx, pgrp);};
-      void  InsertDn   (u32_t idx, edi_grp_cl* pgrp) { base_InsertDn(idx, pgrp);};
+      void  InsertUp   (u32_t idx, edi_grp_cl* pgrp);
+      void  InsertDn   (u32_t idx, edi_grp_cl* pgrp);
 };
 
 //EDID_base / CEA-DBC sub-groups array

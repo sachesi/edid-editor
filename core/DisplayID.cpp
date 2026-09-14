@@ -109,7 +109,8 @@ rcode displayid_data_block_cl::init(const u8_t* inst, u32_t orflags,
    if (payload_len > 121) RCD_RETURN_FAULT(retU);
 
    parent_grp = parent;
-   type_id.t32 = ID_DISPLAYID_DB | T_GRP_FIXED | (orflags & T_MODE_EDIT);
+   version = orflags & 0xff;
+   type_id.t32 = ID_DISPLAYID_DB | (orflags & T_MODE_EDIT);
    CopyInstData(inst, 3);
    hdr_sz = 3;
    dat_sz = 3 + payload_len;

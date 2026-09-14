@@ -288,6 +288,59 @@ rcode EDID_cl::ParseDBC_TAG(u8_t *pinst, edi_grp_cl** pp_grp) {
    return retU;
 }
 
+rcode EDID_cl::CreateGroup(group_template which, u8_t displayid_version,
+                           edi_grp_cl** pp_grp) {
+   static const u8_t audio_lpcm[] = {0x23, 0x09, 0x07, 0x07};
+   static const u8_t audio_extended[] = {0x23, 0x79, 0x07, 0x20};
+   static const u8_t video[] = {0x41, 16};
+   static const u8_t timing[] = {
+      0x57, 0x62, 0x80, 0xA0, 0x20, 0xE0, 0x2D, 0x10, 0x20,
+      0x31, 0x00, 0x35, 0x00, 0x4C, 0x21, 0x00, 0x00, 0x1E,
+   };
+   u8_t displayid[] = {
+      static_cast<u8_t>((displayid_version < 0x20) ? 0x7f : 0x7e), 0, 0,
+   };
+
+   const u8_t* bytes = NULL;
+   edi_grp_cl* group = NULL;
+   rcode retU;
+
+   switch (which) {
+      case CEA_AUDIO_LPCM:
+         bytes = audio_lpcm;
+         group = new cea_adb_cl;
+         break;
+      case CEA_AUDIO_EXTENDED:
+         bytes = audio_extended;
+         group = new cea_adb_cl;
+         break;
+      case CEA_VIDEO:
+         bytes = video;
+         group = new cea_vdb_cl;
+         break;
+      case CEA_TIMING:
+         bytes = timing;
+         group = new dtd_cl;
+         break;
+      case DISPLAYID_DATA:
+         bytes = displayid;
+         group = new displayid_data_block_cl;
+         break;
+   }
+   if (group == NULL) RCD_RETURN_FAULT(retU);
+
+   retU = group->init(bytes,
+      (which == DISPLAYID_DATA) ? (displayid_version | T_MODE_EDIT) : T_MODE_EDIT,
+      NULL);
+   if (! RCD_IS_OK(retU)) {
+      delete group;
+      *pp_grp = NULL;
+      return retU;
+   }
+   *pp_grp = group;
+   return retU;
+}
+
 rcode EDID_cl::ParseCEA_DBC(u8_t *pinst) {
    rcode       retU;
    rcode       retU2;

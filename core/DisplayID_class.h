@@ -21,11 +21,15 @@ class displayid_hdr_cl : public edi_grp_cl {
 class displayid_data_block_cl : public dbc_grp_cl {
    private:
       static const edi_field_t fields[];
+      u8_t version;
 
    public:
       rcode init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent);
       u32_t getTotalSize() {return dat_sz;};
       void setDataSize(u32_t dsz) {dat_sz = dsz;};
+      edi_grp_cl* Clone(rcode& rcd, u32_t flags) {
+         return base_clone(rcd, new displayid_data_block_cl(), version | flags);
+      };
 };
 
 class displayid_padding_cl : public edi_grp_cl {

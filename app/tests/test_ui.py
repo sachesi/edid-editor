@@ -84,6 +84,10 @@ def shortcut(keys):
     time.sleep(0.5)
 
 
+def count_named_part(Atspi, text):
+    return sum(text in node.get_name() for node in nodes(Atspi))
+
+
 def launch_app(Atspi, app, path):
     env = os.environ.copy()
     env.update({"GDK_BACKEND": "x11", "GSK_RENDERER": "cairo", "GTK_A11Y": "atspi"})
@@ -126,9 +130,62 @@ def functional(Atspi, app, fixture):
             lists = [node for node in nodes(Atspi) if node.get_role() == Atspi.Role.LIST]
             assert lists and lists[-1].get_selection_iface().select_child(21)
             time.sleep(0.5)
+            assert lists[-1].get_component_iface().grab_focus()
+            shortcut("shift+F10")
+            wait_for(lambda: named(Atspi, "Move Up", Atspi.Role.MENU_ITEM),
+                     "group context menu did not open from the keyboard")
+            shortcut("Escape")
+
+            original_groups = count_named_part(Atspi, "T7VTB")
+            duplicate = wait_for(lambda: named(Atspi, "Duplicate group (Ctrl+D)"),
+                                 "duplicate group action was not exposed")
+            assert duplicate.get_action_iface().do_action(0)
+            wait_for(lambda: count_named_part(Atspi, "T7VTB") > original_groups,
+                     "duplicate group did not update the sidebar")
+            lists = [node for node in nodes(Atspi) if node.get_role() == Atspi.Role.LIST]
+            assert lists[-1].get_component_iface().grab_focus()
+            shortcut("Delete")
+            confirm = wait_for(lambda: named(Atspi, "Delete", Atspi.Role.PUSH_BUTTON),
+                               "delete confirmation did not open")
+            assert confirm.get_action_iface().do_action(0)
+            wait_for(lambda: count_named_part(Atspi, "T7VTB") == original_groups,
+                     "confirmed group deletion did not update the sidebar")
+
+            add = wait_for(lambda: named(Atspi, "Add a group"),
+                           "add group menu was not exposed")
+            assert add.get_action_iface().do_action(0)
+            extended_audio = wait_for(lambda: named(Atspi, "Extended Audio Block"),
+                                      "safe audio template was not listed")
+            assert extended_audio.get_action_iface().do_action(0)
+            wait_for(lambda: count_named_part(Atspi, "ADB: Audio Data Block") > 0,
+                     "extended audio block was not added")
+            delete = wait_for(lambda: named(Atspi, "Delete group (Delete)"),
+                              "delete group action was not exposed")
+            assert delete.get_action_iface().do_action(0)
+            confirm = wait_for(lambda: named(Atspi, "Delete", Atspi.Role.PUSH_BUTTON),
+                               "audio block delete confirmation did not open")
+            assert confirm.get_action_iface().do_action(0)
+            wait_for(lambda: count_named_part(Atspi, "ADB: Audio Data Block") == 0,
+                     "audio block was not deleted")
+
             spin = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
                             "timing editor did not open")
             assert int(spin.get_value_iface().get_current_value()) == 241500
+            fields_button = named(Atspi, "Fields")
+            assert fields_button is not None and fields_button.get_action_iface().do_action(0)
+            pixel_entry = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.ENTRY),
+                                   "field editor did not expose its label")
+            text = pixel_entry.get_editable_text_iface()
+            original_pixel_text = text.get_text(0, pixel_entry.get_text_iface()
+                                                .get_character_count())
+            text.set_text_contents("not-a-number")
+            wait_for(lambda: any(node.get_name().startswith("Pixel clock:")
+                                 for node in nodes(Atspi)),
+                     "field-local validation detail did not appear")
+            text.set_text_contents(original_pixel_text)
+            wait_for(lambda: not any(node.get_name().startswith("Pixel clock:")
+                                     for node in nodes(Atspi)),
+                     "field-local validation detail did not clear")
             byte_button = named(Atspi, "Bytes")
             assert byte_button is not None and byte_button.get_action_iface().do_action(0)
             raw = wait_for(lambda: named(Atspi, "Selected group bytes"),

@@ -12,6 +12,11 @@ Run it with an EDID binary:
 
     builddir/app/edid-editor path/to/edid.bin
 
+The sidebar supports adding, duplicating, deleting, and reordering compatible
+CTA-861 and DisplayID groups. Right-click a group for the same actions, or use
+Ctrl+D, Delete, and Alt+Up/Alt+Down while the group list has focus. Audio group
+templates initialize valid LPCM or extended-audio descriptor layouts together.
+
 Install to the configured prefix with:
 
     meson install -C builddir
@@ -34,11 +39,9 @@ CTA-861-H Standard from January 2021
    error, because AFC=15 in byte 1 requires also a valid ACE value in byte 3.
    In such cases the editor will switch to a fallback mode, and the data structures
    will be displayed as "unknown/damaged".
-   wxEDID Solution: (not yet implemented):
-   A set of constructors which will immediately initialize the required block data
-   fields, depending on selected type.
-   The constructors could be invoked from contextual menus, by right-clicking on
-   particular block in the block tree structure.
+   wxEDID provides constructors for the common LPCM and extended-audio layouts.
+   They initialize AFC and its dependent ACE data together and are available from
+   the Add menu and the group context menu.
 
 2. SVD: Short Video Descriptor:
    The data layout for this block depends on:
@@ -90,4 +93,3 @@ CTA-861-H Standard from January 2021
 
 If You'll find any bugs, please don't hesitate to contact me:
 tomasz.pawlak@wp.eu
-
