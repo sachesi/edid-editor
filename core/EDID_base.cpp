@@ -350,6 +350,25 @@ sm_vmap VID_input_map = {
    {1, {0, "Digital", NULL}}
 };
 
+sm_vmap VID_if_type_map = {
+   {0, {0, "undefined"  , NULL}},
+   {1, {0, "DVI"        , NULL}},
+   {2, {0, "HDMI-a"     , NULL}},
+   {3, {0, "HDMI-b"     , NULL}},
+   {4, {0, "MDDI"       , NULL}},
+   {5, {0, "DisplayPort", NULL}}
+};
+
+sm_vmap VID_depth_map = {
+   {0, {0, "undefined"  , NULL}},
+   {1, {0, "6 bits"     , NULL}},
+   {2, {0, "8 bits"     , NULL}},
+   {3, {0, "10 bits"    , NULL}},
+   {4, {0, "12 bits"    , NULL}},
+   {5, {0, "14 bits"    , NULL}},
+   {6, {0, "16 bits"    , NULL}}
+};
+
 //VID: Video Input Descriptor : handlers
 const char  vindsc_cl::CodN[] = "VID";
 const char  vindsc_cl::Name[] = "Video Input Descriptor";
@@ -390,7 +409,7 @@ const edi_field_t vindsc_cl::in_digital[] = {
    "up to 8 bits per color, MSB aligned, DE active high.\n\n"
    "NOTE#1: In EDID v1.4 this bit has changed meaning: LSB of \"Digital Interface Type\"\n"
    "NOTE#2: This field overlap fields defined for Analog input." },
-   {&EDID_cl::BitF8Val, 0, 0, 0, 4, F_BFD, 0, 0xF, "IF Type",
+   {&EDID_cl::BitF8Val, VS_VID_IF_TYPE, 0, 0, 4, F_BFD|F_VS, 0, 0xF, "IF Type",
    "Bits 0-3: EDID v1.4: Digital input: Digital Interface Type:\n"
    "0000  = undefined / mandatory zero for EDID v1.3\n"
    "0001  = DVI / EDIDv1.3: VESA DFP v1.x compatibility flag\n"
@@ -400,7 +419,7 @@ const edi_field_t vindsc_cl::in_digital[] = {
    "0101  = DisplayPort\n"
    ">0101 = reserved\n\n"
    "NOTE: This field overlap fields defined for Analog input." },
-   {&EDID_cl::BitF8Val, 0, 0, 4, 3, F_BFD, 0, 0x7, "Color Depth",
+   {&EDID_cl::BitF8Val, VS_VID_COLOR_DEPTH, 0, 4, 3, F_BFD|F_VS, 0, 0x7, "Color Depth",
    "Bits 4-6: Digital input: Color Bit Depth (bits per primary color):\n"
    "000 = undefined / mandatory zero for EDID v1.3\n"
    "001 = 6\n"

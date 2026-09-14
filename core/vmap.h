@@ -68,6 +68,9 @@ enum vmap_selector_idx {
    VS_SPKLD_IDX,
    VS_T7_ASP_RATIO,
    VS_T710_3D_SUPP,
+   VS_VID_IF_TYPE,
+   VS_VID_COLOR_DEPTH,
+   VS_DID_STEREO,
    VS_NUM_OF
 };
 

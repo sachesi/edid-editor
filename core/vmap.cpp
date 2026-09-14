@@ -40,6 +40,9 @@ extern sm_vmap ADB_ACE_TC_map;   //CEA.cpp
 extern sm_vmap SPKLD_IDX_map;    //CEA_ET_class.cpp
 extern sm_vmap T7_AspRatio_map;  //CEA_ET_class.cpp
 extern sm_vmap T7_3Dsupp_map;    //CEA_ET_class.cpp
+extern sm_vmap VID_if_type_map;  //EDID_base.cpp
+extern sm_vmap VID_depth_map;    //EDID_base.cpp
+extern sm_vmap DID_stereo_map;   //DisplayID.cpp
 
 //selector @idx zero is empty - idx==0 means VS_NO_SELECTOR
 vmap_selector_t vmap_sel[] = {
@@ -60,7 +63,10 @@ vmap_selector_t vmap_sel[] = {
    {&ADB_ACE_TC_map  , &ADB_ACE_TC_map  },
    {&SPKLD_IDX_map   , &SPKLD_IDX_map   },
    {&T7_AspRatio_map , &T7_AspRatio_map },
-   {&T7_3Dsupp_map   , &T7_3Dsupp_map   }
+   {&T7_3Dsupp_map   , &T7_3Dsupp_map   },
+   {&VID_if_type_map , &VID_if_type_map },
+   {&VID_depth_map   , &VID_depth_map   },
+   {&DID_stereo_map  , &DID_stereo_map  }
 };
 
 //value formats for menus and for vmap_GetValueAsString()

@@ -19,6 +19,13 @@ RCD_AUTOGEN_DEFINE_UNIT
 #include <cstring>
 
 #include "DisplayID_class.h"
+#include "vmap.h"
+
+sm_vmap DID_stereo_map = {
+   {0, {0, "no stereo"           , NULL}},
+   {1, {0, "stereo"              , NULL}},
+   {2, {0, "stereo on user action", NULL}}
+};
 
 const char* displayid_data_block_name(u8_t version, u8_t tag) {
    if (version < 0x20) {
@@ -247,11 +254,11 @@ rcode displayid_padding_cl::init(const u8_t* inst, u32_t orflags,
 const edi_field_t displayid_type1_timing_cl::fields[] = {
    {&EDID_cl::DisplayID_PixelClock, 0, 0, 0, 3, F_FLT|F_MHZ|F_DN, 0, 0xffffff,
     "Pixel clock", "Pixel clock in 10 kHz units"},
-   {&EDID_cl::BitF8Val, 0, 3, 0, 4, F_BFD|F_INT, 0, 15,
+   {&EDID_cl::BitF8Val, VS_T7_ASP_RATIO, 3, 0, 4, F_BFD|F_INT|F_VS, 0, 15,
     "Aspect ratio", "Aspect-ratio code"},
    {&EDID_cl::BitVal, 0, 3, 4, 1, F_BIT|F_INT, 0, 1,
     "Interlaced", "Interlaced timing"},
-   {&EDID_cl::BitF8Val, 0, 3, 5, 2, F_BFD|F_INT, 0, 3,
+   {&EDID_cl::BitF8Val, VS_DID_STEREO, 3, 5, 2, F_BFD|F_INT|F_VS, 0, 3,
     "Stereo support", "Stereo viewing support"},
    {&EDID_cl::BitVal, 0, 3, 7, 1, F_BIT|F_INT, 0, 1,
     "Preferred", "Preferred timing"},
@@ -302,11 +309,11 @@ void displayid_type1_timing_cl::getGrpName(EDID_cl& /*EDID*/, wxc_String& gp_nam
 const edi_field_t displayid_type7_timing_cl::fields[] = {
    {&EDID_cl::DisplayID_PixelClockKHz, 0, 0, 0, 3, F_FLT|F_MHZ|F_DN, 0, 0xffffff,
     "Pixel clock", "Pixel clock in 1 kHz units"},
-   {&EDID_cl::BitF8Val, 0, 3, 0, 4, F_BFD|F_INT, 0, 15,
+   {&EDID_cl::BitF8Val, VS_T7_ASP_RATIO, 3, 0, 4, F_BFD|F_INT|F_VS, 0, 15,
     "Aspect ratio", "Aspect-ratio code"},
    {&EDID_cl::BitVal, 0, 3, 4, 1, F_BIT|F_INT, 0, 1,
     "Interlaced", "Interlaced timing"},
-   {&EDID_cl::BitF8Val, 0, 3, 5, 2, F_BFD|F_INT, 0, 3,
+   {&EDID_cl::BitF8Val, VS_DID_STEREO, 3, 5, 2, F_BFD|F_INT|F_VS, 0, 3,
     "Stereo support", "Stereo viewing support"},
    {&EDID_cl::BitVal, 0, 3, 7, 1, F_BIT|F_INT, 0, 1,
     "Preferred", "Preferred timing"},
