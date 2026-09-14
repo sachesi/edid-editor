@@ -190,9 +190,24 @@ def activate_menu_item(Atspi, name, menu="Main menu"):
     time.sleep(0.3)
 
 
+def dropdown(Atspi, current):
+    for node in nodes(Atspi):
+        if role_of(node) == Atspi.Role.COMBO_BOX and name_of(node) == current:
+            return node
+    return None
+
+
 def window_exists(title):
     return subprocess.run(["xdotool", "search", "--name", title],
                           capture_output=True).returncode == 0
+
+
+def filtered_rows(Atspi):
+    lists = [node for node in nodes(Atspi) if role_of(node) == Atspi.Role.LIST]
+    try:
+        return lists[-1].get_child_count() if lists else -1
+    except Exception:
+        return -1
 
 
 def select_group(Atspi, index):
@@ -291,6 +306,9 @@ def functional(Atspi, app, fixture):
                             "timing editor did not open")
             assert int(spin.get_value_iface().get_current_value()) == 241500
             press(Atspi, "Fields")
+            tag = wait_for(lambda: dropdown(Atspi, "EXT: Extended Tag Code"),
+                           "tag code was not shown")
+            assert not tag.get_state_set().contains(Atspi.StateType.SENSITIVE)
             pixel_entry = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.TEXT),
                                    "field editor did not expose its label")
             original_pixel_text = text_of(Atspi, pixel_entry)
@@ -350,8 +368,7 @@ def functional(Atspi, app, fixture):
 
             search = named(Atspi, "Search groups", Atspi.Role.ENTRY)
             search.get_editable_text_iface().set_text_contents("MND")
-            wait_for(lambda: count_named_part(Atspi, "MND: ") > 0 and
-                     count_named_part(Atspi, "BED: ") == 0,
+            wait_for(lambda: filtered_rows(Atspi) == 2,
                      "search did not narrow the list to the monitor name")
             select_group(Atspi, 1)
             press(Atspi, "Fields")
@@ -361,6 +378,42 @@ def functional(Atspi, app, fixture):
             activate_menu_item(Atspi, "Edit Read-Only Fields")
             wait_for(lambda: named(Atspi, "Monitor name", Atspi.Role.TEXT),
                      "read-only field did not become editable")
+
+            search.get_editable_text_iface().set_text_contents("")
+            time.sleep(0.8)
+            select_group(Atspi, 21)
+            activate_menu_item(Atspi, "Extended Audio Block", menu="Add a group")
+            press(Atspi, "Move group up (Alt+Up)")
+            press(Atspi, "Fields")
+            length = wait_for(lambda: named(Atspi, "Blk length", Atspi.Role.TEXT),
+                              "block length was not editable")
+            length.get_editable_text_iface().set_text_contents("6")
+            select_group(Atspi, 1)
+            before_save = target.read_bytes()
+            press(Atspi, "Save", Atspi.Role.PUSH_BUTTON)
+            wait_for(lambda: target.read_bytes() != before_save,
+                     "saving the longer audio block did not write the file")
+            saved = target.read_bytes()
+            # the 7-byte audio block, then the timing block that follows it
+            assert saved[128 + 4:128 + 13] == \
+                b"\x26\x79\x07\x20\x00\x00\x00\xf6\x22", \
+                "the longer audio block was not saved at its new size"
+
+            def audio_bytes():
+                search.get_editable_text_iface().set_text_contents("ADB")
+                wait_for(lambda: filtered_rows(Atspi) == 2,
+                         "search did not narrow the list to the audio block")
+                select_group(Atspi, 1)
+                press(Atspi, "Bytes")
+                raw = wait_for(lambda: named(Atspi, "Selected group bytes"),
+                               "byte view was not exposed")
+                text = text_of(Atspi, raw)
+                search.get_editable_text_iface().set_text_contents("")
+                return text
+            assert "26 79 07 20 00 00 00" in audio_bytes(), \
+                "a longer audio block was not rebuilt with its new size"
+            activate_menu_item(Atspi, "Undo")
+            assert "23 79 07 20" in audio_bytes(), "undo did not restore the block length"
         finally:
             stop_app(process)
 

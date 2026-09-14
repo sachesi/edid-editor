@@ -60,6 +60,7 @@ class vindsc_cl : public edi_grp_cl {
    public:
       rcode  init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent);
       rcode  ForcedGrpRefresh();
+      edi_grp_cl* Clone(rcode& rcd, u32_t flags) {return base_clone(rcd, new vindsc_cl(), flags); };
       void   getGrpName(EDID_cl& EDID, wxc_String& gp_name);
 };
 //BDD: basic display descriptior

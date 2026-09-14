@@ -78,6 +78,14 @@ test_text = executable(
   install : false,
 )
 
+test_rebuild = executable(
+  'test-rebuild',
+  'tests/test_rebuild.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
 test_corpus = executable(
   'test-corpus',
   'tests/test_corpus.cpp',
@@ -136,3 +144,4 @@ test('corpus-roundtrip', test_corpus,
              sample_data[4], sample_data[5], sample_data[6],
              corpus_conformant, '--ignore-errors', corpus_nonconformant])
 test('hex-text-report', test_text, args : [sample_data[2]])
+test('group-rebuild', test_rebuild, args : [sample_data[1]])

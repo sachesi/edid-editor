@@ -34,10 +34,12 @@ enum history_kind {
    HISTORY_INSERT, //group inserted at index of array
    HISTORY_REMOVE, //group removed from index of array
    HISTORY_MOVE,   //group moved from index one step up or down
+   HISTORY_REPLACE,//group rebuilt after a field changed its type or layout
 };
 
 //Structural entries own their group while it is out of the document: an
-//insert while undone, a removal while applied.
+//insert while undone, a removal while applied. A replacement owns the old
+//group while applied and the replacement while undone.
 struct wxedid_history_entry {
    history_kind  kind;
    edi_grp_cl*   group;
@@ -49,8 +51,10 @@ struct wxedid_history_entry {
    u32_t         after_value;
    GroupAr_cl*   array;
    edi_grp_cl*   parent; //sub-group parent, restores into an emptied array
+   edi_grp_cl*   replacement;
    u32_t         index;
    bool          up;
+   bool          joined; //undone and redone together with the previous entry
 };
 
 //------------
@@ -107,6 +111,10 @@ struct wxedid_wnd {
    GtkPopoverMenu*     group_menu;
    edi_grp_cl*         pending_delete;
    edi_grp_cl*         last_selected;  //restored when a search shows it again
+   edi_grp_cl*         refresh_group;  //field write that may need a rebuild
+   edi_dynfld_t*       refresh_field;
+   bool                refresh_type_changed;
+   guint               refresh_source;
    std::string         tree_query;
    std::string         source_path;   //last file opened or attempted
    bool                source_hex;    //source_path holds hexadecimal text
@@ -184,6 +192,10 @@ static void wnd_record_history(wxedid_wnd* wnd, edi_grp_cl* group,
                                const wxc_String& before_text, u32_t before_value,
                                const wxc_String& after_text, u32_t after_value);
 static std::string field_display_name(const char* name);
+static void wnd_request_refresh(wxedid_wnd* wnd, edi_grp_cl* group,
+                                edi_dynfld_t* field, bool type_changed, bool now);
+static void wnd_schedule_refresh(wxedid_wnd* wnd);
+static void wnd_flush_refresh(wxedid_wnd* wnd);
 
 static void wnd_refresh_group_title(wxedid_wnd* wnd, edi_grp_cl* pgrp) {
    if (pgrp == NULL) return;
@@ -401,6 +413,11 @@ static void row_on_focus_leave(GtkEventControllerFocus*, gpointer user_data) {
    wxedid_row* row = static_cast<wxedid_row*>(user_data);
    row->editing = false;
    row->history_index = static_cast<size_t>(-1);
+   wnd_schedule_refresh(row->wnd);
+}
+
+static void row_on_entry_activate(GtkEntry*, gpointer user_data) {
+   wnd_schedule_refresh(static_cast<wxedid_row*>(user_data)->wnd);
 }
 
 //------------
@@ -439,6 +456,7 @@ static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
       wnd_refresh_selected_tree_label(r->wnd);
       timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
       wnd_refresh_raw_view(r->wnd);
+      wnd_request_refresh(r->wnd, r->pgrp, r->pfld, RCD_IS_TRUE(retU), false);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(entry), "error");
       row_set_valid(r, false);
@@ -480,6 +498,7 @@ static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer
       wnd_refresh_selected_tree_label(r->wnd);
       timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
       wnd_refresh_raw_view(r->wnd);
+      wnd_request_refresh(r->wnd, r->pgrp, r->pfld, RCD_IS_TRUE(retU), true);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(dd), "error");
       row_set_valid(r, false);
@@ -695,6 +714,8 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
                                    [](gpointer data){ delete (wxedid_row*) data; });
 
             g_signal_connect(dd, "notify::selected", G_CALLBACK(row_on_combo_notify), r);
+            gtk_widget_set_sensitive(GTK_WIDGET(dd),
+                                     field_writable(pfld->field) || pEDID->b_RD_Ignore);
             widget = GTK_WIDGET(dd);
          }
       }
@@ -714,6 +735,7 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
             };
 
             g_signal_connect(entry, "changed", G_CALLBACK(row_on_entry_changed), r);
+            g_signal_connect(entry, "activate", G_CALLBACK(row_on_entry_activate), r);
             GtkEventController* focus = gtk_event_controller_focus_new();
             g_signal_connect(focus, "enter", G_CALLBACK(row_on_focus_enter), r);
             g_signal_connect(focus, "leave", G_CALLBACK(row_on_focus_leave), r);
@@ -1639,16 +1661,18 @@ static void wnd_update_history_state(wxedid_wnd* wnd) {
                                wnd->history_position < wnd->history.size());
 }
 
-static bool history_entry_owns_group(const wxedid_wnd* wnd, size_t index) {
+static edi_grp_cl* history_owned_group(const wxedid_wnd* wnd, size_t index) {
    const wxedid_history_entry& entry = wnd->history[index];
-   if (entry.kind == HISTORY_INSERT) return index >= wnd->history_position;
-   if (entry.kind == HISTORY_REMOVE) return index < wnd->history_position;
-   return false;
+   bool applied = index < wnd->history_position;
+   if (entry.kind == HISTORY_INSERT) return applied ? NULL : entry.group;
+   if (entry.kind == HISTORY_REMOVE) return applied ? entry.group : NULL;
+   if (entry.kind == HISTORY_REPLACE) return applied ? entry.group : entry.replacement;
+   return NULL;
 }
 
 static void wnd_drop_history(wxedid_wnd* wnd, size_t from) {
    for (size_t index=from; index<wnd->history.size(); index++) {
-      if (history_entry_owns_group(wnd, index)) delete wnd->history[index].group;
+      delete history_owned_group(wnd, index);
    }
    wnd->history.erase(wnd->history.begin() + from, wnd->history.end());
 }
@@ -1705,14 +1729,7 @@ static void wnd_record_structure(wxedid_wnd* wnd, history_kind kind,
 
 //insert a group that a removal took out, at its original index
 static void history_restore_group(const wxedid_history_entry& entry) {
-   GroupAr_cl* array = entry.array;
-   if (array->GetCount() == 0) {
-      array->InsertInto(entry.parent, entry.group);
-   } else if (entry.index > 0) {
-      array->InsertDn(entry.index - 1, entry.group);
-   } else {
-      array->InsertUp(0, entry.group);
-   }
+   EDID_cl::InsertGroupAt(entry.array, entry.index, entry.group, entry.parent);
 }
 
 //replay or revert a structural entry; returns the group to select
@@ -1720,6 +1737,12 @@ static edi_grp_cl* history_apply_structure(const wxedid_history_entry& entry,
                                            bool redo, bool* ok) {
    GroupAr_cl* array = entry.array;
    *ok = true;
+   if (entry.kind == HISTORY_REPLACE) {
+      edi_grp_cl* current = redo ? entry.group : entry.replacement;
+      edi_grp_cl* next = redo ? entry.replacement : entry.group;
+      *ok = EDID_cl::ReplaceGroup(current, next);
+      return next;
+   }
    if (entry.kind == HISTORY_MOVE) {
       if (redo) {
          if (entry.up) array->MoveUp(entry.index); else array->MoveDn(entry.index);
@@ -1744,11 +1767,11 @@ static edi_grp_cl* history_apply_structure(const wxedid_history_entry& entry,
    return (entry.index > 0) ? array->Item(entry.index - 1) : entry.parent;
 }
 
-static void wnd_apply_history(wxedid_wnd* wnd, bool redo) {
+static bool wnd_apply_history_step(wxedid_wnd* wnd, bool redo) {
    if (redo) {
-      if (wnd->history_position >= wnd->history.size()) return;
+      if (wnd->history_position >= wnd->history.size()) return false;
    } else if (wnd->history_position == 0) {
-      return;
+      return false;
    }
 
    size_t index = redo ? wnd->history_position : wnd->history_position - 1;
@@ -1760,14 +1783,14 @@ static void wnd_apply_history(wxedid_wnd* wnd, bool redo) {
          wnd->doc->GLog.DoLog(
             "[E!] Couldn’t restore the previous structure. Reopen the file before "
             "editing again.");
-         return;
+         return false;
       }
       wnd->history_position = redo ? index + 1 : index;
       wnd->invalid_fields = 0;
       wnd_rebuild_tree(wnd, selection);
       wnd_update_history_state(wnd);
       wnd_update_document_ui(wnd);
-      return;
+      return true;
    }
 
    wxc_String text(redo ? entry.after_text.c_str() : entry.before_text.c_str());
@@ -1779,7 +1802,7 @@ static void wnd_apply_history(wxedid_wnd* wnd, bool redo) {
    if (! RCD_IS_OK(result)) {
       wnd->doc->GLog.DoLog(
          "[E!] Couldn’t restore the previous value. Reopen the file before editing again.");
-      return;
+      return false;
    }
 
    wnd->history_position = redo ? index + 1 : index;
@@ -1793,6 +1816,113 @@ static void wnd_apply_history(wxedid_wnd* wnd, bool redo) {
    }
    wnd_update_history_state(wnd);
    wnd_update_document_ui(wnd);
+   return true;
+}
+
+static void wnd_flush_refresh(wxedid_wnd* wnd);
+
+static void wnd_apply_history(wxedid_wnd* wnd, bool redo) {
+   wnd_flush_refresh(wnd);
+   if (! wnd_apply_history_step(wnd, redo)) return;
+   //a rebuild is undone and redone together with the field write behind it
+   if (redo) {
+      size_t next = wnd->history_position;
+      if ((next < wnd->history.size()) && wnd->history[next].joined)
+         wnd_apply_history_step(wnd, true);
+   } else if (wnd->history[wnd->history_position].joined) {
+      wnd_apply_history_step(wnd, false);
+   }
+}
+
+//------------
+// group rebuilds: a field write can change the group type or layout
+static void wnd_flush_refresh(wxedid_wnd* wnd) {
+   if (wnd->refresh_source != 0) {
+      g_source_remove(wnd->refresh_source);
+      wnd->refresh_source = 0;
+   }
+   edi_grp_cl* group = wnd->refresh_group;
+   edi_dynfld_t* field = wnd->refresh_field;
+   bool type_changed = wnd->refresh_type_changed;
+   wnd->refresh_group = NULL;
+   wnd->refresh_field = NULL;
+   wnd->refresh_type_changed = false;
+   if (group == NULL) return;
+
+   edi_grp_cl* target = NULL;
+   rcode result;
+   edi_grp_cl* rebuilt = wnd->doc->EDID.RebuildGroup(group, field, type_changed,
+                                                     &target, result);
+   if (rebuilt == NULL) {
+      if (! RCD_IS_OK(result)) wnd->doc->GLog.PrintRcode(result);
+      return;
+   }
+   GroupAr_cl* array = target->getParentAr();
+   u32_t index = target->getParentArIdx();
+   edi_grp_cl* parent = target->getParentGrp();
+   const wxedid_history_entry* last = (wnd->history_position == 0) ? NULL :
+      &wnd->history[wnd->history_position - 1];
+   bool joined = (last != NULL) && (wnd->history_position == wnd->history.size()) &&
+                 (last->kind == HISTORY_FIELD) && (last->group == group) &&
+                 (last->field == field);
+   edi_grp_cl* selected = wnd_selected_group(wnd);
+   bool follow = (selected == target) || (selected == group);
+
+   if (! EDID_cl::ReplaceGroup(target, rebuilt)) {
+      delete rebuilt;
+      if (joined) {
+         wnd_apply_history_step(wnd, false);
+         wnd_drop_history(wnd, wnd->history_position);
+         wnd_update_history_state(wnd);
+      }
+      wnd_show_error(wnd, "This change does not fit in the block. The previous value "
+                          "was restored.");
+      return;
+   }
+
+   wxedid_history_entry entry = {};
+   entry.kind = HISTORY_REPLACE;
+   entry.group = target;
+   entry.replacement = rebuilt;
+   entry.array = array;
+   entry.parent = parent;
+   entry.index = index;
+   entry.joined = joined;
+   wnd_push_history(wnd, entry);
+   wnd->invalid_fields = 0;
+   wnd_rebuild_tree(wnd, follow ? rebuilt : selected);
+   wnd_update_document_ui(wnd);
+}
+
+static gboolean wnd_on_refresh_idle(gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   wnd->refresh_source = 0;
+   wnd_flush_refresh(wnd);
+   return G_SOURCE_REMOVE;
+}
+
+//remember a write that may need a rebuild; entries apply it once editing ends
+static void wnd_request_refresh(wxedid_wnd* wnd, edi_grp_cl* group,
+                                edi_dynfld_t* field, bool type_changed,
+                                bool now) {
+   bool layout_field = (field->field.flags & (F_FR | F_INIT)) != 0;
+   if (! type_changed && ! layout_field) return;
+   if ((wnd->refresh_group != NULL) &&
+       ((wnd->refresh_group != group) || (wnd->refresh_field != field))) {
+      wnd_flush_refresh(wnd);
+   }
+   wnd->refresh_group = group;
+   wnd->refresh_field = field;
+   wnd->refresh_type_changed = wnd->refresh_type_changed || type_changed;
+   if (now && (wnd->refresh_source == 0)) {
+      wnd->refresh_source = g_idle_add(wnd_on_refresh_idle, wnd);
+   }
+}
+
+static void wnd_schedule_refresh(wxedid_wnd* wnd) {
+   if ((wnd->refresh_group != NULL) && (wnd->refresh_source == 0)) {
+      wnd->refresh_source = g_idle_add(wnd_on_refresh_idle, wnd);
+   }
 }
 
 static void wnd_on_undo_action(GSimpleAction*, GVariant*, gpointer user_data) {
@@ -1836,6 +1966,8 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
    wnd_update_group_actions(wnd);
    gtk_list_view_scroll_to(wnd->tree, gtk_single_selection_get_selected(wnd->tree_sel),
                            GTK_LIST_SCROLL_NONE, NULL);
+   //leaving a group applies its pending rebuild
+   wnd_schedule_refresh(wnd);
 
    g_object_unref(obj);   //gtk_tree_list_row_get_item() transfers a full ref
 }
@@ -1852,6 +1984,7 @@ static void wnd_finish_structure_change(wxedid_wnd* wnd,
 
 static void wnd_on_duplicate_group(GSimpleAction*, GVariant*, gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   wnd_flush_refresh(wnd);
    edi_grp_cl* group = wnd_selected_group(wnd);
    GroupAr_cl* array = (group != NULL) ? group->getParentAr() : NULL;
    if (array == NULL) return;
@@ -1871,6 +2004,7 @@ static void wnd_on_duplicate_group(GSimpleAction*, GVariant*, gpointer user_data
 }
 
 static void wnd_move_group(wxedid_wnd* wnd, bool up) {
+   wnd_flush_refresh(wnd);
    edi_grp_cl* group = wnd_selected_group(wnd);
    GroupAr_cl* array = (group != NULL) ? group->getParentAr() : NULL;
    if (array == NULL) return;
@@ -1918,6 +2052,7 @@ static void wnd_on_delete_group_response(GObject* source, GAsyncResult* result,
 static void wnd_on_delete_group(GSimpleAction*, GVariant*, gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
    if (wnd->pending_delete != NULL) return;
+   wnd_flush_refresh(wnd);
    edi_grp_cl* group = wnd_selected_group(wnd);
    if ((group == NULL) || (group->getParentAr() == NULL) ||
        ! group->getParentAr()->CanDelete(group->getParentArIdx())) return;
@@ -1975,6 +2110,7 @@ static bool wnd_insert_group(GroupAr_cl* array, edi_grp_cl* group) {
 static void wnd_on_add_cta_group(GSimpleAction*, GVariant* parameter,
                                  gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   wnd_flush_refresh(wnd);
    const char* value = g_variant_get_string(parameter, NULL);
    EDID_cl::group_template which = EDID_cl::CEA_AUDIO_LPCM;
    if (0 == strcmp(value, "audio-extended")) which = EDID_cl::CEA_AUDIO_EXTENDED;
@@ -1997,6 +2133,7 @@ static void wnd_on_add_cta_group(GSimpleAction*, GVariant* parameter,
 static void wnd_on_add_displayid_group(GSimpleAction*, GVariant*,
                                        gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   wnd_flush_refresh(wnd);
    GroupAr_cl* array = wnd_selected_root_array(wnd);
    if ((array == NULL) || (array->GetCount() == 0)) return;
    u8_t version = array->Item(0)->getInstPtr()[1];
@@ -2316,6 +2453,12 @@ static void wnd_load_bytes(wxedid_wnd* wnd, const char* path,
       block_count_adjusted = true;
    }
 
+   //the pending rebuild refers to groups that are about to be released
+   if (wnd->refresh_source != 0) g_source_remove(wnd->refresh_source);
+   wnd->refresh_source = 0;
+   wnd->refresh_group = NULL;
+   wnd->refresh_field = NULL;
+   wnd->refresh_type_changed = false;
    wnd->doc->EDID.Clear();
    edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
    memcpy(pbuf->buff, loaded.buff, blocks * sizeof(ediblk_t));
@@ -2588,6 +2731,7 @@ static void wnd_on_import_hex_action(GSimpleAction*, GVariant*, gpointer user_da
 //------------
 // output: assemble groups into the buffer and recompute checksums
 static bool wnd_prepare_output(wxedid_wnd* wnd) {
+   wnd_flush_refresh(wnd);
    edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
    u32_t declared_blocks = 1U + pbuf->edi.base.num_extblk;
    u32_t parsed_blocks = wnd->doc->EDID.getNumValidBlocks();
@@ -3054,6 +3198,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                               g_clear_object(&w->tree_filtered);
                               g_clear_object(&w->tree_filter);
                               g_clear_object(&w->tree_model);
+                              if (w->refresh_source != 0) g_source_remove(w->refresh_source);
                               wnd_clear_history(w);
                               delete w->timing;
                               delete w->doc;

@@ -397,6 +397,18 @@ class EDID_cl {
       rcode ParseDBC_TAG  (u8_t *pinst, edi_grp_cl** pp_grp);
       rcode CreateGroup   (group_template which, u8_t displayid_version,
                            edi_grp_cl** pp_grp);
+      //After a successful write to field, build a new group from the current
+      //data when the write changed the group type or layout. Returns NULL when
+      //no rebuild is needed or possible; *target receives the group to replace,
+      //which is group itself or, for F_INIT sub-group fields, its parent.
+      edi_grp_cl* RebuildGroup(edi_grp_cl* group, edi_dynfld_t* field,
+                               bool type_changed, edi_grp_cl** target,
+                               rcode& result);
+      //Detach target and put replacement at its position. Fails, leaving
+      //target in place, when the replacement does not fit in the block.
+      static bool ReplaceGroup(edi_grp_cl* target, edi_grp_cl* replacement);
+      static void InsertGroupAt(GroupAr_cl* array, u32_t index,
+                                edi_grp_cl* group, edi_grp_cl* parent);
       rcode AssembleEDID  ();
 
       //field properties

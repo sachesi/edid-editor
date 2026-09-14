@@ -302,34 +302,43 @@ rcode EDID_cl::CreateGroup(group_template which, u8_t displayid_version,
    };
 
    const u8_t* bytes = NULL;
+   size_t size = 0;
    edi_grp_cl* group = NULL;
    rcode retU;
 
    switch (which) {
       case CEA_AUDIO_LPCM:
          bytes = audio_lpcm;
+         size = sizeof(audio_lpcm);
          group = new cea_adb_cl;
          break;
       case CEA_AUDIO_EXTENDED:
          bytes = audio_extended;
+         size = sizeof(audio_extended);
          group = new cea_adb_cl;
          break;
       case CEA_VIDEO:
          bytes = video;
+         size = sizeof(video);
          group = new cea_vdb_cl;
          break;
       case CEA_TIMING:
          bytes = timing;
+         size = sizeof(timing);
          group = new dtd_cl;
          break;
       case DISPLAYID_DATA:
          bytes = displayid;
+         size = sizeof(displayid);
          group = new displayid_data_block_cl;
          break;
    }
    if (group == NULL) RCD_RETURN_FAULT(retU);
 
-   retU = group->init(bytes,
+   //edit-mode init copies a full 32-byte local buffer, zero-filled here
+   u8_t data[32] = {};
+   memcpy(data, bytes, size);
+   retU = group->init(data,
       (which == DISPLAYID_DATA) ? (displayid_version | T_MODE_EDIT) : T_MODE_EDIT,
       NULL);
    if (! RCD_IS_OK(retU)) {
@@ -339,6 +348,106 @@ rcode EDID_cl::CreateGroup(group_template which, u8_t displayid_version,
    }
    *pp_grp = group;
    return retU;
+}
+
+//same fields and sub-groups: a rebuild would change nothing visible
+static bool same_layout(edi_grp_cl* first, edi_grp_cl* second) {
+   if ((first->FieldsAr.GetCount() != second->FieldsAr.GetCount()) ||
+       (first->getSubGrpCount() != second->getSubGrpCount()) ||
+       (first->getTypeID().t32 != second->getTypeID().t32)) return false;
+   for (u32_t idx=0; idx<first->FieldsAr.GetCount(); idx++) {
+      const edi_field_t& a = first->FieldsAr.Item(idx)->field;
+      const edi_field_t& b = second->FieldsAr.Item(idx)->field;
+      if ((a.handlerfn != b.handlerfn) || (a.offs != b.offs) ||
+          (a.shift != b.shift) || (a.fld_sz != b.fld_sz) ||
+          (((a.flags ^ b.flags) & ~F_NU) != 0)) //F_NU follows the value
+         return false;
+   }
+   for (u32_t idx=0; idx<first->getSubGrpCount(); idx++) {
+      if (! same_layout(first->getSubGroup(idx), second->getSubGroup(idx))) return false;
+   }
+   return true;
+}
+
+edi_grp_cl* EDID_cl::RebuildGroup(edi_grp_cl* group, edi_dynfld_t* field,
+                                  bool type_changed, edi_grp_cl** target,
+                                  rcode& result) {
+   RCD_SET_OK(result);
+   *target = NULL;
+   u32_t flags = field->field.flags;
+   bool retype_dbc = type_changed &&
+      ((field->field.handlerfn == &EDID_cl::CEA_DBC_Tag) ||
+       (field->field.handlerfn == &EDID_cl::CEA_DBC_ExTag));
+   u32_t base_type = group->getTypeID().t32 & ID_EDID_MASK;
+   bool retype_alt = type_changed && ! retype_dbc &&
+      (group->getParentAr() == &EDI_BaseGrpAr) &&
+      (base_type >= ID_UNK) && (base_type <= ID_DTD);
+   if (! type_changed && ((flags & (F_FR | F_INIT)) == 0)) return NULL;
+
+   //F_INIT on a sub-group field changes the parent layout
+   edi_grp_cl* source = group;
+   if (! type_changed && ((flags & F_INIT) != 0) && (group->getParentGrp() != NULL)) {
+      source = group->getParentGrp();
+   }
+
+   edi_grp_cl* rebuilt = NULL;
+   if (retype_dbc || retype_alt) {
+      source->AssembleGroup();
+      u8_t* inst = source->getInstPtr();
+      rcode parsed = retype_dbc
+         ? ParseDBC_TAG(inst, &rebuilt)
+         : ParseAltDtor(inst, &rebuilt, (i32_t) source->getAbsOffs());
+      if (rebuilt == NULL) {
+         result = parsed;
+         return NULL;
+      }
+      //an unknown type still yields a group that keeps the bytes
+      if (! RCD_IS_OK(parsed)) pGLog->PrintRcode(parsed);
+      rebuilt->setAbsOffs(source->getAbsOffs());
+      rebuilt->setRelOffs(source->getRelOffs());
+      result = rebuilt->init(inst, T_MODE_EDIT, NULL);
+      if (! RCD_IS_OK(result) && (result.detail.rcode > RCD_FVMSG)) {
+         delete rebuilt;
+         return NULL;
+      }
+   } else {
+      rebuilt = source->Clone(result, T_MODE_EDIT);
+      if (rebuilt == NULL) return NULL;
+      if (! type_changed && same_layout(source, rebuilt)) {
+         delete rebuilt;
+         RCD_SET_OK(result);
+         return NULL;
+      }
+   }
+   if (! RCD_IS_OK(result)) pGLog->PrintRcode(result);
+   RCD_SET_OK(result);
+   *target = source;
+   return rebuilt;
+}
+
+void EDID_cl::InsertGroupAt(GroupAr_cl* array, u32_t index, edi_grp_cl* group,
+                            edi_grp_cl* parent) {
+   if (array->GetCount() == 0) {
+      array->InsertInto(parent, group);
+   } else if (index > 0) {
+      array->InsertDn(index - 1, group);
+   } else {
+      array->InsertUp(0, group);
+   }
+}
+
+bool EDID_cl::ReplaceGroup(edi_grp_cl* target, edi_grp_cl* replacement) {
+   GroupAr_cl* array = target->getParentAr();
+   if (array == NULL) return false;
+   u32_t index = target->getParentArIdx();
+   edi_grp_cl* parent = target->getParentGrp();
+   if (array->Cut(index) != target) return false;
+   InsertGroupAt(array, index, replacement, parent);
+   if (array->getFreeSpace() >= 0) return true;
+
+   array->Cut(index);
+   InsertGroupAt(array, index, target, parent);
+   return false;
 }
 
 rcode EDID_cl::ParseCEA_DBC(u8_t *pinst) {
