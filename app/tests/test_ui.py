@@ -424,6 +424,18 @@ def functional(Atspi, app, fixture):
             wait_for(lambda: int(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
                                  .get_value_iface().get_current_value()) == 241503,
                      "redo did not reapply the pixel clock")
+            refresh = named(Atspi, "Vertical refresh", Atspi.Role.SPIN_BUTTON)
+            rate = refresh.get_value_iface().get_current_value()
+            wanted = round(rate - 10, 2)
+            assert refresh.get_value_iface().set_current_value(wanted)
+            wait_for(lambda: abs(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
+                                 .get_value_iface().get_current_value()
+                                 - 241503 * wanted / rate) <= 241503 * 0.001,
+                     "a new refresh rate did not recalculate the pixel clock")
+            activate_menu_item(Atspi, "Undo")
+            wait_for(lambda: int(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
+                                 .get_value_iface().get_current_value()) == 241503,
+                     "undo did not restore the pixel clock after a refresh edit")
             press(Atspi, "Bytes")
             raw = wait_for(lambda: named(Atspi, "Selected group bytes"),
                            "byte view was not exposed")

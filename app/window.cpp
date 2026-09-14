@@ -180,7 +180,7 @@ struct wxedid_timing {
    GtkLabel*     derived[TIMING_FIELD_COUNT];
    GtkLabel*     clock_unit;
    GtkLabel*     clock_mhz;
-   GtkLabel*     refresh;
+   GtkSpinButton* refresh;
    GtkLabel*     htotal;
    GtkLabel*     hfreq;
    GtkLabel*     vtotal;
@@ -1234,9 +1234,8 @@ static void timing_update_outputs(wxedid_timing* timing) {
    timing_set_text(timing->derived[TIMING_VWIDTH], "%.4f ms",
                    timing_value(timing, TIMING_VWIDTH) * line_ms);
 
+   gtk_spin_button_set_value(timing->refresh, std::round(refresh * 100.0) / 100.0);
    char text[64];
-   snprintf(text, sizeof(text), "%.2f Hz", refresh);
-   gtk_label_set_text(timing->refresh, text);
    snprintf(text, sizeof(text), "%.3f MHz", pixclk / 1000000.0);
    gtk_label_set_text(timing->clock_mhz, text);
    snprintf(text, sizeof(text), "%u px  ·  %.3f µs", htotal,
@@ -1262,32 +1261,86 @@ static void timing_update_outputs(wxedid_timing* timing) {
    gtk_widget_queue_draw(timing->drawing);
 }
 
+//Blanking band of the diagram: its label goes inside when the band is thick
+//enough, else beside it in the margin; a vertical band is labelled sideways.
+struct timing_band {
+   double x, y, w, h;         //the band
+   double out_x, out_y;       //centre of the label in the margin
+   bool   vertical;
+   char   text[64];
+   char   short_text[24];
+};
+
+static void timing_draw_band_label(cairo_t* cr, PangoLayout* layout,
+                                   const timing_band& band) {
+   const double thickness = band.vertical ? band.w : band.h;
+   const double length = band.vertical ? band.h : band.w;
+   if (length <= 0.0) return;
+   int text_w = 0;
+   int text_h = 0;
+   pango_layout_set_text(layout, band.text, -1);
+   pango_layout_get_pixel_size(layout, &text_w, &text_h);
+   if (text_w > length - 8.0) {
+      pango_layout_set_text(layout, band.short_text, -1);
+      pango_layout_get_pixel_size(layout, &text_w, &text_h);
+      if (text_w > length - 4.0) return;
+   }
+   const bool inside = thickness >= text_h + 4.0;
+   const double cx = inside ? band.x + (band.w / 2.0) :
+                     (band.vertical ? band.out_x : band.x + (band.w / 2.0));
+   const double cy = inside ? band.y + (band.h / 2.0) :
+                     (band.vertical ? band.y + (band.h / 2.0) : band.out_y);
+   cairo_save(cr);
+   cairo_translate(cr, cx, cy);
+   if (band.vertical) cairo_rotate(cr, -G_PI / 2.0);
+   cairo_move_to(cr, -text_w / 2.0, -text_h / 2.0);
+   pango_cairo_show_layout(cr, layout);
+   cairo_restore(cr);
+}
+
 static void timing_draw(GtkDrawingArea* area, cairo_t* cr, int width, int height,
                         gpointer user_data) {
    wxedid_timing* timing = static_cast<wxedid_timing*>(user_data);
-   const double htotal = timing_value(timing, TIMING_HACTIVE) +
-                         timing_value(timing, TIMING_HBLANK);
-   const double vtotal = timing_value(timing, TIMING_VACTIVE) +
-                         timing_value(timing, TIMING_VBLANK);
+   const u32_t hactive = timing_value(timing, TIMING_HACTIVE);
+   const u32_t hblank = timing_value(timing, TIMING_HBLANK);
+   const u32_t hoffset = timing_value(timing, TIMING_HOFFSET);
+   const u32_t hwidth = timing_value(timing, TIMING_HWIDTH);
+   const u32_t vactive = timing_value(timing, TIMING_VACTIVE);
+   const u32_t vblank = timing_value(timing, TIMING_VBLANK);
+   const u32_t voffset = timing_value(timing, TIMING_VOFFSET);
+   const u32_t vwidth = timing_value(timing, TIMING_VWIDTH);
+   const double htotal = hactive + hblank;
+   const double vtotal = vactive + vblank;
    if ((htotal <= 0.0) || (vtotal <= 0.0)) return;
 
-   const double pad = 18.0;
+   //captions in a smaller size of the widget's font
+   PangoLayout* layout = gtk_widget_create_pango_layout(GTK_WIDGET(area), NULL);
+   PangoFontDescription* small = pango_font_description_copy(
+      pango_context_get_font_description(gtk_widget_get_pango_context(GTK_WIDGET(area))));
+   const gint size = static_cast<gint>(pango_font_description_get_size(small) * 0.85);
+   if (pango_font_description_get_size_is_absolute(small)) {
+      pango_font_description_set_absolute_size(small, size);
+   } else {
+      pango_font_description_set_size(small, size);
+   }
+   pango_layout_set_font_description(layout, small);
+   pango_layout_set_text(layout, "0", -1);
+   int caption_h = 0;
+   pango_layout_get_pixel_size(layout, NULL, &caption_h);
+
+   //the margins hold the labels of bands too thin to hold them
+   const double pad = caption_h + 10.0;
    const double canvas_w = std::max(1.0, width - (2.0 * pad));
    const double canvas_h = std::max(1.0, height - (2.0 * pad));
-   const double hback = std::max(0.0,
-      static_cast<double>(timing_value(timing, TIMING_HBLANK)) -
-      timing_value(timing, TIMING_HOFFSET));
-   const double vback = std::max(0.0,
-      static_cast<double>(timing_value(timing, TIMING_VBLANK)) -
-      timing_value(timing, TIMING_VOFFSET));
+   //sync and the back porch come before the active image, the front porch after
+   const u32_t hback = (hblank > hoffset) ? hblank - hoffset : 0;
+   const u32_t vback = (vblank > voffset) ? vblank - voffset : 0;
    const double active_x = pad + (hback / htotal) * canvas_w;
    const double active_y = pad + (vback / vtotal) * canvas_h;
-   const double active_w = timing_value(timing, TIMING_HACTIVE) / htotal * canvas_w;
-   const double active_h = timing_value(timing, TIMING_VACTIVE) / vtotal * canvas_h;
-   const double hsync_w = std::max(1.0,
-      timing_value(timing, TIMING_HWIDTH) / htotal * canvas_w);
-   const double vsync_h = std::max(1.0,
-      timing_value(timing, TIMING_VWIDTH) / vtotal * canvas_h);
+   const double active_w = hactive / htotal * canvas_w;
+   const double active_h = vactive / vtotal * canvas_h;
+   const double hsync_w = std::max(1.0, hwidth / htotal * canvas_w);
+   const double vsync_h = std::max(1.0, vwidth / vtotal * canvas_h);
 
    //blanking in the text color, sync and the active image in the accent color
    GdkRGBA color;
@@ -1309,22 +1362,65 @@ static void timing_draw(GtkDrawingArea* area, cairo_t* cr, int width, int height
    cairo_stroke(cr);
    gdk_rgba_free(accent);
 
+   const u32_t hback_porch = (hback > hwidth) ? hback - hwidth : 0;
+   const u32_t vback_porch = (vback > vwidth) ? vback - vwidth : 0;
+   const double right = pad + canvas_w;
+   const double bottom = pad + canvas_h;
+   timing_band bands[4] = {
+      {pad, pad, canvas_w, active_y - pad, 0.0, pad / 2.0, false, {}, {}},
+      {pad, active_y + active_h, canvas_w, bottom - (active_y + active_h),
+       0.0, bottom + (pad / 2.0), false, {}, {}},
+      {pad, pad, active_x - pad, canvas_h, pad / 2.0, 0.0, true, {}, {}},
+      {active_x + active_w, pad, right - (active_x + active_w), canvas_h,
+       right + (pad / 2.0), 0.0, true, {}, {}},
+   };
+   snprintf(bands[0].text, sizeof(bands[0].text), "Sync %u + back porch %u lines",
+            vwidth, vback_porch);
+   snprintf(bands[0].short_text, sizeof(bands[0].short_text), "%u lines", vback);
+   snprintf(bands[1].text, sizeof(bands[1].text), "Sync offset %u lines", voffset);
+   snprintf(bands[1].short_text, sizeof(bands[1].short_text), "%u lines", voffset);
+   snprintf(bands[2].text, sizeof(bands[2].text), "Sync %u + back porch %u px",
+            hwidth, hback_porch);
+   snprintf(bands[2].short_text, sizeof(bands[2].short_text), "%u px", hback);
+   snprintf(bands[3].text, sizeof(bands[3].text), "Sync offset %u px", hoffset);
+   snprintf(bands[3].short_text, sizeof(bands[3].short_text), "%u px", hoffset);
+   const u32_t sizes[4] = {vback, voffset, hback, hoffset};
+   cairo_set_source_rgba(cr, color.red, color.green, color.blue, color.alpha * 0.7);
+   for (int idx = 0; idx < 4; idx++) {
+      if (sizes[idx] > 0) timing_draw_band_label(cr, layout, bands[idx]);
+   }
+
+   //the active image: its size, and the whole frame below it
    char active_text[48];
-   snprintf(active_text, sizeof(active_text), "%u × %u",
-            timing_value(timing, TIMING_HACTIVE),
-            timing_value(timing, TIMING_VACTIVE));
-   PangoLayout* layout = gtk_widget_create_pango_layout(GTK_WIDGET(area), active_text);
+   snprintf(active_text, sizeof(active_text), "%u × %u", hactive, vactive);
+   char total_text[64];
+   snprintf(total_text, sizeof(total_text), "Total %.0f × %.0f", htotal, vtotal);
+   int total_w = 0;
+   int total_h = 0;
+   pango_layout_set_text(layout, total_text, -1);
+   pango_layout_get_pixel_size(layout, &total_w, &total_h);
+   PangoLayout* bold = gtk_widget_create_pango_layout(GTK_WIDGET(area), active_text);
    PangoFontDescription* font = pango_font_description_new();
    pango_font_description_set_weight(font, PANGO_WEIGHT_BOLD);
-   pango_layout_set_font_description(layout, font);
+   pango_layout_set_font_description(bold, font);
    int text_w = 0;
    int text_h = 0;
-   pango_layout_get_pixel_size(layout, &text_w, &text_h);
+   pango_layout_get_pixel_size(bold, &text_w, &text_h);
+   const bool with_total = (active_h >= text_h + total_h + 12.0) &&
+                           (active_w >= total_w + 8.0);
+   const double block_h = with_total ? text_h + 2.0 + total_h : text_h;
+   const double block_y = active_y + ((active_h - block_h) / 2.0);
    cairo_set_source_rgba(cr, color.red, color.green, color.blue, color.alpha);
-   cairo_move_to(cr, active_x + ((active_w - text_w) / 2.0),
-                 active_y + ((active_h - text_h) / 2.0));
-   pango_cairo_show_layout(cr, layout);
+   cairo_move_to(cr, active_x + ((active_w - text_w) / 2.0), block_y);
+   pango_cairo_show_layout(cr, bold);
+   if (with_total) {
+      cairo_set_source_rgba(cr, color.red, color.green, color.blue, color.alpha * 0.7);
+      cairo_move_to(cr, active_x + ((active_w - total_w) / 2.0), block_y + text_h + 2.0);
+      pango_cairo_show_layout(cr, layout);
+   }
    pango_font_description_free(font);
+   pango_font_description_free(small);
+   g_object_unref(bold);
    g_object_unref(layout);
 }
 
@@ -1398,6 +1494,32 @@ static void timing_on_changed(GtkSpinButton* spin, gpointer user_data) {
    }
    timing->updating = false;
    wnd_update_document_ui(timing->wnd);
+}
+
+static void timing_on_refresh_changed(GtkSpinButton* spin, gpointer user_data) {
+   wxedid_timing* timing = static_cast<wxedid_timing*>(user_data);
+   if (timing->updating || (timing->pgrp == NULL)) return;
+
+   const double htotal = timing_value(timing, TIMING_HACTIVE) +
+                         timing_value(timing, TIMING_HBLANK);
+   const double vtotal = timing_value(timing, TIMING_VACTIVE) +
+                         timing_value(timing, TIMING_VBLANK);
+   if ((htotal <= 0.0) || (vtotal <= 0.0)) return;
+   const double current = timing_value(timing, TIMING_PIXCLK) *
+                          timing->pixel_hz_factor / (htotal * vtotal);
+   const double target = gtk_spin_button_get_value(spin);
+   //the rate is shown rounded, so leaving the field must not move the clock
+   if (std::fabs(target - current) < 0.005) return;
+
+   GtkSpinButton* clock = timing->spins[TIMING_PIXCLK];
+   const double step = gtk_adjustment_get_step_increment(
+      gtk_spin_button_get_adjustment(clock));
+   const double units = target * htotal * vtotal / timing->pixel_hz_factor;
+   gtk_spin_button_set_value(clock, std::max(step, std::round(units / step) * step));
+   //show the rate the clock reaches, also when it did not change
+   timing->updating = true;
+   timing_update_outputs(timing);
+   timing->updating = false;
 }
 
 static void timing_on_focus_enter(GtkEventControllerFocus* controller,
@@ -1558,11 +1680,25 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_widget_add_css_class(refresh_title, "caption");
    gtk_widget_add_css_class(refresh_title, "dim-label");
    gtk_box_append(GTK_BOX(refresh_box), refresh_title);
-   timing->refresh = GTK_LABEL(gtk_label_new(NULL));
-   gtk_label_set_xalign(timing->refresh, 0.0);
-   gtk_widget_add_css_class(GTK_WIDGET(timing->refresh), "title-3");
-   gtk_widget_add_css_class(GTK_WIDGET(timing->refresh), "numeric");
-   gtk_box_append(GTK_BOX(refresh_box), GTK_WIDGET(timing->refresh));
+   //a new rate is reached through the pixel clock, keeping the blanking
+   GtkWidget* refresh_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   GtkAdjustment* refresh_adj = gtk_adjustment_new(1, 1, 10000, 1, 10, 0);
+   GtkWidget* refresh_spin = gtk_spin_button_new(refresh_adj, 1, 2);
+   timing->refresh = GTK_SPIN_BUTTON(refresh_spin);
+   g_object_set_data(G_OBJECT(refresh_spin), "timing-field",
+                     GINT_TO_POINTER(TIMING_PIXCLK));
+   g_signal_connect(refresh_spin, "value-changed",
+                    G_CALLBACK(timing_on_refresh_changed), timing);
+   timing_add_focus_controller(timing, refresh_spin);
+   gtk_accessible_update_property(GTK_ACCESSIBLE(refresh_spin),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Vertical refresh", -1);
+   gtk_widget_set_tooltip_text(refresh_spin,
+      "A new refresh rate changes the pixel clock; the blanking stays as it is");
+   gtk_box_append(GTK_BOX(refresh_row), refresh_spin);
+   GtkWidget* refresh_unit = gtk_label_new("Hz");
+   gtk_widget_add_css_class(refresh_unit, "dim-label");
+   gtk_box_append(GTK_BOX(refresh_row), refresh_unit);
+   gtk_box_append(GTK_BOX(refresh_box), refresh_row);
    gtk_box_append(GTK_BOX(summary), refresh_box);
    gtk_box_append(GTK_BOX(content), summary);
 

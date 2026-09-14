@@ -42,9 +42,13 @@ Read-Only Fields unlocks them. Changing a field that decides the layout of its g
 such as a data block tag or length, rebuilds the group from its data; a length that no
 longer fits is refused.
 
-Detailed timings open in a visual editor with a diagram of the active image and the
-blanking, the pixel clock in MHz, durations in µs, and the resulting line and refresh
-rates.
+Detailed timings open in a visual editor with the pixel clock in MHz, durations in µs,
+and the resulting line and refresh rates. Its diagram draws the whole frame to scale:
+the active image, and around it the blanking, labelled with the size of its sync, back
+porch and sync offset. Timings of the same resolution can look different there because
+their blanking differs. Typing a refresh rate sets the pixel clock that gives it with
+the current blanking; the rate shown afterwards is the one the clock reaches in steps
+of its unit.
 
 CTA-861 and DisplayID data blocks can be added, duplicated, moved and deleted from the
 sidebar, its context menu or the keyboard. The audio templates start with a valid LPCM
