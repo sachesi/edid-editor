@@ -424,6 +424,13 @@ def functional(Atspi, app, fixture):
             assert all(sum(saved[index:index + 128]) % 256 == 0
                        for index in range(0, len(saved), 128))
 
+            activate_menu_item(Atspi, "Compare with File…")
+            wait_for(lambda: window_exists("Compare with EDID file"),
+                     "Compare with File did not open a file dialog")
+            press(Atspi, "Cancel", Atspi.Role.PUSH_BUTTON)
+            wait_for(lambda: not window_exists("Compare with EDID file"),
+                     "the compare file dialog did not close")
+
             activate_menu_item(Atspi, "Save As…")
             wait_for(lambda: window_exists("Save EDID binary"),
                      "Save As did not open a file dialog")
@@ -592,22 +599,24 @@ def broken(Atspi, app, fixture):
 def display(Atspi, app, fixture):
     process = launch_app(Atspi, app, fixture)
     try:
-        activate_menu_item(Atspi, "Open from Display…")
-
-        def outcome():
-            if named(Atspi, "No display data found"):
-                return "none"
-            dialog = named(Atspi, "Open from Display", Atspi.Role.DIALOG)
-            if dialog is None:
+        def chooser(title):
+            def outcome():
+                if named(Atspi, "No display data found"):
+                    return "none"
+                dialog = named(Atspi, title, Atspi.Role.DIALOG)
+                if dialog is None:
+                    return None
+                for row in walk(dialog):
+                    if role_of(row) != Atspi.Role.LIST_ITEM:
+                        continue
+                    for node in walk(row):
+                        if role_of(node) == Atspi.Role.PUSH_BUTTON:
+                            return node
                 return None
-            for row in walk(dialog):
-                if role_of(row) != Atspi.Role.LIST_ITEM:
-                    continue
-                for node in walk(row):
-                    if role_of(node) == Atspi.Role.PUSH_BUTTON:
-                        return node
-            return None
-        found = wait_for(outcome, "Open from Display showed neither displays nor a notice")
+            return wait_for(outcome, f"{title} showed neither displays nor a notice")
+
+        activate_menu_item(Atspi, "Open from Display…")
+        found = chooser("Open from Display")
         if found == "none":
             press(Atspi, "Close", Atspi.Role.PUSH_BUTTON)
             return
@@ -617,6 +626,27 @@ def display(Atspi, app, fixture):
                  "opening a display did not name the window after its connector")
         wait_for(lambda: group_count(Atspi, "BED") == 1,
                  "the display EDID was not parsed")
+
+        # the display compared with itself, before and after an edit
+        activate_menu_item(Atspi, "Compare with Display…")
+        assert chooser("Compare with Display").get_action_iface().do_action(0)
+        wait_for(lambda: named(Atspi, "No differences"),
+                 "comparing a display with itself found differences")
+        close_dialog(Atspi, "Compare")
+        select_group(Atspi, 2)
+        press(Atspi, "Fields")
+        # the VESA bit is also the lowest interface type bit
+        vesa = wait_for(lambda: named(Atspi, "VESA compatibility", Atspi.Role.SWITCH),
+                        "the input group showed no VESA compatibility switch")
+        assert vesa.get_action_iface().do_action(0)
+        time.sleep(0.5)
+        activate_menu_item(Atspi, "Compare with Display…")
+        assert chooser("Compare with Display").get_action_iface().do_action(0)
+        wait_for(lambda: named(Atspi, "2 differences"),
+                 "comparing an edited display did not find the change")
+        wait_for(lambda: named(Atspi, "VESA compatibility"),
+                 "the changed field was not named")
+        close_dialog(Atspi, "Compare")
     finally:
         stop_app(process)
 

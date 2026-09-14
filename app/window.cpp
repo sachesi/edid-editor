@@ -16,6 +16,7 @@
 #include "EDID_text.h"
 #include "EDID_display.h"
 #include "EDID_summary.h"
+#include "EDID_compare.h"
 #include "wxedid-config.h"
 
 #include <cstdio>
@@ -109,6 +110,8 @@ struct wxedid_wnd {
    GSimpleAction*      add_displayid_action;
    GSimpleAction*      export_hex_action;
    GSimpleAction*      save_report_action;
+   GSimpleAction*      compare_file_action;
+   GSimpleAction*      compare_display_action;
    GSimpleAction*      ignore_errors_action;
    GSimpleAction*      ignore_read_only_action;
    GtkPopoverMenu*     group_menu;
@@ -2734,6 +2737,8 @@ static void wnd_update_document_ui(wxedid_wnd* wnd) {
    g_simple_action_set_enabled(wnd->save_as_action, can_write);
    g_simple_action_set_enabled(wnd->export_hex_action, can_write);
    g_simple_action_set_enabled(wnd->save_report_action, can_write);
+   g_simple_action_set_enabled(wnd->compare_file_action, wnd->loaded);
+   g_simple_action_set_enabled(wnd->compare_display_action, wnd->loaded);
    gtk_widget_set_visible(wnd->save_button, wnd->loaded);
    gtk_button_set_label(GTK_BUTTON(wnd->save_button), "_Save");
    gtk_button_set_use_underline(GTK_BUTTON(wnd->save_button), TRUE);
@@ -3414,16 +3419,155 @@ enum open_mode {
    OPEN_DISPLAY,
 };
 
+//------------
+// compare: differences between the document and another EDID
+static bool read_edid_source(const char* path, bool hex, std::vector<u8_t>& bytes,
+                             std::string& problem) {
+   char* contents = NULL;
+   gsize length = 0;
+   GError* error = NULL;
+   if (! g_file_get_contents(path, &contents, &length, &error)) {
+      problem = error->message;
+      g_error_free(error);
+      return false;
+   }
+   bool ok = true;
+   if (hex) {
+      ok = edid_hex_decode(contents, length, bytes, problem);
+   } else {
+      bytes.assign(contents, contents + length);
+   }
+   g_free(contents);
+   return ok;
+}
+
+static std::string compare_change(const edid_difference& entry, const char* other) {
+   if (entry.field.empty() || (entry.left.empty() != entry.right.empty())) {
+      if (entry.right.empty()) return "Only in this EDID";
+      return std::string("Only in ") + other;
+   }
+   return entry.left + " → " + entry.right;
+}
+
+static void wnd_present_compare(wxedid_wnd* wnd, const char* path, bool hex) {
+   std::vector<u8_t> bytes;
+   std::string problem;
+   char* other = document_basename(path);
+   EDID_cl EDID;
+   guilog_cl log;
+   log.SetSink([](const char*, void*) {}, NULL);
+   EDID.SetGuiLogPtr(&log);
+   if (! read_edid_source(path, hex, bytes, problem) ||
+       ! edid_parse_bytes(EDID, bytes, problem)) {
+      char message[1400];
+      snprintf(message, sizeof(message), "Couldn’t compare with %s: %s", other, problem.c_str());
+      wnd_show_error(wnd, message);
+      g_free(other);
+      return;
+   }
+   wnd_flush_refresh(wnd);
+   std::vector<edid_difference> found = edid_compare(wnd->doc->EDID, EDID);
+
+   GtkWidget* content = NULL;
+   if (found.empty()) {
+      content = adw_status_page_new();
+      adw_status_page_set_icon_name(ADW_STATUS_PAGE(content), "object-select-symbolic");
+      adw_status_page_set_title(ADW_STATUS_PAGE(content), "No differences");
+      adw_status_page_set_description(ADW_STATUS_PAGE(content),
+         "Both EDIDs hold the same data, apart from their checksums.");
+   } else {
+      content = adw_preferences_page_new();
+      char count[64];
+      snprintf(count, sizeof(count), (found.size() == 1) ? "%zu difference" : "%zu differences",
+               found.size());
+      adw_preferences_page_set_description(ADW_PREFERENCES_PAGE(content), count);
+      GtkWidget* group = NULL;
+      std::string place;
+      for (const edid_difference& entry : found) {
+         if ((group == NULL) || (entry.place != place)) {
+            place = entry.place;
+            group = adw_preferences_group_new();
+            adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(group), place.c_str());
+            adw_preferences_page_add(ADW_PREFERENCES_PAGE(content), ADW_PREFERENCES_GROUP(group));
+         }
+         GtkWidget* row = adw_action_row_new();
+         adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+         std::string title = entry.field.empty() ? "Group" : field_display_name(entry.field.c_str());
+         adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title.c_str());
+         adw_action_row_set_subtitle(ADW_ACTION_ROW(row), compare_change(entry, other).c_str());
+         adw_action_row_set_subtitle_selectable(ADW_ACTION_ROW(row), TRUE);
+         gtk_widget_add_css_class(row, "property");
+         adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), row);
+      }
+   }
+
+   char* current = document_basename(wnd->doc->path);
+   char* subtitle = g_strdup_printf("%s → %s", current, other);
+   GtkWidget* header = adw_header_bar_new();
+   adw_header_bar_set_title_widget(ADW_HEADER_BAR(header),
+                                   adw_window_title_new("Compare", subtitle));
+   GtkWidget* view = adw_toolbar_view_new();
+   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(view), header);
+   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(view), content);
+   AdwDialog* dialog = adw_dialog_new();
+   adw_dialog_set_title(dialog, "Compare");
+   adw_dialog_set_content_width(dialog, 560);
+   adw_dialog_set_content_height(dialog, 600);
+   adw_dialog_set_child(dialog, view);
+   adw_dialog_present(dialog, GTK_WIDGET(wnd->window));
+   g_free(subtitle);
+   g_free(current);
+   g_free(other);
+}
+
+static bool path_is_hex_text(const char* path);
+
+static void wnd_on_compare_response(GObject* source, GAsyncResult* result,
+                                    gpointer user_data) {
+   GtkWindow* window = GTK_WINDOW(user_data);
+   wxedid_wnd* wnd = (wxedid_wnd*) g_object_get_data(G_OBJECT(window), "wxedid-wnd");
+   GFile* file = gtk_file_dialog_open_finish(GTK_FILE_DIALOG(source), result, NULL);
+   if ((file != NULL) && (wnd != NULL)) {
+      char* path = g_file_get_path(file);
+      if (path != NULL) wnd_present_compare(wnd, path, path_is_hex_text(path));
+      g_free(path);
+   }
+   if (file != NULL) g_object_unref(file);
+   g_object_unref(window);
+}
+
+static GListStore* file_filters(const char* name, const char* const* patterns);
+
+static void wnd_on_compare_file_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   GtkFileDialog* dialog = gtk_file_dialog_new();
+   gtk_file_dialog_set_title(dialog, "Compare with EDID file");
+   gtk_file_dialog_set_accept_label(dialog, "Compare");
+   static const char* const patterns[] = {"bin", "hex", "txt", NULL};
+   GListStore* filters = file_filters("EDID files", patterns);
+   gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
+   g_object_unref(filters);
+   gtk_file_dialog_open(dialog, wnd->window, NULL, wnd_on_compare_response,
+                        g_object_ref(wnd->window));
+   g_object_unref(dialog);
+}
+
 static void wnd_on_display_open(GtkButton* button, gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
    const char* path = static_cast<const char*>(g_object_get_data(G_OBJECT(button), "path"));
+   bool compare = g_object_get_data(G_OBJECT(button), "compare") != NULL;
    AdwDialog* dialog = ADW_DIALOG(gtk_widget_get_ancestor(GTK_WIDGET(button), ADW_TYPE_DIALOG));
    std::string source = (path != NULL) ? path : "";
    if (dialog != NULL) adw_dialog_close(dialog);
-   if (! source.empty()) wnd_load_file(wnd, source.c_str(), false);
+   if (source.empty()) return;
+   if (compare) {
+      wnd_present_compare(wnd, source.c_str(), false);
+   } else {
+      wnd_load_file(wnd, source.c_str(), false);
+   }
 }
 
-static void wnd_present_display_dialog(wxedid_wnd* wnd) {
+static void wnd_present_display_dialog(wxedid_wnd* wnd, bool compare = false) {
    std::vector<edid_display> displays = edid_connected_displays(DRM_ROOT);
    if (displays.empty()) {
       AdwAlertDialog* alert = ADW_ALERT_DIALOG(adw_alert_dialog_new(
@@ -3445,8 +3589,9 @@ static void wnd_present_display_dialog(wxedid_wnd* wnd) {
       GtkWidget* open = gtk_button_new_from_icon_name("go-next-symbolic");
       gtk_widget_add_css_class(open, "flat");
       gtk_widget_set_valign(open, GTK_ALIGN_CENTER);
-      gtk_widget_set_tooltip_text(open, "Open");
+      gtk_widget_set_tooltip_text(open, compare ? "Compare" : "Open");
       g_object_set_data_full(G_OBJECT(open), "path", g_strdup(display.path.c_str()), g_free);
+      if (compare) g_object_set_data(G_OBJECT(open), "compare", GINT_TO_POINTER(1));
       g_signal_connect(open, "clicked", G_CALLBACK(wnd_on_display_open), wnd);
       adw_action_row_add_suffix(ADW_ACTION_ROW(row), open);
       adw_action_row_set_activatable_widget(ADW_ACTION_ROW(row), open);
@@ -3460,7 +3605,7 @@ static void wnd_present_display_dialog(wxedid_wnd* wnd) {
    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(view), page);
 
    AdwDialog* dialog = adw_dialog_new();
-   adw_dialog_set_title(dialog, "Open from Display");
+   adw_dialog_set_title(dialog, compare ? "Compare with Display" : "Open from Display");
    adw_dialog_set_content_width(dialog, 420);
    adw_dialog_set_child(dialog, view);
    adw_dialog_present(dialog, GTK_WIDGET(wnd->window));
@@ -3572,6 +3717,10 @@ static void wnd_on_import_hex_action(GSimpleAction*, GVariant*, gpointer user_da
 
 static void wnd_on_open_display_action(GSimpleAction*, GVariant*, gpointer user_data) {
    wnd_request_open(static_cast<wxedid_wnd*>(user_data), OPEN_DISPLAY);
+}
+
+static void wnd_on_compare_display_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wnd_present_display_dialog(static_cast<wxedid_wnd*>(user_data), true);
 }
 
 //------------
@@ -4170,6 +4319,18 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->save_report_action));
    g_object_unref(wnd->save_report_action);
 
+   wnd->compare_file_action = g_simple_action_new("compare-file", NULL);
+   g_signal_connect(wnd->compare_file_action, "activate",
+                    G_CALLBACK(wnd_on_compare_file_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->compare_file_action));
+   g_object_unref(wnd->compare_file_action);
+
+   wnd->compare_display_action = g_simple_action_new("compare-display", NULL);
+   g_signal_connect(wnd->compare_display_action, "activate",
+                    G_CALLBACK(wnd_on_compare_display_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->compare_display_action));
+   g_object_unref(wnd->compare_display_action);
+
    wnd->ignore_errors_action = g_simple_action_new_stateful(
       "ignore-errors", NULL, g_variant_new_boolean(FALSE));
    g_signal_connect(wnd->ignore_errors_action, "change-state",
@@ -4270,6 +4431,11 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_menu_append(save_section, "Save Report…", "win.save-report");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(save_section));
    g_object_unref(save_section);
+   GMenu* compare_section = g_menu_new();
+   g_menu_append(compare_section, "Compare with File…", "win.compare-file");
+   g_menu_append(compare_section, "Compare with Display…", "win.compare-display");
+   g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(compare_section));
+   g_object_unref(compare_section);
    GMenu* edit_section = g_menu_new();
    g_menu_append(edit_section, "Undo", "win.undo");
    g_menu_append(edit_section, "Redo", "win.redo");
