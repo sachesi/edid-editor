@@ -15,6 +15,7 @@
 #include "CEA_ET_class.h"
 #include "EDID_text.h"
 #include "EDID_display.h"
+#include "EDID_summary.h"
 #include "wxedid-config.h"
 
 #include <cstdio>
@@ -139,6 +140,10 @@ struct wxedid_wnd {
    GtkLabel*           raw_caption;
    GtkWidget*          reserved_note;  //"N reserved fields are hidden"
    GSimpleAction*      show_reserved_action;
+   GtkListBox*         overview_list;  //sidebar row above the groups
+   GtkWidget*          overview_bin;
+   AdwViewStackPage*   overview_page;
+   bool                overview_shown;
    GtkListBox*         recent_list;    //recent files on the start page
    GtkWidget*          recent_group;
    GMenu*              recent_menu;    //Open Recent submenu
@@ -2395,6 +2400,54 @@ static void wnd_on_redo_action(GSimpleAction*, GVariant*, gpointer user_data) {
    wnd_apply_history(static_cast<wxedid_wnd*>(user_data), true);
 }
 
+//------------
+// overview: key facts of the whole EDID
+static void wnd_refresh_overview(wxedid_wnd* wnd) {
+   GtkWidget* page = adw_preferences_page_new();
+   GtkWidget* group = NULL;
+   std::string section;
+   for (const edid_summary_item& item : edid_summary(wnd->doc->EDID)) {
+      if ((group == NULL) || (item.section != section)) {
+         section = item.section;
+         group = adw_preferences_group_new();
+         adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(group), section.c_str());
+         adw_preferences_page_add(ADW_PREFERENCES_PAGE(page), ADW_PREFERENCES_GROUP(group));
+      }
+      GtkWidget* row = adw_action_row_new();
+      adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), item.label.c_str());
+      adw_action_row_set_subtitle(ADW_ACTION_ROW(row), item.value.c_str());
+      adw_action_row_set_subtitle_selectable(ADW_ACTION_ROW(row), TRUE);
+      gtk_widget_add_css_class(row, "property");
+      adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), row);
+   }
+   adw_bin_set_child(ADW_BIN(wnd->overview_bin), page);
+}
+
+static void wnd_show_overview(wxedid_wnd* wnd) {
+   wnd->overview_shown = true;
+   wnd->last_selected = NULL;
+   gtk_single_selection_set_selected(wnd->tree_sel, GTK_INVALID_LIST_POSITION);
+   GtkListBoxRow* row = gtk_list_box_get_row_at_index(wnd->overview_list, 0);
+   if (gtk_list_box_get_selected_row(wnd->overview_list) != row) {
+      gtk_list_box_select_row(wnd->overview_list, row);
+   }
+   gtk_label_set_text(wnd->group_title, "Overview");
+   gtk_widget_set_visible(wnd->editor_switcher, FALSE);
+   wnd_refresh_overview(wnd);
+   adw_view_stack_page_set_visible(wnd->overview_page, TRUE);
+   adw_view_stack_set_visible_child_name(wnd->editor_stack, "overview");
+   wnd_update_group_actions(wnd);
+   if (adw_overlay_split_view_get_collapsed(wnd->split_view)) {
+      adw_overlay_split_view_set_show_sidebar(wnd->split_view, FALSE);
+   }
+}
+
+static void wnd_on_overview_selected(GtkListBox*, GtkListBoxRow* row, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   if ((row != NULL) && ! wnd->overview_shown) wnd_show_overview(wnd);
+}
+
 static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
                                guint /*n_items*/, gpointer user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
@@ -2407,6 +2460,11 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
 
    wxedid_item* it = WXEDID_ITEM(obj);
    wnd->last_selected = it->pgrp;
+   if (wnd->overview_shown) {
+      wnd->overview_shown = false;
+      gtk_list_box_unselect_all(wnd->overview_list);
+      adw_view_stack_page_set_visible(wnd->overview_page, FALSE);
+   }
    wxc_String group_name;
    if (it->pgrp != NULL) {
       it->pgrp->getGrpName(*it->pEDID, group_name);
@@ -2731,6 +2789,8 @@ static void wnd_update_document_ui(wxedid_wnd* wnd) {
    }
    if (source_note != NULL) adw_banner_set_title(wnd->source_banner, source_note);
    adw_banner_set_revealed(wnd->source_banner, source_note != NULL);
+
+   if (wnd->loaded && wnd->overview_shown) wnd_refresh_overview(wnd);
 
    if (wnd->invalid_fields > 0) {
       adw_banner_set_title(wnd->banner, "Enter a valid value before saving");
@@ -3198,7 +3258,9 @@ static void wnd_load_bytes(wxedid_wnd* wnd, const char* path,
       wnd->source_writable = ! hex_source && (g_access(path, W_OK) == 0);
       wnd_add_recent(path, hex_source);
       gtk_stack_set_visible_child_name(wnd->content_stack, "editor");
+      wnd->overview_shown = false;
       wnd_rebuild_tree(wnd);
+      wnd_show_overview(wnd);
    } else {
       wnd->doc->path[0] = 0;
       gtk_stack_set_visible_child_name(wnd->content_stack, "empty");
@@ -4258,6 +4320,8 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    wnd->tree_sel = GTK_SINGLE_SELECTION(gtk_single_selection_new(
       G_LIST_MODEL(g_object_ref(wnd->tree_filtered))));
    gtk_single_selection_set_autoselect(wnd->tree_sel, FALSE);
+   //the overview is shown with no group selected
+   gtk_single_selection_set_can_unselect(wnd->tree_sel, TRUE);
    wnd->tree = GTK_LIST_VIEW(gtk_list_view_new(
       GTK_SELECTION_MODEL(wnd->tree_sel), factory));
    gtk_widget_add_css_class(GTK_WIDGET(wnd->tree), "navigation-sidebar");
@@ -4322,7 +4386,20 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_stack_set_visible_child_name(wnd->sidebar_stack, "tree");
    gtk_widget_set_vexpand(GTK_WIDGET(wnd->sidebar_stack), TRUE);
 
+   wnd->overview_list = GTK_LIST_BOX(gtk_list_box_new());
+   gtk_list_box_set_selection_mode(wnd->overview_list, GTK_SELECTION_SINGLE);
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->overview_list), "navigation-sidebar");
+   GtkWidget* overview_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+   gtk_box_append(GTK_BOX(overview_row), gtk_image_new_from_icon_name("view-grid-symbolic"));
+   GtkWidget* overview_label = gtk_label_new("Overview");
+   gtk_label_set_xalign(GTK_LABEL(overview_label), 0.0);
+   gtk_box_append(GTK_BOX(overview_row), overview_label);
+   gtk_list_box_append(wnd->overview_list, overview_row);
+   g_signal_connect(wnd->overview_list, "row-selected",
+                    G_CALLBACK(wnd_on_overview_selected), wnd);
+
    GtkWidget* sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->overview_list));
    gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->tree_search));
    gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->sidebar_stack));
 
@@ -4462,6 +4539,10 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
       "timing", "Timing", "video-display-symbolic");
    adw_view_stack_add_titled_with_icon(wnd->editor_stack, raw_scroll,
                                        "bytes", "Bytes", "document-properties-symbolic");
+   wnd->overview_bin = adw_bin_new();
+   wnd->overview_page = adw_view_stack_add_named(wnd->editor_stack, wnd->overview_bin,
+                                                 "overview");
+   adw_view_stack_page_set_visible(wnd->overview_page, FALSE);
    gtk_widget_set_vexpand(GTK_WIDGET(wnd->editor_stack), TRUE);
 
    wnd->editor_switcher = adw_view_switcher_new();

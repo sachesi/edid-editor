@@ -4,6 +4,7 @@ edid_core_sources = [
   'EDID_main.cpp',
   'EDID_text.cpp',
   'EDID_display.cpp',
+  'EDID_summary.cpp',
   'CEA.cpp',
   'CEA_ET.cpp',
   'DisplayID.cpp',
@@ -111,6 +112,14 @@ test_display = executable(
   install : false,
 )
 
+test_summary = executable(
+  'test-summary',
+  'tests/test_summary.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
 test_decode = executable(
   'test-decode',
   'tests/test_decode.cpp',
@@ -184,3 +193,5 @@ test('hdmi-forum', test_hdmi_forum,
 test('displayid2', test_displayid2, args : files('tests/corpus/au-optronics-auofcb7.hex'))
 test('connected-displays', test_display, args : [sample_data[1]])
 test('value-decode', test_decode, args : [sample_data[1]])
+test('summary', test_summary,
+     args : [sample_data[3], files('tests/corpus/au-optronics-auofcb7.hex')])

@@ -268,8 +268,13 @@ def functional(Atspi, app, fixture):
         original = target.read_bytes()
         process = launch_app(Atspi, app, str(target))
         try:
-            wait_for(lambda: named(Atspi, "OXC, prod_ID 0x1234", Atspi.Role.LABEL),
-                     "opening a file did not select its first group")
+            wait_for(lambda: named(Atspi, "GTK-PORT", Atspi.Role.LABEL),
+                     "opening a file did not show its overview")
+            assert named(Atspi, "640x480 at 59.95 Hz; 2560x1440 at 59.95 Hz",
+                         Atspi.Role.LABEL), "the overview did not list the timings"
+            groups = [node for node in nodes(Atspi) if role_of(node) == Atspi.Role.LIST][-1]
+            assert groups.get_selection_iface().get_n_selected_children() == 0, \
+                "a group stayed selected while the overview is shown"
             search = wait_for(lambda: named(Atspi, "Search groups", Atspi.Role.ENTRY),
                               "group search was not exposed")
             search.get_editable_text_iface().set_text_contents("T7VTB")
@@ -303,6 +308,16 @@ def functional(Atspi, app, fixture):
             activate_menu_item(Atspi, "Undo")
             wait_for(lambda: named(Atspi, "Interlaced", Atspi.Role.SWITCH) and
                      not switch_on("Interlaced"), "undo did not turn the bit off")
+
+            def select_overview():
+                for node in nodes(Atspi):
+                    if role_of(node) == Atspi.Role.LIST and \
+                            any(name_of(inner) == "Overview" for inner in walk(node)):
+                        return node.get_selection_iface().select_child(0)
+                return False
+            wait_for(select_overview, "the overview could not be selected")
+            wait_for(lambda: named(Atspi, "Week 1, 2020", Atspi.Role.LABEL),
+                     "selecting the overview did not show it again")
 
             select_group(Atspi, 6)
             wait_for(lambda: named(Atspi, "7 reserved fields are hidden", Atspi.Role.LABEL),
