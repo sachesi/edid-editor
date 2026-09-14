@@ -592,6 +592,66 @@ static const edi_field_t dsc_ver_fld[] = {
 
 
 //MRL: Monitor Range Limits Descriptor (type 0xFD)
+//MRL: V/H rate limits: EDID 1.4 adds 255 to a limit when its offset flag in
+//byte 4 is set; bits 0-1: V-rate, bits 2-3: H-rate, 0b10: max, 0b11: max and min
+rcode EDID_cl::MRL_Freq(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_field) {
+   rcode   retU;
+   mrl_t  *inst;
+   u8_t   *pval;
+   u32_t   offs;
+   u32_t   shift;
+   u32_t   flags;
+   bool    is_max;
+   bool    max_ofs;
+   bool    min_ofs;
+
+   inst    = reinterpret_cast <mrl_t*> (getInstancePtr(p_field));
+   pval    = getValPtr(p_field);
+   offs    = p_field->field.offs;
+   shift   = (offs <= offsetof(mrl_t, max_Vfreq)) ? 0 : 2;
+   is_max  = (offs == offsetof(mrl_t, max_Vfreq)) || (offs == offsetof(mrl_t, max_Hfreq));
+   flags   = (inst->hdr.rsvd4 >> shift) & 0x3;
+   max_ofs = (flags & 0x2) != 0;
+   min_ofs = (flags == 0x3);
+
+   if (op == OP_READ) {
+      ival  = pval[0];
+      ival += (is_max ? max_ofs : min_ofs) ? 255 : 0;
+      sval << ival;
+      RCD_RETURN_OK(retU);
+   }
+
+   ulong tmpv;
+   if (op == OP_WRSTR) {
+      retU = getStrUint(sval, 10, p_field->field.minv, p_field->field.maxv, tmpv);
+      if (! RCD_IS_OK(retU)) return retU;
+   } else if (op == OP_WRINT) {
+      if (ival > p_field->field.maxv) RCD_RETURN_FAULT(retU);
+      tmpv = ival;
+   } else {
+      RCD_RETURN_FAULT(retU); //wrong op code
+   }
+
+   bool offset = (tmpv > 255);
+   if (is_max) {
+      if (! offset && min_ofs) {
+         RCD_RETURN_FAULT_MSG(retU, "[E!] MRL: the maximum rate can't be below the "
+                                    "minimum rate above 255");
+      }
+      max_ofs = offset;
+   } else {
+      if (offset && ! max_ofs) {
+         RCD_RETURN_FAULT_MSG(retU, "[E!] MRL: a minimum rate above 255 needs a "
+                                    "maximum rate above 255");
+      }
+      min_ofs = offset;
+   }
+   flags = (max_ofs ? 0x2 : 0) | (min_ofs ? 0x1 : 0);
+   inst->hdr.rsvd4 = (inst->hdr.rsvd4 & ~(0x3 << shift)) | (flags << shift);
+   pval[0] = (tmpv - (offset ? 255 : 0)) & 0xFF;
+   RCD_RETURN_OK(retU);
+}
+
 //MRL: extension selector: handlers
 rcode EDID_cl::MRL_02_GTFM(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_field) {
    rcode      retU;
@@ -770,16 +830,27 @@ const char  mrl_cl::Desc[] =
 "Optionally, a Secondary GTF curve parameters or CVT support information "
 "can be included - this depends on the value of 'mrl_ext' field";
 
+//byte 4: rate offsets, written by the rate handlers
+const edi_field_t mrl_cl::offsets_fld[] = {
+   {&EDID_cl::ByteVal, 0, offsetof(dshd_t, rsvd4), 0, 1, F_BTE|F_HEX|F_RD, 0, 0x0F,
+   "rate_offsets",
+   "EDID 1.4: rate offsets, set when the rate fields are written:\n"
+   "bits 0-1: V-rate, bits 2-3: H-rate:\n"
+   "0b00: no offset,\n0b10: +255 for the maximum,\n0b11: +255 for the maximum and minimum\n"
+   "bits 4-7: reserved (0)\n\n"
+   "EDID 1.3: mandatory zero" },
+};
+
 const edi_field_t mrl_cl::fields[] = {
 //data: bytes 5-17
-   {&EDID_cl::ByteVal, 0, offsetof(mrl_t, min_Vfreq), 0, 1, F_BTE|F_INT|F_HZ, 0, 255,
-   "min_Vfreq", "minimal V-frequency: 1..255Hz" },
-   {&EDID_cl::ByteVal, 0, offsetof(mrl_t, max_Vfreq), 0, 1, F_BTE|F_INT|F_HZ, 0, 255,
-   "max_Vfreq", "maximum V-frequency: 1..255Hz" },
-   {&EDID_cl::ByteVal, 0, offsetof(mrl_t, min_Hfreq), 0, 1, F_BTE|F_INT|F_KHZ, 0, 255,
-   "min_Hfreq", "minimal H-frequency: 1..255kHz" },
-   {&EDID_cl::ByteVal, 0, offsetof(mrl_t, max_Hfreq), 0, 1, F_BTE|F_INT|F_KHZ, 0, 255,
-   "max_Hfreq", "maximum H-frequency: 1..255kHz" },
+   {&EDID_cl::MRL_Freq, 0, offsetof(mrl_t, min_Vfreq), 0, 1, F_INT|F_HZ|F_FR, 1, 510,
+   "min_Vfreq", "minimal V-frequency: 1..255Hz, EDID 1.4: 1..510Hz" },
+   {&EDID_cl::MRL_Freq, 0, offsetof(mrl_t, max_Vfreq), 0, 1, F_INT|F_HZ|F_FR, 1, 510,
+   "max_Vfreq", "maximum V-frequency: 1..255Hz, EDID 1.4: 1..510Hz" },
+   {&EDID_cl::MRL_Freq, 0, offsetof(mrl_t, min_Hfreq), 0, 1, F_INT|F_KHZ|F_FR, 1, 510,
+   "min_Hfreq", "minimal H-frequency: 1..255kHz, EDID 1.4: 1..510kHz" },
+   {&EDID_cl::MRL_Freq, 0, offsetof(mrl_t, max_Hfreq), 0, 1, F_INT|F_KHZ|F_FR, 1, 510,
+   "max_Hfreq", "maximum H-frequency: 1..255kHz, EDID 1.4: 1..510kHz" },
    {&EDID_cl::MRL_MaxPixClk, 0, offsetof(mrl_t, max_pixclk), 0, 1, F_BTE|F_FLT|F_FR|F_MHZ, 10, 2550,
    "max_PixClk",
    "Max pixel clock rate.\n"
@@ -922,7 +993,10 @@ rcode mrl_cl::gen_data_layout(const u8_t* inst) {
 
    dtype = reinterpret_cast<const mrl_t*> (inst)->mrl_ext;
 
-   retU = init_fields(&AltDescHdr[0], inst_data, 3, !append_md, Name, Desc, CodN);
+   retU = init_fields(&AltDescHdr[0], inst_data, 2, !append_md, Name, Desc, CodN);
+   if (! RCD_IS_OK(retU)) return retU;
+
+   retU = init_fields(&offsets_fld[0], inst_data, 1, append_md);
    if (! RCD_IS_OK(retU)) return retU;
 
    retU = init_fields(&fields[0], inst_data, fcount, append_md);

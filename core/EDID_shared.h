@@ -471,6 +471,7 @@ class EDID_cl {
       rcode DTD_Hsize (__EDID_HDL_ARGS);
       rcode DTD_Vsize (__EDID_HDL_ARGS);
       //MRL handlers
+      rcode MRL_Freq     (__EDID_HDL_ARGS);
       rcode MRL_02_GTFM  (__EDID_HDL_ARGS);
       rcode MRL_MaxPixClk(__EDID_HDL_ARGS);
       rcode MRL_04_PixClk(__EDID_HDL_ARGS);

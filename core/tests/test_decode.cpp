@@ -1,7 +1,7 @@
 /***************************************************************
  * Name:      test_decode.cpp
- * Purpose:   value decoding: standard timing codes, native SVDs, labels,
- *            HDR luminance
+ * Purpose:   value decoding: standard timing codes, range limits,
+ *            native SVDs, labels, HDR luminance
  * License:   GPLv3+
  **************************************************************/
 
@@ -128,6 +128,12 @@ int main(int argc, char* argv[]) {
    edi_buf_t* buffer = EDID.getEDID();
    static const u8_t std_timings[] = {0xD1, 0xC0, 0xA9, 0xC0};
    std::memcpy(&buffer->blk[0][38], std_timings, sizeof(std_timings));
+   //range limits of a 360 Hz panel: V max +255, H max and min +255
+   static const u8_t range_limits[] = {
+      0x00, 0x00, 0x00, 0xFD, 0x0E, 60, 105, 212, 212, 0x61, 0x01,
+      0x0A, 0x20, 0x20, 0x20, 0x20, 0x20, 0x20,
+   };
+   std::memcpy(&buffer->blk[0][90], range_limits, sizeof(range_limits));
    buffer->blk[1][5] = 0x90;  //VIC 16, native
    buffer->blk[1][6] = 193;   //8-bit VIC
    //HDR static metadata block before the DTD
@@ -155,6 +161,25 @@ int main(int argc, char* argv[]) {
    check((label_of(EDID, input_group, "IF Type") == wxc_String("DisplayPort")) &&
          (label_of(EDID, input_group, "Color Depth") == wxc_String("undefined")),
          "interface type and color depth have labels");
+
+   //range limits above 255 Hz and kHz, values as printed by edid-decode
+   edi_grp_cl* range = find_group(base, "MRL", 0);
+   check((value_of(EDID, range, "min_Vfreq") == 60) &&
+         (value_of(EDID, range, "max_Vfreq") == 360) &&
+         (value_of(EDID, range, "min_Hfreq") == 467) &&
+         (value_of(EDID, range, "max_Hfreq") == 467), "range limit offsets decode");
+   check(write(EDID, range, "max_Vfreq", 200) && write(EDID, range, "min_Hfreq", 100) &&
+         (value_of(EDID, range, "rate_offsets") == 0x08) &&
+         (value_of(EDID, range, "max_Hfreq") == 467),
+         "rates up to 255 clear their offset flags");
+   check(! write(EDID, range, "min_Vfreq", 300) && write(EDID, range, "min_Hfreq", 400) &&
+         ! write(EDID, range, "max_Hfreq", 250) && ! write(EDID, range, "max_Vfreq", 511) &&
+         (value_of(EDID, range, "rate_offsets") == 0x0C),
+         "a minimum rate above 255 needs a maximum rate above 255");
+   check(RCD_IS_OK(EDID.AssembleEDID()) && (buffer->blk[0][94] == 0x0C) &&
+         (buffer->blk[0][95] == 60) && (buffer->blk[0][96] == 200) &&
+         (buffer->blk[0][97] == 145) && (buffer->blk[0][98] == 212),
+         "range limits and offsets are written back");
 
    //native SVD: VIC without the native bit, native flag separate
    GroupAr_cl& cta = *EDID.BlkGroupsAr[EDI_EXT0_IDX];

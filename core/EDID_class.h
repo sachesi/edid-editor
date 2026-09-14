@@ -185,6 +185,7 @@ class txtd_cl : public edi_grp_cl {
 //MRL: Monitor Range Limits Descriptor (type 0xFD)
 class mrl_cl : public edi_grp_cl {
    private:
+      static const edi_field_t offsets_fld[];
       static const edi_field_t fields[];
       static const edi_field_t fields_GTF[];
       static const edi_field_t fields_CVT[];
