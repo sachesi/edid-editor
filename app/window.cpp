@@ -88,6 +88,7 @@ struct wxedid_wnd {
    AdwOverlaySplitView* split_view;
    AdwWindowTitle*     window_title;
    GtkLabel*           group_title;
+   GtkLabel*           group_subtitle; //code, offset and block of the group
    GtkStack*           content_stack;
    AdwBanner*          banner;
    AdwBanner*          source_banner;  //read-only source: save a copy
@@ -95,6 +96,7 @@ struct wxedid_wnd {
    GtkRevealer*        log_revealer;
    GtkWidget*          details_button;
    GtkWidget*          sidebar_button;
+   GtkWidget*          add_button;
    GtkWidget*          open_button;
    GtkWidget*          save_button;
    GSimpleAction*      save_action;
@@ -178,6 +180,7 @@ struct wxedid_timing {
    GtkWidget*    row_widgets[TIMING_FIELD_COUNT][4];
    GtkLabel*     derived[TIMING_FIELD_COUNT];
    GtkLabel*     clock_unit;
+   GtkLabel*     clock_mhz;
    GtkLabel*     refresh;
    GtkLabel*     htotal;
    GtkLabel*     hfreq;
@@ -234,11 +237,20 @@ static char* document_basename(const char* path) {
    return g_path_get_basename(path);
 }
 
+//group name as shown: some core names start in lower case ("not used")
+static std::string group_display_name(edi_grp_cl* pgrp, EDID_cl& EDID) {
+   wxc_String name;
+   pgrp->getGrpName(EDID, name);
+   std::string display = name.std_str();
+   if (! display.empty() && (display[0] >= 'a') && (display[0] <= 'z')) {
+      display[0] = static_cast<char>(display[0] - 'a' + 'A');
+   }
+   return display;
+}
+
 static void wnd_refresh_group_title(wxedid_wnd* wnd, edi_grp_cl* pgrp) {
    if (pgrp == NULL) return;
-   wxc_String group_name;
-   pgrp->getGrpName(wnd->doc->EDID, group_name);
-   gtk_label_set_text(wnd->group_title, group_name.c_str());
+   gtk_label_set_text(wnd->group_title, group_display_name(pgrp, wnd->doc->EDID).c_str());
 }
 
 //tree item: GObject holding an edi_grp_cl* for GtkTreeListModel
@@ -975,6 +987,7 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       std::string title = field_display_name(pfld->field.name);
       wxc_String unit;
       pEDID->getValUnitName(unit, pfld->field.flags);
+      if (unit == wxc_String("pix")) unit = "px";
       //many field names already end with their unit, e.g. "H-Active pix"
       bool unit_named = (unit.Len() < title.size()) &&
          g_str_has_suffix(title.c_str(), (" " + unit.std_str()).c_str());
@@ -999,6 +1012,7 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
          gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(about), "help-about-symbolic");
          gtk_widget_add_css_class(about, "flat");
          gtk_widget_add_css_class(about, "circular");
+         gtk_widget_add_css_class(about, "field-help");
          gtk_widget_set_valign(about, GTK_ALIGN_CENTER);
          std::string about_label = "About " + title;
          gtk_widget_set_tooltip_text(about, about_label.c_str());
@@ -1161,8 +1175,9 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
                                         GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
                                         help.c_str(), -1);
       }
+      gtk_widget_add_css_class(card, "card");
       gtk_flow_box_append(list, card);
-      gtk_widget_add_css_class(gtk_widget_get_parent(card), "card");
+      gtk_widget_set_focusable(gtk_widget_get_parent(card), FALSE);
    }
 
    if (wnd->reserved_note != NULL) {
@@ -1204,11 +1219,11 @@ static void timing_update_outputs(wxedid_timing* timing) {
    const double line_ms = htotal * 1000.0 / pixclk;
    const double refresh = pixclk / (htotal * static_cast<double>(vtotal));
 
-   timing_set_text(timing->derived[TIMING_HACTIVE], "%.3f us", hactive * pixel_us);
-   timing_set_text(timing->derived[TIMING_HBLANK], "%.4f us", hblank * pixel_us);
-   timing_set_text(timing->derived[TIMING_HOFFSET], "%.4f us",
+   timing_set_text(timing->derived[TIMING_HACTIVE], "%.3f µs", hactive * pixel_us);
+   timing_set_text(timing->derived[TIMING_HBLANK], "%.4f µs", hblank * pixel_us);
+   timing_set_text(timing->derived[TIMING_HOFFSET], "%.4f µs",
                    timing_value(timing, TIMING_HOFFSET) * pixel_us);
-   timing_set_text(timing->derived[TIMING_HWIDTH], "%.4f us",
+   timing_set_text(timing->derived[TIMING_HWIDTH], "%.4f µs",
                    timing_value(timing, TIMING_HWIDTH) * pixel_us);
    timing_set_text(timing->derived[TIMING_VACTIVE], "%.3f ms", vactive * line_ms);
    timing_set_text(timing->derived[TIMING_VBLANK], "%.4f ms", vblank * line_ms);
@@ -1220,7 +1235,9 @@ static void timing_update_outputs(wxedid_timing* timing) {
    char text[64];
    snprintf(text, sizeof(text), "%.2f Hz", refresh);
    gtk_label_set_text(timing->refresh, text);
-   snprintf(text, sizeof(text), "%u px  ·  %.3f us", htotal,
+   snprintf(text, sizeof(text), "%.3f MHz", pixclk / 1000000.0);
+   gtk_label_set_text(timing->clock_mhz, text);
+   snprintf(text, sizeof(text), "%u px  ·  %.3f µs", htotal,
             htotal * pixel_us);
    gtk_label_set_text(timing->htotal, text);
    snprintf(text, sizeof(text), "%.2f kHz", pixclk / htotal / 1000.0);
@@ -1270,22 +1287,25 @@ static void timing_draw(GtkDrawingArea* area, cairo_t* cr, int width, int height
    const double vsync_h = std::max(1.0,
       timing_value(timing, TIMING_VWIDTH) / vtotal * canvas_h);
 
+   //blanking in the text color, sync and the active image in the accent color
    GdkRGBA color;
    gtk_widget_get_color(GTK_WIDGET(area), &color);
+   GdkRGBA* accent = adw_style_manager_get_accent_color_rgba(adw_style_manager_get_default());
    cairo_set_source_rgba(cr, color.red, color.green, color.blue, 0.08);
    cairo_rectangle(cr, pad, pad, canvas_w, canvas_h);
    cairo_fill(cr);
-   cairo_set_source_rgba(cr, color.red, color.green, color.blue, 0.32);
+   cairo_set_source_rgba(cr, accent->red, accent->green, accent->blue, 0.45);
    cairo_rectangle(cr, pad, pad, hsync_w, canvas_h);
    cairo_fill(cr);
    cairo_rectangle(cr, pad, pad, canvas_w, vsync_h);
    cairo_fill(cr);
-   cairo_set_source_rgba(cr, color.red, color.green, color.blue, 0.20);
+   cairo_set_source_rgba(cr, accent->red, accent->green, accent->blue, 0.18);
    cairo_rectangle(cr, active_x, active_y, active_w, active_h);
    cairo_fill_preserve(cr);
-   cairo_set_source_rgba(cr, color.red, color.green, color.blue, 0.72);
-   cairo_set_line_width(cr, 1.0);
+   cairo_set_source_rgba(cr, accent->red, accent->green, accent->blue, 0.9);
+   cairo_set_line_width(cr, 1.5);
    cairo_stroke(cr);
+   gdk_rgba_free(accent);
 
    char active_text[48];
    snprintf(active_text, sizeof(active_text), "%u × %u",
@@ -1437,6 +1457,7 @@ static GtkWidget* timing_add_edit_row(wxedid_timing* timing, GtkGrid* grid,
 
    GtkWidget* derived = gtk_label_new(NULL);
    gtk_label_set_xalign(GTK_LABEL(derived), 1.0);
+   gtk_widget_set_margin_start(derived, 6);
    gtk_widget_add_css_class(derived, "dim-label");
    gtk_widget_add_css_class(derived, "numeric");
    timing->derived[field] = GTK_LABEL(derived);
@@ -1515,6 +1536,12 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_widget_add_css_class(GTK_WIDGET(timing->clock_unit), "dim-label");
    gtk_box_append(GTK_BOX(clock_row), GTK_WIDGET(timing->clock_unit));
    gtk_box_append(GTK_BOX(clock_box), clock_row);
+   timing->clock_mhz = GTK_LABEL(gtk_label_new(NULL));
+   gtk_label_set_xalign(timing->clock_mhz, 0.0);
+   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_mhz), "caption");
+   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_mhz), "dim-label");
+   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_mhz), "timing-derived");
+   gtk_box_append(GTK_BOX(clock_box), GTK_WIDGET(timing->clock_mhz));
    gtk_box_append(GTK_BOX(summary), clock_box);
 
    GtkWidget* refresh_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
@@ -1554,6 +1581,7 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_flow_box_set_max_children_per_line(GTK_FLOW_BOX(sections), 1);
    gtk_flow_box_set_column_spacing(GTK_FLOW_BOX(sections), 12);
    gtk_flow_box_set_row_spacing(GTK_FLOW_BOX(sections), 12);
+   gtk_widget_add_css_class(sections, "card-grid");
    GtkGrid* horizontal = NULL;
    GtkWidget* horizontal_card = timing_section("Horizontal timing", &horizontal);
    timing_add_edit_row(timing, horizontal, 0, TIMING_HACTIVE, "Active", "px");
@@ -1564,6 +1592,7 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    timing_add_value_row(horizontal, 5, "Total", &timing->htotal);
    timing_add_value_row(horizontal, 6, "Frequency", &timing->hfreq);
    gtk_flow_box_append(GTK_FLOW_BOX(sections), horizontal_card);
+   gtk_widget_set_focusable(gtk_widget_get_parent(horizontal_card), FALSE);
 
    GtkGrid* vertical = NULL;
    GtkWidget* vertical_card = timing_section("Vertical timing", &vertical);
@@ -1574,6 +1603,7 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    timing_add_edit_row(timing, vertical, 4, TIMING_VWIDTH, "Sync width", "lines");
    timing_add_value_row(vertical, 5, "Total", &timing->vtotal);
    gtk_flow_box_append(GTK_FLOW_BOX(sections), vertical_card);
+   gtk_widget_set_focusable(gtk_widget_get_parent(vertical_card), FALSE);
    gtk_box_append(GTK_BOX(content), sections);
 
    GtkWidget* modeline_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -1591,6 +1621,7 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_label_set_selectable(timing->modeline, TRUE);
    gtk_label_set_wrap(timing->modeline, TRUE);
    gtk_widget_add_css_class(GTK_WIDGET(timing->modeline), "monospace");
+   gtk_widget_add_css_class(GTK_WIDGET(timing->modeline), "modeline");
    gtk_widget_set_margin_start(GTK_WIDGET(timing->modeline), 12);
    gtk_widget_set_margin_end(GTK_WIDGET(timing->modeline), 12);
    gtk_widget_set_margin_bottom(GTK_WIDGET(timing->modeline), 12);
@@ -1907,17 +1938,17 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
 
    wxedid_item* it = WXEDID_ITEM(obj);
    it->bound_label = GTK_LABEL(label);
-   wxc_String   gname;
    std::string  display_name;
    if ((it != NULL) && (it->pgrp != NULL) && (it->pEDID != NULL)) {
-      it->pgrp->getGrpName(*it->pEDID, gname);
-      display_name = gname.std_str();
+      display_name = group_display_name(it->pgrp, *it->pEDID);
    } else if (it != NULL) {
       display_name = it->label;
    }
    gtk_label_set_text(GTK_LABEL(label), display_name.c_str());
    gtk_widget_set_tooltip_text(label, display_name.c_str());
    gtk_list_item_set_selectable(item, (it != NULL) && it->selectable);
+   //block headings only expand: no hover or activation
+   gtk_list_item_set_activatable(item, (it != NULL) && it->selectable);
 
    if ((it != NULL) && (it->pgrp == NULL)) {
       gtk_widget_add_css_class(label, "heading");
@@ -1950,8 +1981,7 @@ static void tree_name_unbind(GtkSignalListItemFactory* /*factory*/,
 
 static void wnd_refresh_tree_label(wxedid_item* item) {
    if ((item != NULL) && (item->pgrp != NULL) && (item->bound_label != NULL)) {
-      wxc_String name;
-      item->pgrp->getGrpName(*item->pEDID, name);
+      std::string name = group_display_name(item->pgrp, *item->pEDID);
       gtk_label_set_text(item->bound_label, name.c_str());
       gtk_widget_set_tooltip_text(GTK_WIDGET(item->bound_label), name.c_str());
    }
@@ -2003,6 +2033,11 @@ static void wnd_update_group_actions(wxedid_wnd* wnd) {
    u8_t tag = wnd_selected_extension_tag(wnd);
    g_simple_action_set_enabled(wnd->add_cta_action, tag == 0x02);
    g_simple_action_set_enabled(wnd->add_displayid_action, tag == 0x70);
+   //groups can only be added to CTA-861 and DisplayID blocks
+   bool can_add = (tag == 0x02) || (tag == 0x70);
+   gtk_widget_set_sensitive(wnd->add_button, can_add);
+   gtk_widget_set_tooltip_text(wnd->add_button, can_add ? "Add a group" :
+      "Select a group in a CTA-861 or DisplayID block to add groups");
 }
 
 static void wnd_refresh_raw_view(wxedid_wnd* wnd) {
@@ -2081,8 +2116,15 @@ static void wnd_refresh_raw_view(wxedid_wnd* wnd) {
       g_string_append_c(text, '\n');
    }
    GtkTextBuffer* buffer = gtk_text_view_get_buffer(wnd->raw_view);
+   if ((text->len > 0) && (text->str[text->len - 1] == '\n')) g_string_truncate(text, text->len - 1);
    gtk_text_buffer_set_text(buffer, text->str, -1);
    g_string_free(text, TRUE);
+   GtkTextIter heading_start;
+   GtkTextIter heading_end;
+   gtk_text_buffer_get_iter_at_line(buffer, &heading_start, 0);
+   heading_end = heading_start;
+   gtk_text_iter_forward_to_line_end(&heading_end);
+   gtk_text_buffer_apply_tag_by_name(buffer, "heading", &heading_start, &heading_end);
    for (u32_t pos=mark_start; pos<mark_start + mark_count; pos++) {
       //line 0 is the heading; hex pairs start at column 8, text at 57
       GtkTextIter from;
@@ -2440,6 +2482,7 @@ static void wnd_show_overview(wxedid_wnd* wnd) {
       gtk_list_box_select_row(wnd->overview_list, row);
    }
    gtk_label_set_text(wnd->group_title, "Overview");
+   gtk_widget_set_visible(GTK_WIDGET(wnd->group_subtitle), FALSE);
    gtk_widget_set_visible(wnd->editor_switcher, FALSE);
    wnd_refresh_overview(wnd);
    adw_view_stack_page_set_visible(wnd->overview_page, TRUE);
@@ -2472,13 +2515,17 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
       gtk_list_box_unselect_all(wnd->overview_list);
       adw_view_stack_page_set_visible(wnd->overview_page, FALSE);
    }
-   wxc_String group_name;
-   if (it->pgrp != NULL) {
-      it->pgrp->getGrpName(*it->pEDID, group_name);
-   } else {
-      group_name = it->label;
-   }
+   std::string group_name = (it->pgrp != NULL)
+      ? group_display_name(it->pgrp, *it->pEDID) : std::string(it->label);
    gtk_label_set_text(wnd->group_title, group_name.c_str());
+   if (it->pgrp != NULL) {
+      char where[128];
+      snprintf(where, sizeof(where), "%s · offset 0x%03X · block %u",
+               it->pgrp->CodeName.c_str(), it->pgrp->getAbsOffs(),
+               it->pgrp->getAbsOffs() / static_cast<u32_t>(sizeof(ediblk_t)));
+      gtk_label_set_text(wnd->group_subtitle, where);
+   }
+   gtk_widget_set_visible(GTK_WIDGET(wnd->group_subtitle), it->pgrp != NULL);
    fields_refresh(wnd->fields, it->pgrp, *it->pEDID);
    bool has_timing = timing_load_group(wnd->timing, it->pgrp, it->pEDID);
    wnd_refresh_raw_view(wnd);
@@ -4133,6 +4180,15 @@ static void wnd_on_show_reserved_state(GSimpleAction* action, GVariant* value,
    if (group != NULL) rows_reload(wnd->fields, group, &wnd->doc->EDID, wnd);
 }
 
+static void wnd_on_find_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   if (! wnd->loaded) return;
+   if (adw_overlay_split_view_get_collapsed(wnd->split_view)) {
+      adw_overlay_split_view_set_show_sidebar(wnd->split_view, TRUE);
+   }
+   gtk_widget_grab_focus(GTK_WIDGET(wnd->tree_search));
+}
+
 static void wnd_on_shortcuts_action(GSimpleAction*, GVariant*, gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
    struct shortcut {
@@ -4161,6 +4217,7 @@ static void wnd_on_shortcuts_action(GSimpleAction*, GVariant*, gpointer user_dat
          {"Show group menu", "<Shift>F10"},
       }},
       {"General", {
+         {"Search groups", "<Control>f"},
          {"Keyboard shortcuts", "<Control>question"},
       }},
    };
@@ -4366,6 +4423,11 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(no_recent_action));
    g_object_unref(no_recent_action);
 
+   GSimpleAction* find_action = g_simple_action_new("find", NULL);
+   g_signal_connect(find_action, "activate", G_CALLBACK(wnd_on_find_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(find_action));
+   g_object_unref(find_action);
+
    GSimpleAction* shortcuts_action = g_simple_action_new("shortcuts", NULL);
    g_signal_connect(shortcuts_action, "activate",
                     G_CALLBACK(wnd_on_shortcuts_action), wnd);
@@ -4388,6 +4450,8 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                                          save_as_accels);
    gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.undo", undo_accels);
    gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.redo", redo_accels);
+   const char* find_accels[] = {"<Control>f", NULL};
+   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.find", find_accels);
    const char* shortcuts_accels[] = {"<Control>question", NULL};
    gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.shortcuts",
                                          shortcuts_accels);
@@ -4498,12 +4562,21 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_signal_connect(wnd->tree_sel, "selection-changed",
                     G_CALLBACK(wnd_on_tree_select), wnd);
 
+   //only the groups of the selected block's type are offered
    GMenu* add_menu = g_menu_new();
-   g_menu_append(add_menu, "LPCM Audio Block", "win.add-cta-group::audio-lpcm");
-   g_menu_append(add_menu, "Extended Audio Block", "win.add-cta-group::audio-extended");
-   g_menu_append(add_menu, "Video Block", "win.add-cta-group::video");
-   g_menu_append(add_menu, "Detailed Timing", "win.add-cta-group::timing");
-   g_menu_append(add_menu, "DisplayID Data Block", "win.add-displayid-group");
+   static const char* const add_items[][2] = {
+      {"LPCM Audio Block", "win.add-cta-group::audio-lpcm"},
+      {"Extended Audio Block", "win.add-cta-group::audio-extended"},
+      {"Video Block", "win.add-cta-group::video"},
+      {"Detailed Timing", "win.add-cta-group::timing"},
+      {"DisplayID Data Block", "win.add-displayid-group"},
+   };
+   for (const auto& spec : add_items) {
+      GMenuItem* item = g_menu_item_new(spec[0], spec[1]);
+      g_menu_item_set_attribute(item, "hidden-when", "s", "action-disabled");
+      g_menu_append_item(add_menu, item);
+      g_object_unref(item);
+   }
 
    GMenu* group_menu_model = g_menu_new();
    g_menu_append_submenu(group_menu_model, "Add", G_MENU_MODEL(add_menu));
@@ -4537,6 +4610,8 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_margin_bottom(GTK_WIDGET(wnd->tree_search), 6);
    g_signal_connect(wnd->tree_search, "search-changed",
                     G_CALLBACK(tree_search_changed), wnd);
+   //Escape clears the search; the handler ignores its first argument
+   g_signal_connect(wnd->tree_search, "stop-search", G_CALLBACK(tree_search_clear), wnd);
 
    GtkWidget* search_empty = adw_status_page_new();
    adw_status_page_set_icon_name(ADW_STATUS_PAGE(search_empty),
@@ -4574,11 +4649,13 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->sidebar_stack));
 
    GtkWidget* group_toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   gtk_widget_add_css_class(group_toolbar, "toolbar");
    gtk_widget_set_margin_start(group_toolbar, 12);
    gtk_widget_set_margin_end(group_toolbar, 12);
    gtk_widget_set_margin_top(group_toolbar, 6);
    gtk_widget_set_margin_bottom(group_toolbar, 12);
    GtkWidget* add_button = gtk_menu_button_new();
+   wnd->add_button = add_button;
    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(add_button), "list-add-symbolic");
    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(add_button), G_MENU_MODEL(add_menu));
    gtk_widget_set_tooltip_text(add_button, "Add a group");
@@ -4616,12 +4693,22 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_margin_top(editor_heading, 18);
    gtk_widget_set_margin_bottom(editor_heading, 12);
 
+   GtkWidget* heading_titles = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
+   gtk_widget_set_hexpand(heading_titles, TRUE);
+   gtk_widget_set_valign(heading_titles, GTK_ALIGN_CENTER);
    wnd->group_title = GTK_LABEL(gtk_label_new("Select a group"));
    gtk_label_set_xalign(wnd->group_title, 0.0);
    gtk_label_set_ellipsize(wnd->group_title, PANGO_ELLIPSIZE_END);
-   gtk_widget_set_hexpand(GTK_WIDGET(wnd->group_title), TRUE);
    gtk_widget_add_css_class(GTK_WIDGET(wnd->group_title), "title-2");
-   gtk_box_append(GTK_BOX(editor_heading), GTK_WIDGET(wnd->group_title));
+   gtk_box_append(GTK_BOX(heading_titles), GTK_WIDGET(wnd->group_title));
+   wnd->group_subtitle = GTK_LABEL(gtk_label_new(NULL));
+   gtk_label_set_xalign(wnd->group_subtitle, 0.0);
+   gtk_label_set_ellipsize(wnd->group_subtitle, PANGO_ELLIPSIZE_END);
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->group_subtitle), "caption");
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->group_subtitle), "dim-label");
+   gtk_widget_set_visible(GTK_WIDGET(wnd->group_subtitle), FALSE);
+   gtk_box_append(GTK_BOX(heading_titles), GTK_WIDGET(wnd->group_subtitle));
+   gtk_box_append(GTK_BOX(editor_heading), heading_titles);
 
    wnd->fields = GTK_FLOW_BOX(gtk_flow_box_new());
    gtk_flow_box_set_selection_mode(wnd->fields, GTK_SELECTION_NONE);
@@ -4630,6 +4717,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_flow_box_set_max_children_per_line(wnd->fields, 1);
    gtk_flow_box_set_column_spacing(wnd->fields, 12);
    gtk_flow_box_set_row_spacing(wnd->fields, 12);
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->fields), "card-grid");
    gtk_widget_set_valign(GTK_WIDGET(wnd->fields), GTK_ALIGN_START);
    g_object_set_data(G_OBJECT(wnd->fields), "wxedid-wnd", wnd);
 
@@ -4675,19 +4763,26 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_text_view_set_left_margin(wnd->raw_view, 18);
    gtk_text_view_set_right_margin(wnd->raw_view, 18);
    gtk_text_view_set_top_margin(wnd->raw_view, 12);
-   gtk_text_view_set_bottom_margin(wnd->raw_view, 18);
+   gtk_text_view_set_bottom_margin(wnd->raw_view, 12);
    gtk_accessible_update_property(GTK_ACCESSIBLE(wnd->raw_view),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
                                   "Selected group bytes", -1);
    gtk_text_buffer_create_tag(gtk_text_view_get_buffer(wnd->raw_view), "field",
                               "background", "rgba(53,132,228,0.3)",
                               "weight", PANGO_WEIGHT_BOLD, NULL);
-   GtkWidget* raw_text_scroll = gtk_scrolled_window_new();
-   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(raw_text_scroll),
-                                  GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(raw_text_scroll),
-                                 GTK_WIDGET(wnd->raw_view));
-   gtk_widget_set_vexpand(raw_text_scroll, TRUE);
+   gtk_text_buffer_create_tag(gtk_text_view_get_buffer(wnd->raw_view), "heading",
+                              "weight", PANGO_WEIGHT_BOLD, NULL);
+   //the bytes card hugs its lines; the page scrolls as a whole
+   GtkWidget* raw_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   gtk_widget_add_css_class(raw_card, "card");
+   gtk_widget_set_overflow(raw_card, GTK_OVERFLOW_HIDDEN);
+   gtk_widget_set_valign(raw_card, GTK_ALIGN_START);
+   gtk_widget_set_margin_start(raw_card, 18);
+   gtk_widget_set_margin_end(raw_card, 18);
+   gtk_widget_set_margin_top(raw_card, 6);
+   gtk_widget_set_margin_bottom(raw_card, 18);
+   gtk_box_append(GTK_BOX(raw_card), GTK_WIDGET(wnd->raw_view));
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->raw_view), "byte-view");
    wnd->raw_caption = GTK_LABEL(gtk_label_new(NULL));
    gtk_label_set_xalign(wnd->raw_caption, 0.0);
    gtk_label_set_ellipsize(wnd->raw_caption, PANGO_ELLIPSIZE_END);
@@ -4695,9 +4790,13 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_add_css_class(GTK_WIDGET(wnd->raw_caption), "dim-label");
    gtk_widget_set_margin_start(GTK_WIDGET(wnd->raw_caption), 18);
    gtk_widget_set_margin_end(GTK_WIDGET(wnd->raw_caption), 18);
-   GtkWidget* raw_scroll = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-   gtk_box_append(GTK_BOX(raw_scroll), GTK_WIDGET(wnd->raw_caption));
-   gtk_box_append(GTK_BOX(raw_scroll), raw_text_scroll);
+   GtkWidget* raw_page = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   gtk_box_append(GTK_BOX(raw_page), GTK_WIDGET(wnd->raw_caption));
+   gtk_box_append(GTK_BOX(raw_page), raw_card);
+   GtkWidget* raw_scroll = gtk_scrolled_window_new();
+   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(raw_scroll),
+                                  GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(raw_scroll), raw_page);
 
    wnd->editor_stack = ADW_VIEW_STACK(adw_view_stack_new());
    adw_view_stack_set_hhomogeneous(wnd->editor_stack, FALSE);

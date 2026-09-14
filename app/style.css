@@ -1,0 +1,31 @@
+/* Field and timing grids: the cards carry the look, so the flow box
+   children neither pad nor tint them on hover. */
+flowbox.card-grid > flowboxchild {
+  padding: 0;
+  background: none;
+  border-radius: 12px;
+}
+
+/* help buttons sit on the caption line of a field card */
+button.field-help {
+  min-width: 24px;
+  min-height: 24px;
+  padding: 0;
+}
+
+/* derived values next to editable timing values */
+.timing-derived {
+  font-feature-settings: "tnum";
+}
+
+/* byte view: a card like the other pages, with a monospace fallback for
+   systems without the theme's monospace font */
+textview.byte-view,
+textview.byte-view > text {
+  background: none;
+}
+
+textview.byte-view,
+label.modeline {
+  font-family: "Adwaita Mono", monospace;
+}

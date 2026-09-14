@@ -1,5 +1,8 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <gresources>
+  <gresource prefix="/io/github/sachesi/EdidEditor">
+    <file>style.css</file>
+  </gresource>
   <gresource prefix="/io/github/sachesi/EdidEditor/icons/scalable/apps">
     <file alias="io.github.sachesi.EdidEditor.svg" preprocess="xml-stripblanks">icons/io.github.sachesi.EdidEditor.svg</file>
   </gresource>

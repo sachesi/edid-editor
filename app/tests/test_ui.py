@@ -293,6 +293,11 @@ def functional(Atspi, app, fixture):
                     node.get_state_set().contains(Atspi.StateType.CHECKED)
             select_group(Atspi, 15)
             press(Atspi, "Fields")
+            wait_for(lambda: named(Atspi, "DTD · offset 0x036 · block 0", Atspi.Role.LABEL),
+                     "the group heading did not name its code, offset, and block")
+            add = [node for node in nodes(Atspi) if name_of(node) == "Add a group"]
+            assert add and not any(node.get_state_set().contains(Atspi.StateType.ENABLED)
+                                   for node in add), "groups can be added to the base block"
             press_last(Atspi, "About Pixel clock")
             wait_for(lambda: any("divisible by 0.25MHz" in name_of(node)
                                  for node in nodes(Atspi)),
@@ -463,6 +468,10 @@ def functional(Atspi, app, fixture):
             activate_menu_item(Atspi, "Keyboard Shortcuts")
             wait_for(lambda: named(Atspi, "Duplicate group"),
                      "keyboard shortcuts dialog did not list group shortcuts")
+            wait_for(lambda: named(Atspi, "Search groups", Atspi.Role.LABEL) or
+                     any(name_of(node) == "Search groups" and role_of(node) != Atspi.Role.ENTRY
+                         for node in nodes(Atspi)),
+                     "keyboard shortcuts dialog did not list the search shortcut")
             close_dialog(Atspi, "Keyboard Shortcuts")
 
             search = named(Atspi, "Search groups", Atspi.Role.ENTRY)
