@@ -138,6 +138,11 @@ struct wxedid_wnd {
    edi_dynfld_t*       highlight_field;
    GtkLabel*           raw_caption;
    GtkWidget*          reserved_note;  //"N reserved fields are hidden"
+   GSimpleAction*      show_reserved_action;
+   GtkListBox*         recent_list;    //recent files on the start page
+   GtkWidget*          recent_group;
+   GMenu*              recent_menu;    //Open Recent submenu
+   gulong              recent_changed;
    GtkLabel*           reserved_label;
    u32_t               invalid_fields;
 };
@@ -2710,7 +2715,7 @@ static void wnd_update_document_ui(wxedid_wnd* wnd) {
       g_free(basename);
    } else {
       adw_window_title_set_title(wnd->window_title, "EDID Editor");
-      adw_window_title_set_subtitle(wnd->window_title, "EDID editor");
+      adw_window_title_set_subtitle(wnd->window_title, NULL);
       gtk_window_set_title(wnd->window, "EDID Editor");
    }
 
@@ -2902,6 +2907,162 @@ static void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group = NULL) {
    }
 }
 
+//------------
+// recent files and window state
+static const char RECENT_GROUP[] = "edid-editor";
+
+static void wnd_add_recent(const char* path, bool hex) {
+   if (g_str_has_prefix(path, DRM_ROOT)) return;
+   char* uri = g_filename_to_uri(path, NULL, NULL);
+   if (uri == NULL) return;
+   const char* groups[] = {RECENT_GROUP, NULL};
+   GtkRecentData data = {};
+   data.mime_type = const_cast<char*>(hex ? "text/plain" : "application/octet-stream");
+   data.app_name = const_cast<char*>("edid-editor");
+   data.app_exec = const_cast<char*>("edid-editor %f");
+   data.groups = const_cast<char**>(groups);
+   gtk_recent_manager_add_full(gtk_recent_manager_get_default(), uri, &data);
+   g_free(uri);
+}
+
+//local files this application opened, newest first
+static std::vector<std::string> recent_paths(size_t limit) {
+   std::vector<std::pair<gint64, std::string>> found;
+   GList* items = gtk_recent_manager_get_items(gtk_recent_manager_get_default());
+   for (GList* node = items; node != NULL; node = node->next) {
+      GtkRecentInfo* info = static_cast<GtkRecentInfo*>(node->data);
+      if (gtk_recent_info_has_group(info, RECENT_GROUP) && gtk_recent_info_is_local(info) &&
+          gtk_recent_info_exists(info)) {
+         char* path = g_filename_from_uri(gtk_recent_info_get_uri(info), NULL, NULL);
+         if (path != NULL) {
+            GDateTime* modified = gtk_recent_info_get_modified(info);
+            found.emplace_back((modified != NULL) ? g_date_time_to_unix(modified) : 0, path);
+            g_free(path);
+         }
+      }
+   }
+   g_list_free_full(items, (GDestroyNotify) gtk_recent_info_unref);
+   std::stable_sort(found.begin(), found.end(),
+                    [](const std::pair<gint64, std::string>& a,
+                       const std::pair<gint64, std::string>& b) { return a.first > b.first; });
+   std::vector<std::string> paths;
+   for (const auto& entry : found) {
+      if (paths.size() >= limit) break;
+      paths.push_back(entry.second);
+   }
+   return paths;
+}
+
+static void wnd_request_open_source(wxedid_wnd* wnd, int mode, const char* path);
+
+static void wnd_on_recent_open(GtkButton* button, gpointer user_data) {
+   const char* path = static_cast<const char*>(g_object_get_data(G_OBJECT(button), "path"));
+   if (path != NULL) wnd_request_open_source(static_cast<wxedid_wnd*>(user_data), 0, path);
+}
+
+static void wnd_refresh_recent(wxedid_wnd* wnd) {
+   std::vector<std::string> paths = recent_paths(6);
+   if (wnd->recent_list != NULL) {
+      gtk_list_box_remove_all(wnd->recent_list);
+      for (const std::string& path : paths) {
+         char* name = g_path_get_basename(path.c_str());
+         char* folder = g_path_get_dirname(path.c_str());
+         char* display = g_filename_display_name(folder);
+         const char* home = g_get_home_dir();
+         size_t home_length = strlen(home);
+         if ((home_length > 1) && (0 == strncmp(display, home, home_length)) &&
+             ((display[home_length] == '/') || (display[home_length] == 0))) {
+            char* shortened = g_strconcat("~", display + home_length, NULL);
+            g_free(display);
+            display = shortened;
+         }
+         GtkWidget* row = adw_action_row_new();
+         adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+         adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), name);
+         adw_action_row_set_subtitle(ADW_ACTION_ROW(row), display);
+         GtkWidget* open = gtk_button_new_from_icon_name("go-next-symbolic");
+         gtk_widget_add_css_class(open, "flat");
+         gtk_widget_set_valign(open, GTK_ALIGN_CENTER);
+         gtk_widget_set_tooltip_text(open, "Open");
+         g_object_set_data_full(G_OBJECT(open), "path", g_strdup(path.c_str()), g_free);
+         g_signal_connect(open, "clicked", G_CALLBACK(wnd_on_recent_open), wnd);
+         adw_action_row_add_suffix(ADW_ACTION_ROW(row), open);
+         adw_action_row_set_activatable_widget(ADW_ACTION_ROW(row), open);
+         gtk_list_box_append(wnd->recent_list, row);
+         g_free(display);
+         g_free(folder);
+         g_free(name);
+      }
+      gtk_widget_set_visible(wnd->recent_group, ! paths.empty());
+   }
+   if (wnd->recent_menu != NULL) {
+      g_menu_remove_all(wnd->recent_menu);
+      for (const std::string& path : paths) {
+         char* name = g_path_get_basename(path.c_str());
+         GMenuItem* item = g_menu_item_new(name, NULL);
+         g_menu_item_set_action_and_target_value(item, "win.open-recent",
+                                                 g_variant_new_string(path.c_str()));
+         g_menu_append_item(wnd->recent_menu, item);
+         g_object_unref(item);
+         g_free(name);
+      }
+      if (paths.empty()) g_menu_append(wnd->recent_menu, "No Recent Files", "win.no-recent");
+   }
+}
+
+static void wnd_on_recent_changed(GtkRecentManager*, gpointer user_data) {
+   wnd_refresh_recent(static_cast<wxedid_wnd*>(user_data));
+}
+
+static void wnd_on_open_recent(GSimpleAction*, GVariant* parameter, gpointer user_data) {
+   wnd_request_open_source(static_cast<wxedid_wnd*>(user_data), 0,
+                           g_variant_get_string(parameter, NULL));
+}
+
+static char* state_file_path() {
+   return g_build_filename(g_get_user_state_dir(), "edid-editor", "state.ini", NULL);
+}
+
+static void wnd_load_state(wxedid_wnd* wnd) {
+   char* path = state_file_path();
+   GKeyFile* state = g_key_file_new();
+   if (g_key_file_load_from_file(state, path, G_KEY_FILE_NONE, NULL)) {
+      int width = g_key_file_get_integer(state, "window", "width", NULL);
+      int height = g_key_file_get_integer(state, "window", "height", NULL);
+      if ((width >= 360) && (height >= 294)) {
+         gtk_window_set_default_size(wnd->window, width, height);
+      }
+      if (g_key_file_get_boolean(state, "window", "maximized", NULL)) {
+         gtk_window_maximize(wnd->window);
+      }
+      if (g_key_file_get_boolean(state, "fields", "show-reserved", NULL)) {
+         g_action_change_state(G_ACTION(wnd->show_reserved_action),
+                               g_variant_new_boolean(TRUE));
+      }
+   }
+   g_key_file_free(state);
+   g_free(path);
+}
+
+static void wnd_save_state(wxedid_wnd* wnd) {
+   GKeyFile* state = g_key_file_new();
+   int width = 0;
+   int height = 0;
+   gtk_window_get_default_size(wnd->window, &width, &height);
+   g_key_file_set_integer(state, "window", "width", width);
+   g_key_file_set_integer(state, "window", "height", height);
+   g_key_file_set_boolean(state, "window", "maximized", gtk_window_is_maximized(wnd->window));
+   g_key_file_set_boolean(state, "fields", "show-reserved", wnd->show_reserved);
+   char* path = state_file_path();
+   char* folder = g_path_get_dirname(path);
+   if (g_mkdir_with_parents(folder, 0700) == 0) {
+      g_key_file_save_to_file(state, path, NULL);
+   }
+   g_free(folder);
+   g_free(path);
+   g_key_file_free(state);
+}
+
 static void wnd_offer_retry(wxedid_wnd* wnd) {
    if (wnd->doc->EDID.b_ERR_Ignore || wnd->source_path.empty()) return;
    adw_banner_set_button_label(wnd->banner, "Open Anyway");
@@ -3035,6 +3196,7 @@ static void wnd_load_bytes(wxedid_wnd* wnd, const char* path,
    if (base_ok) {
       snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
       wnd->source_writable = ! hex_source && (g_access(path, W_OK) == 0);
+      wnd_add_recent(path, hex_source);
       gtk_stack_set_visible_child_name(wnd->content_stack, "editor");
       wnd_rebuild_tree(wnd);
    } else {
@@ -3285,7 +3447,8 @@ static void wnd_on_discard_open_response(GObject* source, GAsyncResult* result,
 
 //open a known file, or a dialog when path is NULL; unsaved changes are
 //confirmed first
-static void wnd_request_open_source(wxedid_wnd* wnd, open_mode mode, const char* path) {
+static void wnd_request_open_source(wxedid_wnd* wnd, int requested, const char* path) {
+   open_mode mode = static_cast<open_mode>(requested);
    if (! wnd->dirty) {
       if (path != NULL) {
          wnd_load_file(wnd, path, path_is_hex_text(path));
@@ -3421,6 +3584,7 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
    char msg[1152];
    snprintf(msg, sizeof(msg), "[i] Saved %zu bytes to %s", wr, path);
    wnd->doc->GLog.DoLog(msg);
+   wnd_add_recent(path, false);
    if (strcmp(path, wnd->doc->path) != 0) {
       snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
    }
@@ -3668,13 +3832,17 @@ static void wnd_on_discard_close_response(GObject* source, GAsyncResult* result,
    wnd->close_confirmation_open = false;
    if (0 == strcmp(response, "discard")) {
       wnd->dirty = false;
+      wnd_save_state(wnd);
       gtk_window_destroy(wnd->window);
    }
 }
 
 static gboolean wnd_on_close_request(GtkWindow* /*window*/, gpointer user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
-   if (! wnd->dirty) return FALSE;
+   if (! wnd->dirty) {
+      wnd_save_state(wnd);
+      return FALSE;
+   }
    if (wnd->close_confirmation_open) return TRUE;
 
    wnd->close_confirmation_open = true;
@@ -3833,6 +4001,10 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_object_set_data_full(G_OBJECT(window), "wxedid-wnd", wnd,
                            [](gpointer data) {
                               wxedid_wnd* w = (wxedid_wnd*) data;
+                              if (w->recent_changed != 0)
+                                 g_signal_handler_disconnect(gtk_recent_manager_get_default(),
+                                                             w->recent_changed);
+                              g_clear_object(&w->recent_menu);
                               g_clear_object(&w->tree_filtered);
                               g_clear_object(&w->tree_filter);
                               g_clear_object(&w->tree_model);
@@ -3951,12 +4123,21 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                            G_ACTION(wnd->ignore_read_only_action));
    g_object_unref(wnd->ignore_read_only_action);
 
-   GSimpleAction* show_reserved_action = g_simple_action_new_stateful(
+   wnd->show_reserved_action = g_simple_action_new_stateful(
       "show-reserved", NULL, g_variant_new_boolean(FALSE));
-   g_signal_connect(show_reserved_action, "change-state",
+   g_signal_connect(wnd->show_reserved_action, "change-state",
                     G_CALLBACK(wnd_on_show_reserved_state), wnd);
-   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(show_reserved_action));
-   g_object_unref(show_reserved_action);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->show_reserved_action));
+   g_object_unref(wnd->show_reserved_action);
+
+   GSimpleAction* recent_action = g_simple_action_new("open-recent", G_VARIANT_TYPE_STRING);
+   g_signal_connect(recent_action, "activate", G_CALLBACK(wnd_on_open_recent), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(recent_action));
+   g_object_unref(recent_action);
+   GSimpleAction* no_recent_action = g_simple_action_new("no-recent", NULL);
+   g_simple_action_set_enabled(no_recent_action, FALSE);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(no_recent_action));
+   g_object_unref(no_recent_action);
 
    GSimpleAction* shortcuts_action = g_simple_action_new("shortcuts", NULL);
    g_signal_connect(shortcuts_action, "activate",
@@ -4015,6 +4196,8 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    GMenu* primary_menu = g_menu_new();
    GMenu* open_section = g_menu_new();
    g_menu_append(open_section, "Open…", "win.open");
+   wnd->recent_menu = g_menu_new();
+   g_menu_append_submenu(open_section, "Open Recent", G_MENU_MODEL(wnd->recent_menu));
    g_menu_append(open_section, "Open from Display…", "win.open-display");
    g_menu_append(open_section, "Import Hex…", "win.import-hex");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(open_section));
@@ -4360,8 +4543,28 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    GtkWidget* empty_open = gtk_button_new_with_mnemonic("_Open an EDID File");
    gtk_actionable_set_action_name(GTK_ACTIONABLE(empty_open), "win.open");
    gtk_widget_add_css_class(empty_open, "suggested-action");
+   gtk_widget_add_css_class(empty_open, "pill");
    gtk_widget_set_halign(empty_open, GTK_ALIGN_CENTER);
-   adw_status_page_set_child(ADW_STATUS_PAGE(empty_page), empty_open);
+   GtkWidget* empty_display = gtk_button_new_with_mnemonic("Open from _Display");
+   gtk_actionable_set_action_name(GTK_ACTIONABLE(empty_display), "win.open-display");
+   gtk_widget_add_css_class(empty_display, "pill");
+   gtk_widget_set_halign(empty_display, GTK_ALIGN_CENTER);
+   wnd->recent_group = adw_preferences_group_new();
+   adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(wnd->recent_group), "Recent Files");
+   wnd->recent_list = GTK_LIST_BOX(gtk_list_box_new());
+   gtk_list_box_set_selection_mode(wnd->recent_list, GTK_SELECTION_NONE);
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->recent_list), "boxed-list");
+   adw_preferences_group_add(ADW_PREFERENCES_GROUP(wnd->recent_group),
+                             GTK_WIDGET(wnd->recent_list));
+   gtk_widget_set_margin_top(wnd->recent_group, 18);
+   GtkWidget* empty_actions = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+   gtk_box_append(GTK_BOX(empty_actions), empty_open);
+   gtk_box_append(GTK_BOX(empty_actions), empty_display);
+   gtk_box_append(GTK_BOX(empty_actions), wnd->recent_group);
+   GtkWidget* empty_clamp = adw_clamp_new();
+   adw_clamp_set_maximum_size(ADW_CLAMP(empty_clamp), 480);
+   adw_clamp_set_child(ADW_CLAMP(empty_clamp), empty_actions);
+   adw_status_page_set_child(ADW_STATUS_PAGE(empty_page), empty_clamp);
 
    wnd->content_stack = GTK_STACK(gtk_stack_new());
    gtk_stack_add_named(wnd->content_stack, empty_page, "empty");
@@ -4401,6 +4604,10 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_add_controller(content, GTK_EVENT_CONTROLLER(drop));
 
    adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), content);
+   wnd->recent_changed = g_signal_connect(gtk_recent_manager_get_default(), "changed",
+                                          G_CALLBACK(wnd_on_recent_changed), wnd);
+   wnd_refresh_recent(wnd);
+   wnd_load_state(wnd);
    wnd_update_history_state(wnd);
    wnd_update_document_ui(wnd);
    gtk_window_present(GTK_WINDOW(window));

@@ -240,9 +240,10 @@ def select_group(Atspi, index):
 def launch_app(Atspi, app, path, title=None):
     env = os.environ.copy()
     env.update({"GDK_BACKEND": "x11", "GSK_RENDERER": "cairo", "GTK_A11Y": "atspi"})
-    process = subprocess.Popen([app, path], env=env, text=True,
+    process = subprocess.Popen([app] if path is None else [app, path], env=env, text=True,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    title = Path(path).name if title is None else title
+    if title is None:
+        title = "EDID Editor" if path is None else Path(path).name
     wait_for(lambda: any(node.get_role() == Atspi.Role.FRAME and
                          title in node.get_name()
                          for node in nodes(Atspi)), "application window did not open")
@@ -621,10 +622,53 @@ def two_cta(Atspi, app, fixture):
         stop_app(process)
 
 
+def recent(Atspi, app, fixture):
+    name = Path(fixture).name
+    process = launch_app(Atspi, app, fixture)
+    try:
+        select_group(Atspi, 6)
+        press(Atspi, "Show Reserved Fields", Atspi.Role.PUSH_BUTTON)
+        wait_for(lambda: named(Atspi, "Reserved0", Atspi.Role.SWITCH),
+                 "showing reserved fields did not list them")
+        press(Atspi, "Close", Atspi.Role.PUSH_BUTTON)
+        process.wait(timeout=5)
+    finally:
+        stop_app(process)
+
+    process = launch_app(Atspi, app, None)
+    try:
+        def open_button():
+            for row in nodes(Atspi):
+                if role_of(row) != Atspi.Role.LIST_ITEM:
+                    continue
+                inner = list(walk(row))
+                if any(name_of(node) == name for node in inner):
+                    for node in inner:
+                        if role_of(node) == Atspi.Role.PUSH_BUTTON:
+                            return node
+            return None
+        button = wait_for(open_button, "the start page did not list the recent file")
+        assert button.get_action_iface().do_action(0)
+        wait_for(lambda: any(role_of(node) == Atspi.Role.FRAME and name in name_of(node)
+                             for node in nodes(Atspi)),
+                 "opening a recent file did not load it")
+        select_group(Atspi, 6)
+        wait_for(lambda: named(Atspi, "Reserved0", Atspi.Role.SWITCH),
+                 "showing reserved fields was not remembered")
+    finally:
+        stop_app(process)
+
+
 def inside(app, fixture, scenario):
     import gi
     gi.require_version("Atspi", "2.0")
     from gi.repository import Atspi
+    # keep recent files and window state inside the session
+    runtime = Path(os.environ["XDG_RUNTIME_DIR"])
+    for variable, folder in (("XDG_DATA_HOME", "data"), ("XDG_STATE_HOME", "state"),
+                             ("XDG_CONFIG_HOME", "config")):
+        (runtime / folder).mkdir(exist_ok=True)
+        os.environ[variable] = str(runtime / folder)
     time.sleep(1)
     if scenario == "functional":
         functional(Atspi, app, fixture)
@@ -638,6 +682,8 @@ def inside(app, fixture, scenario):
         two_cta(Atspi, app, fixture)
     elif scenario == "display":
         display(Atspi, app, fixture)
+    elif scenario == "recent":
+        recent(Atspi, app, fixture)
     else:
         process = launch_app(Atspi, app, fixture)
         time.sleep(1)
@@ -659,6 +705,7 @@ def main():
     run_session(script, app, fixture, 900, "broken")
     run_session(script, app, fixture, 900, "two-cta")
     run_session(script, app, fixture, 900, "display")
+    run_session(script, app, fixture, 900, "recent")
     run_session(script, app, fixture, 360, "compact")
 
 
