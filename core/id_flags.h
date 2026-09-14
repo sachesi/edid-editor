@@ -83,6 +83,8 @@ enum { //block and groups IDs & flags
    ID_T10VTDB     = 0x00001200,
    ID_T10VTD_M0   = 0x00150000, //T10_M=0, 6-byte VTD
    ID_T10VTD_M1   = 0x00160000, //T10_M=1, (6+1)-byte VTD
+   ID_HFEEODB     = 0x00001600, //HDMI Forum EDID Extension Override
+   ID_HFSCDB      = 0x00001700, //HDMI Forum Sink Capability
    ID_CEA_UETC    = 0x0000FF00, //unknown Extended Tag Code
    ID_CEA_UDAT    = 0x007F0000, //unknown data sub-group
    ID_CEA_ET_MASK = 0x0000FF00, //mask for Extended Tag type ID

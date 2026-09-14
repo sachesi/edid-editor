@@ -95,8 +95,8 @@ CTA-861-H Standard from January 2021
 
 8. SLDB, SAB: Some speakers used in CTA-861-G are removed in CTA-861-H
 
-9. VSD: The payload is interpreted as for 00-0C-03 "HDMI Licensing, LLC", what means that
-   for other IEEE-OUI codes the interpretation is incorrect.
+9. VSD: The payload is decoded for 00-0C-03 "HDMI Licensing, LLC" and C4-5D-D8
+   "HDMI Forum". The payload of other IEEE-OUI codes is shown as data bytes.
 
 10. RMCD::SPKD: CTA-861-H essentially agrees with G-spec, but (apparentl erroneously)
    defines default values for X/Y/Zmax, saying that f.e. 0x10 (16 dec) corresponds

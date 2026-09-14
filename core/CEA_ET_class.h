@@ -503,6 +503,32 @@ class t10vtb_vtd_cl : public edi_grp_cl {
 };
 
 
+//HF-EEODB: HDMI Forum EDID Extension Override Data Block (DBC_ET_HEOVR = 120)
+class cea_hfeeodb_cl : public edi_grp_cl {
+   private:
+      static const char         Desc[];
+      static const edi_field_t  fld_dsc[];
+      static const gpfld_dsc_t  fields;
+      static const dbc_flatgp_dsc_t HFEEODB_grp;
+
+   public:
+      rcode       init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent);
+      edi_grp_cl* Clone(rcode& rcd, u32_t flags) {return base_clone(rcd, new cea_hfeeodb_cl(), flags); };
+};
+
+//HF-SCDB: HDMI Forum Sink Capability Data Block (DBC_ET_HSCDB = 121)
+class cea_hfscdb_cl : public edi_grp_cl {
+   private:
+      static const char         Desc[];
+      static const edi_field_t  rsvd_fld_dsc[];
+      static const gpfld_dsc_t  fld_grp[];
+      static const dbc_flatgp_dsc_t HFSCDB_grp;
+
+   public:
+      rcode       init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent);
+      edi_grp_cl* Clone(rcode& rcd, u32_t flags) {return base_clone(rcd, new cea_hfscdb_cl(), flags); };
+};
+
 //UNK-ET: Unknown Data Block (Extended Tag Code)
 class cea_unket_cl : public edi_grp_cl {
    private:

@@ -144,8 +144,12 @@ class cea_vsd_cl : public edi_grp_cl {
       static const edi_field_t  latency_fld_dsc   [];
       static const edi_field_t  av_latency_fld_dsc[];
       static const gpfld_dsc_t  sub_fld_grp       [];
+      static const gpfld_dsc_t  hf_fld_grp        [];
+      static const gpfld_dsc_t  vendor_fld_grp    [];
 
       static const dbc_flatgp_dsc_t VSD_grp;
+      static const dbc_flatgp_dsc_t HF_VSD_grp;
+      static const dbc_flatgp_dsc_t Vendor_VSD_grp;
 
    public:
       rcode       init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent);

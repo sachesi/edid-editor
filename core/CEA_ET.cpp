@@ -2701,6 +2701,96 @@ void t10vtb_vtd_cl::getGrpName(EDID_cl& EDID, wxc_String& gp_name) {
 }
 
 
+//HF-EEODB: HDMI Forum EDID Extension Override Data Block (DBC_ET_HEOVR = 120)
+const char cea_hfeeodb_cl::Desc[] =
+"Overrides the extension block count of the base EDID block, allowing\n"
+"more than one extension. Only valid at the start of the first CTA-861 block.";
+
+const edi_field_t cea_hfeeodb_cl::fld_dsc[] = {
+   {&EDID_cl::ByteVal, 0, 2, 0, 1, F_BTE|F_INT, 0, 0xFF, "EEODB_count",
+   "Number of EDID extension blocks, overriding the base block count." }
+};
+
+const gpfld_dsc_t cea_hfeeodb_cl::fields = {
+   .flags    = 0,
+   .dat_sz   = 1,
+   .inst_cnt = 1,
+   .fcount   = 1,
+   .fields   = cea_hfeeodb_cl::fld_dsc
+};
+
+const dbc_flatgp_dsc_t cea_hfeeodb_cl::HFEEODB_grp = {
+   .CodN     = "HF-EEODB",
+   .Name     = "HDMI Forum EDID Extension Override Data Block",
+   .Desc     = Desc,
+   .type_id  = ID_HFEEODB,
+   .flags    = 0,
+   .min_len  = 2,
+   .max_len  = 2,
+   .max_fld  = CEA_ETHDR_FCNT + 1 + 31,
+   .hdr_fcnt = CEA_ETHDR_FCNT,
+   .hdr_sz   = sizeof(ethdr_t),
+   .fld_arsz = 1,
+   .fld_ar   = &fields
+};
+
+rcode cea_hfeeodb_cl::init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent) {
+   return base_DBC_Init_FlatGrp(inst, &HFEEODB_grp, orflags, parent);
+}
+
+//HF-SCDB: HDMI Forum Sink Capability Data Block (DBC_ET_HSCDB = 121)
+extern const edi_field_t HF_version_fld[];
+extern const edi_field_t HF_tmds_fld[];
+extern const edi_field_t HF_scdc_fld[];
+extern const edi_field_t HF_frl_fld[];
+extern const edi_field_t HF_vrr_mode_fld[];
+extern const edi_field_t HF_vrr_fld[];
+extern const edi_field_t HF_dsc_fld[];
+extern const edi_field_t HF_dsc_frl_fld[];
+extern const edi_field_t HF_dsc_chunk_fld[];
+
+const char cea_hfscdb_cl::Desc[] =
+"HDMI 2.1 sink capabilities: the HDMI Forum VSDB payload in an Extended Tag\n"
+"block, preceded by two reserved bytes.";
+
+const edi_field_t cea_hfscdb_cl::rsvd_fld_dsc[] = {
+   {&EDID_cl::Word16, 0, 2, 0, 2, F_HEX|F_RD, 0, 0xFFFF, "reserved",
+   "reserved (0)" }
+};
+
+const gpfld_dsc_t cea_hfscdb_cl::fld_grp[] = {
+   { .flags = 0, .dat_sz = 2, .inst_cnt = 1, .fcount = 1,
+     .fields = cea_hfscdb_cl::rsvd_fld_dsc },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 1, .fields = HF_version_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 1, .fields = HF_tmds_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 8, .fields = HF_scdc_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 5, .fields = HF_frl_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 8, .fields = HF_vrr_mode_fld },
+   { .flags = 0, .dat_sz = 2, .inst_cnt = 1, .fcount = 2, .fields = HF_vrr_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 8, .fields = HF_dsc_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 2, .fields = HF_dsc_frl_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 2, .fields = HF_dsc_chunk_fld }
+};
+
+const dbc_flatgp_dsc_t cea_hfscdb_cl::HFSCDB_grp = {
+   .CodN     = "HF-SCDB",
+   .Name     = "HDMI Forum Sink Capability Data Block",
+   .Desc     = Desc,
+   .type_id  = ID_HFSCDB,
+   .flags    = T_FLEX_LAYOUT,
+   .min_len  = 3,
+   .max_len  = 31,
+   .max_fld  = CEA_ETHDR_FCNT + 39 + 31,
+   .hdr_fcnt = CEA_ETHDR_FCNT,
+   .hdr_sz   = sizeof(ethdr_t),
+   .fld_arsz = 10,
+   .fld_ar   = cea_hfscdb_cl::fld_grp
+};
+
+rcode cea_hfscdb_cl::init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent) {
+   return base_DBC_Init_FlatGrp(inst, &HFSCDB_grp, orflags, parent);
+}
+
 //UNK-ET: Unknown Data Block (Extended Tag Code)
 const char cea_unket_cl::CodN[] = "UNK-ET";
 const char cea_unket_cl::Name[] = "Unknown Data Block";

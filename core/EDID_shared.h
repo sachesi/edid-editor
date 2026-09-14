@@ -487,6 +487,7 @@ class EDID_cl {
       //CEA:VSD
       rcode VSD_ltncy    (__EDID_HDL_ARGS);
       rcode VSD_MaxTMDS  (__EDID_HDL_ARGS);
+      rcode HF_VRRmax    (__EDID_HDL_ARGS);
       //CEA-ET: VDDD
       rcode VDDD_IF_MaxF   (__EDID_HDL_ARGS);
       rcode VDDD_HVpix_cnt (__EDID_HDL_ARGS);

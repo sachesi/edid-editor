@@ -260,9 +260,10 @@ rcode EDID_cl::ParseDBC_TAG(u8_t *pinst, edi_grp_cl** pp_grp) {
                   pgrp = new cea_t10vtb_cl;
                   break;
                case DBC_ET_HEOVR: //120 HDMI Forum EDID Extension Override Data Block
+                  pgrp = new cea_hfeeodb_cl;
+                  break;
                case DBC_ET_HSCDB: //121 HDMI Forum Sink Capability Data Block
-                  //valid blocks without field definitions: kept as raw data
-                  pgrp = new cea_unket_cl;
+                  pgrp = new cea_hfscdb_cl;
                   break;
                default:
                   //CTA-861-H: reserved Extended Tag Codes:

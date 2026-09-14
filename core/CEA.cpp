@@ -1186,6 +1186,158 @@ rcode EDID_cl::VSD_MaxTMDS(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t
    return retU;
 }
 
+//HF: HDMI Forum VSDB and SCDB: VRRmax spans bits 6-7 of the first byte and
+//all of the second byte
+rcode EDID_cl::HF_VRRmax(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_field) {
+   rcode  retU;
+   u8_t  *inst;
+
+   inst = getValPtr(p_field);
+
+   if (op == OP_READ) {
+      ival = ((inst[0] & 0xC0) << 2) | inst[1];
+      sval << ival;
+      RCD_SET_OK(retU);
+   } else {
+      ulong  tmpv;
+      RCD_SET_FAULT(retU);
+
+      if (op == OP_WRSTR) {
+         retU = getStrUint(sval, 10, p_field->field.minv, p_field->field.maxv, tmpv);
+         if (! RCD_IS_OK(retU)) return retU;
+      } else if (op == OP_WRINT) {
+         if (ival > p_field->field.maxv) RCD_RETURN_FAULT(retU);
+         tmpv = ival;
+         RCD_SET_OK(retU);
+      } else {
+         RCD_RETURN_FAULT(retU); //wrong op code
+      }
+
+      inst[0] = (inst[0] & 0x3F) | ((tmpv >> 2) & 0xC0);
+      inst[1] = (tmpv & 0xFF);
+   }
+   return retU;
+}
+
+//HDMI Forum payload, shared by the HF-VSDB (VSD with OUI C4-5D-D8) and the
+//HF-SCDB (Extended Tag Code 121): both place it at byte 4 of the block.
+static const char HF_FRL_Desc[] =
+"Maximum Fixed Rate Link:\n0= not supported\n1= 3 Gbps on 3 lanes\n"
+"2= 3 and 6 Gbps on 3 lanes\n3= as 2, 6 Gbps on 4 lanes\n"
+"4= as 3, 8 Gbps on 4 lanes\n5= as 4, 10 Gbps on 4 lanes\n"
+"6= as 5, 12 Gbps on 4 lanes\nother values are reserved";
+
+extern const edi_field_t HF_version_fld[];
+extern const edi_field_t HF_tmds_fld[];
+extern const edi_field_t HF_scdc_fld[];
+extern const edi_field_t HF_frl_fld[];
+extern const edi_field_t HF_vrr_mode_fld[];
+extern const edi_field_t HF_vrr_fld[];
+extern const edi_field_t HF_dsc_fld[];
+extern const edi_field_t HF_dsc_frl_fld[];
+extern const edi_field_t HF_dsc_chunk_fld[];
+
+const edi_field_t HF_version_fld[] = {
+   {&EDID_cl::ByteVal, 0, 4, 0, 1, F_BTE|F_INT, 0, 0xFF, "Version",
+   "HDMI Forum block version (1)." }
+};
+
+const edi_field_t HF_tmds_fld[] = {
+   {&EDID_cl::VSD_MaxTMDS, 0, 5, 0, 1, F_INT|F_MHZ, 0, 1275, "Max_TMDS",
+   "Maximum TMDS Character Rate / 5 MHz; 0 means 340 MHz or less." }
+};
+
+const edi_field_t HF_scdc_fld[] = {
+   {&EDID_cl::BitVal, 0, 6, 0, 1, F_BIT, 0, 1, "3D_OSD_Disparity",
+   "Supports 3D OSD Disparity signaling." },
+   {&EDID_cl::BitVal, 0, 6, 1, 1, F_BIT, 0, 1, "3D_Dual_View",
+   "Supports 3D Dual View signaling." },
+   {&EDID_cl::BitVal, 0, 6, 2, 1, F_BIT, 0, 1, "3D_Independent_View",
+   "Supports 3D Independent View signaling." },
+   {&EDID_cl::BitVal, 0, 6, 3, 1, F_BIT, 0, 1, "LTE_340Mcsc_Scramble",
+   "Supports scrambling for character rates of 340 Mcsc or less." },
+   {&EDID_cl::BitVal, 0, 6, 4, 1, F_BIT, 0, 1, "CCBPCI",
+   "Supports Color Content Bits Per Component Indication." },
+   {&EDID_cl::BitVal, 0, 6, 5, 1, F_BIT, 0, 1, "Cable_Status",
+   "Supports Cable Status." },
+   {&EDID_cl::BitVal, 0, 6, 6, 1, F_BIT, 0, 1, "RR_Capable",
+   "SCDC Read Request capable." },
+   {&EDID_cl::BitVal, 0, 6, 7, 1, F_BIT, 0, 1, "SCDC_Present",
+   "Status and Control Data Channel present." }
+};
+
+const edi_field_t HF_frl_fld[] = {
+   {&EDID_cl::BitVal, 0, 7, 0, 1, F_BIT, 0, 1, "DC_30bit_420",
+   "Supports 10 bits per component Deep Color 4:2:0 encoding." },
+   {&EDID_cl::BitVal, 0, 7, 1, 1, F_BIT, 0, 1, "DC_36bit_420",
+   "Supports 12 bits per component Deep Color 4:2:0 encoding." },
+   {&EDID_cl::BitVal, 0, 7, 2, 1, F_BIT, 0, 1, "DC_48bit_420",
+   "Supports 16 bits per component Deep Color 4:2:0 encoding." },
+   {&EDID_cl::BitVal, 0, 7, 3, 1, F_BIT, 0, 1, "UHD_VIC",
+   "Supports UHD VICs signaled through HDMI VICs." },
+   {&EDID_cl::BitF8Val, 0, 7, 4, 4, F_BFD|F_INT, 0, 15, "Max_FRL_Rate", HF_FRL_Desc }
+};
+
+const edi_field_t HF_vrr_mode_fld[] = {
+   {&EDID_cl::BitVal, 0, 8, 0, 1, F_BIT, 0, 1, "FAPA_start_location",
+   "Supports a FAPA in blanking after the first active video line." },
+   {&EDID_cl::BitVal, 0, 8, 1, 1, F_BIT, 0, 1, "ALLM",
+   "Supports Auto Low-Latency Mode." },
+   {&EDID_cl::BitVal, 0, 8, 2, 1, F_BIT, 0, 1, "FVA",
+   "Supports Fast Vactive." },
+   {&EDID_cl::BitVal, 0, 8, 3, 1, F_BIT, 0, 1, "CNMVRR",
+   "Supports negative Mvrr values." },
+   {&EDID_cl::BitVal, 0, 8, 4, 1, F_BIT, 0, 1, "CinemaVRR",
+   "Supports media rates below VRRmin; deprecated, must be 0." },
+   {&EDID_cl::BitVal, 0, 8, 5, 1, F_BIT, 0, 1, "M_delta",
+   "Supports Mdelta." },
+   {&EDID_cl::BitVal, 0, 8, 6, 1, F_BIT, 0, 1, "QMS",
+   "Supports Quick Media Switching." },
+   {&EDID_cl::BitVal, 0, 8, 7, 1, F_BIT, 0, 1, "FAPA_End_Extended",
+   "Supports FAPA End Extended." }
+};
+
+const edi_field_t HF_vrr_fld[] = {
+   {&EDID_cl::BitF8Val, 0, 9, 0, 6, F_BFD|F_INT|F_HZ, 0, 63, "VRRmin",
+   "Minimum Variable Refresh Rate; 0 when VRR is not supported." },
+   {&EDID_cl::HF_VRRmax, 0, 9, 0, 2, F_INT|F_HZ, 0, 1023, "VRRmax",
+   "Maximum Variable Refresh Rate; 0 when not specified." }
+};
+
+const edi_field_t HF_dsc_fld[] = {
+   {&EDID_cl::BitVal, 0, 11, 0, 1, F_BIT, 0, 1, "DSC_10bpc",
+   "Supports 10 bpc compressed video transport." },
+   {&EDID_cl::BitVal, 0, 11, 1, 1, F_BIT, 0, 1, "DSC_12bpc",
+   "Supports 12 bpc compressed video transport." },
+   {&EDID_cl::BitVal, 0, 11, 2, 1, F_BIT, 0, 1, "DSC_16bpc",
+   "Supports 16 bpc compressed video transport." },
+   {&EDID_cl::BitVal, 0, 11, 3, 1, F_BIT, 0, 1, "DSC_All_bpp",
+   "Supports compressed video transport at any valid 1/16th bit bpp." },
+   {&EDID_cl::BitVal, 0, 11, 4, 1, F_BIT, 0, 1, "QMS_TFRmin",
+   "Supports QMS TFRmin." },
+   {&EDID_cl::BitVal, 0, 11, 5, 1, F_BIT, 0, 1, "QMS_TFRmax",
+   "Supports QMS TFRmax." },
+   {&EDID_cl::BitVal, 0, 11, 6, 1, F_BIT, 0, 1, "DSC_Native_420",
+   "Supports compressed video transport for 4:2:0 encoding." },
+   {&EDID_cl::BitVal, 0, 11, 7, 1, F_BIT, 0, 1, "DSC_1p2",
+   "Supports VESA DSC 1.2a compression." }
+};
+
+const edi_field_t HF_dsc_frl_fld[] = {
+   {&EDID_cl::BitF8Val, 0, 12, 0, 4, F_BFD|F_INT, 0, 15, "DSC_MaxSlices",
+   "DSC Max Slices:\n0= not supported\n1= 1 slice, 2= 2 slices, 3= 4 slices "
+   "and 4= 8 slices at 340 MHz per slice\n5= 8 slices and 6= 12 slices at 400 MHz\n"
+   "7= 12 slices at 600 MHz" },
+   {&EDID_cl::BitF8Val, 0, 12, 4, 4, F_BFD|F_INT, 0, 15, "DSC_Max_FRL_Rate", HF_FRL_Desc }
+};
+
+const edi_field_t HF_dsc_chunk_fld[] = {
+   {&EDID_cl::BitF8Val, 0, 13, 0, 6, F_BFD|F_INT, 0, 63, "DSC_TotalChunkKBytes",
+   "Maximum bytes in a line of chunks: 1024 * (1 + value)." },
+   {&EDID_cl::BitF8Val, 0, 13, 6, 2, F_BFD|F_INT|F_RD, 0, 3, "reserved",
+   "reserved (0)" }
+};
+
 //VSD: Vendor Specific Data Block
 const char  cea_vsd_cl::Desc[] =
 "Vendor Specific Data Block is required to contain the following fields:\n"
@@ -1197,7 +1349,8 @@ const char  cea_vsd_cl::Desc[] =
 "- C4-5D-D8 \"HDMI Forum\" -> provides HDMI 2.0 payload\n"
 "- 00-D0-46 \"DOLBY LABORATORIES, INC.\" -> provides Dolby Vision payload\n"
 "- 90-84-8b \"HDR10+ Technologies, LLC\" -> provides HDR10+ payload as part of HDMI 2.1 Amendment A1 standard\n\n"
-"NOTE: Currently, wxEDID interprets the payload as for 00-0C-03 \"HDMI Licensing, LLC\".\n";
+"wxEDID decodes the 00-0C-03 and C4-5D-D8 payloads; the payload of other\n"
+"vendors is shown as data bytes.\n";
 
 const edi_field_t cea_vsd_cl::hdr_fld_dsc[] = {
    {&EDID_cl::ByteStr, 0, offsetof(vsd_hdmi14_t, ieee_id)+1, 0, 3, F_STR|F_HEX|F_LE|F_RD|F_FR, 0, 0xFFFFFF, "IEEE-OUI",
@@ -1288,9 +1441,58 @@ const gpfld_dsc_t cea_vsd_cl::sub_fld_grp[] = {
    }
 };
 
-const dbc_flatgp_dsc_t cea_vsd_cl::VSD_grp = {
+const gpfld_dsc_t cea_vsd_cl::hf_fld_grp[] = {
+   { .flags = T_FLEX_LAYOUT, .dat_sz = 3, .inst_cnt = 1, .fcount = 1,
+     .fields = cea_vsd_cl::hdr_fld_dsc },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 1, .fields = HF_version_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 1, .fields = HF_tmds_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 8, .fields = HF_scdc_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 5, .fields = HF_frl_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 8, .fields = HF_vrr_mode_fld },
+   { .flags = 0, .dat_sz = 2, .inst_cnt = 1, .fcount = 2, .fields = HF_vrr_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 8, .fields = HF_dsc_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 2, .fields = HF_dsc_frl_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 2, .fields = HF_dsc_chunk_fld }
+};
+
+const gpfld_dsc_t cea_vsd_cl::vendor_fld_grp[] = {
+   { .flags = T_FLEX_LAYOUT, .dat_sz = 3, .inst_cnt = 1, .fcount = 1,
+     .fields = cea_vsd_cl::hdr_fld_dsc }
+};
+
+const dbc_flatgp_dsc_t cea_vsd_cl::HF_VSD_grp = {
+   .CodN     = "VSD",
+   .Name     = "HDMI Forum Vendor Specific Data Block",
+   .Desc     = Desc,
+   .type_id  = ID_VSD,
+   .flags    = T_FLEX_LAYOUT,
+   .min_len  = 3,
+   .max_len  = 31,
+   .max_fld  = CEA_DBCHDR_FCNT + 38 + 31,
+   .hdr_fcnt = CEA_DBCHDR_FCNT,
+   .hdr_sz   = sizeof(bhdr_t),
+   .fld_arsz = 10,
+   .fld_ar   = cea_vsd_cl::hf_fld_grp
+};
+
+const dbc_flatgp_dsc_t cea_vsd_cl::Vendor_VSD_grp = {
    .CodN     = "VSD",
    .Name     = "Vendor Specific Data Block",
+   .Desc     = Desc,
+   .type_id  = ID_VSD,
+   .flags    = T_FLEX_LAYOUT,
+   .min_len  = 3,
+   .max_len  = 31,
+   .max_fld  = CEA_DBCHDR_FCNT + 1 + 31,
+   .hdr_fcnt = CEA_DBCHDR_FCNT,
+   .hdr_sz   = sizeof(bhdr_t),
+   .fld_arsz = 1,
+   .fld_ar   = cea_vsd_cl::vendor_fld_grp
+};
+
+const dbc_flatgp_dsc_t cea_vsd_cl::VSD_grp = {
+   .CodN     = "VSD",
+   .Name     = "HDMI Vendor Specific Data Block",
    .Desc     = Desc,
    .type_id  = ID_VSD,
    .flags    = T_FLEX_LAYOUT,
@@ -1305,8 +1507,18 @@ const dbc_flatgp_dsc_t cea_vsd_cl::VSD_grp = {
 
 rcode cea_vsd_cl::init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent) {
    rcode  retU;
+   const dbc_flatgp_dsc_t* layout = &VSD_grp;
 
-   retU = base_DBC_Init_FlatGrp(inst, &VSD_grp, orflags, parent);
+   //the IEEE OUI (little endian) selects the payload layout
+   if (reinterpret_cast <const bhdr_t*> (inst)->tag.blk_len >= 3) {
+      u32_t oui = inst[1] | (inst[2] << 8) | (inst[3] << 16);
+      if (oui == 0xC45DD8) {
+         layout = &HF_VSD_grp;
+      } else if (oui != 0x000C03) {
+         layout = &Vendor_VSD_grp;
+      }
+   }
+   retU = base_DBC_Init_FlatGrp(inst, layout, orflags, parent);
    return retU;
 }
 
