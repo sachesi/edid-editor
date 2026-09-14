@@ -84,7 +84,9 @@ struct wxedid_wnd {
    GtkWidget*          editor_switcher;
    GtkTextView*        raw_view;
    AdwViewStackPage*   timing_stack_page;
-   GtkTextView*        log;
+   GtkTextBuffer*      log;           //everything logged, shown in the EDID Log
+   std::vector<std::string> notes;    //notices from opening the file, on the Overview
+   bool                loading;
    AdwOverlaySplitView* split_view;
    AdwWindowTitle*     window_title;
    GtkLabel*           group_title;
@@ -93,8 +95,6 @@ struct wxedid_wnd {
    AdwBanner*          banner;
    AdwBanner*          source_banner;  //read-only source: save a copy
    AdwToastOverlay*    toast_overlay;
-   GtkRevealer*        log_revealer;
-   GtkWidget*          details_button;
    GtkWidget*          sidebar_button;
    GtkWidget*          add_button;
    GtkWidget*          open_button;
@@ -103,7 +103,6 @@ struct wxedid_wnd {
    GSimpleAction*      save_as_action;
    GSimpleAction*      undo_action;
    GSimpleAction*      redo_action;
-   GSimpleAction*      details_action;
    GSimpleAction*      duplicate_action;
    GSimpleAction*      delete_action;
    GSimpleAction*      move_up_action;
@@ -138,7 +137,6 @@ struct wxedid_wnd {
    bool                banner_is_validation;
    bool                banner_offers_retry;
    bool                close_confirmation_open;
-   bool                details_available;
    bool                show_reserved;
    edi_grp_cl*         highlight_group; //group of the field shown in the bytes view
    edi_dynfld_t*       highlight_field;
@@ -313,16 +311,20 @@ static void log_sink(const char* msg, void* user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
    if ((wnd == NULL) || (wnd->log == NULL)) return;
 
-   GtkTextBuffer* buf = gtk_text_view_get_buffer(wnd->log);
    GtkTextIter end;
-   gtk_text_buffer_get_end_iter(buf, &end);
-   gtk_text_buffer_insert(buf, &end, msg, -1);
-   gtk_text_buffer_insert(buf, &end, "\n", -1);
+   gtk_text_buffer_get_end_iter(wnd->log, &end);
+   gtk_text_buffer_insert(wnd->log, &end, msg, -1);
+   gtk_text_buffer_insert(wnd->log, &end, "\n", -1);
 
-   wnd->details_available = true;
-   g_simple_action_set_enabled(wnd->details_action, TRUE);
-   wnd_update_header_controls(wnd);
-   if (g_str_has_prefix(msg, "[E!]")) {
+   //notices from opening a file belong on the Overview
+   bool notice = g_str_has_prefix(msg, "[i]");
+   bool error = g_str_has_prefix(msg, "[E!]");
+   if (wnd->loading && (notice || error)) {
+      const char* text = msg + (notice ? 3 : 4);
+      while (*text == ' ') text++;
+      wnd->notes.push_back(text);
+   }
+   if (error) {
       const char* detail = msg + 4;
       while (*detail == ' ') detail++;
       wnd_show_error(wnd, detail);
@@ -2445,6 +2447,22 @@ static void wnd_on_redo_action(GSimpleAction*, GVariant*, gpointer user_data) {
 // overview: key facts of the whole EDID
 static void wnd_refresh_overview(wxedid_wnd* wnd) {
    GtkWidget* page = adw_preferences_page_new();
+   if (! wnd->notes.empty()) {
+      GtkWidget* notes = adw_preferences_group_new();
+      adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(notes), "Notes");
+      adw_preferences_group_set_description(ADW_PREFERENCES_GROUP(notes),
+                                            "Found while opening this EDID");
+      for (const std::string& note : wnd->notes) {
+         GtkWidget* row = adw_action_row_new();
+         adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+         adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), note.c_str());
+         adw_action_row_set_title_lines(ADW_ACTION_ROW(row), 0);
+         adw_action_row_add_prefix(ADW_ACTION_ROW(row),
+                                   gtk_image_new_from_icon_name("dialog-information-symbolic"));
+         adw_preferences_group_add(ADW_PREFERENCES_GROUP(notes), row);
+      }
+      adw_preferences_page_add(ADW_PREFERENCES_PAGE(page), ADW_PREFERENCES_GROUP(notes));
+   }
    GtkWidget* group = NULL;
    std::string section;
    for (const edid_summary_item& item : edid_summary(wnd->doc->EDID)) {
@@ -2858,8 +2876,6 @@ static void wnd_update_header_controls(wxedid_wnd* wnd) {
    gtk_widget_set_visible(GTK_WIDGET(wnd->window_title), ! collapsed);
    gtk_widget_set_visible(wnd->open_button, wnd->loaded && ! collapsed);
    gtk_widget_set_visible(wnd->sidebar_button, wnd->loaded && collapsed);
-   gtk_widget_set_visible(wnd->details_button,
-                          wnd->details_available && ! collapsed);
 }
 
 static void wnd_show_error(wxedid_wnd* wnd, const char* message) {
@@ -2871,28 +2887,70 @@ static void wnd_show_error(wxedid_wnd* wnd, const char* message) {
 }
 
 static void wnd_clear_feedback(wxedid_wnd* wnd) {
-   GtkTextBuffer* buffer = gtk_text_view_get_buffer(wnd->log);
-   gtk_text_buffer_set_text(buffer, "", -1);
-   g_simple_action_set_state(wnd->details_action, g_variant_new_boolean(FALSE));
-   gtk_revealer_set_reveal_child(wnd->log_revealer, FALSE);
-   g_simple_action_set_enabled(wnd->details_action, FALSE);
-   wnd->details_available = false;
-   wnd_update_header_controls(wnd);
+   gtk_text_buffer_set_text(wnd->log, "", -1);
+   wnd->notes.clear();
    adw_banner_set_revealed(wnd->banner, FALSE);
    wnd->banner_is_validation = false;
    wnd->banner_offers_retry = false;
 }
 
-static void wnd_on_details_action(GSimpleAction* action, GVariant* /*parameter*/,
-                                  gpointer user_data) {
-   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
-   GVariant* state = g_action_get_state(G_ACTION(action));
-   bool visible = ! g_variant_get_boolean(state);
-   g_variant_unref(state);
-   g_simple_action_set_state(action, g_variant_new_boolean(visible));
-   gtk_revealer_set_reveal_child(wnd->log_revealer, visible);
-   gtk_widget_set_tooltip_text(wnd->details_button,
-                               visible ? "Hide details" : "Show details");
+//everything the parser and the editor logged, for troubleshooting
+static void wnd_on_log_copy(GtkButton* button, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   GtkTextIter start;
+   GtkTextIter end;
+   gtk_text_buffer_get_bounds(wnd->log, &start, &end);
+   char* text = gtk_text_buffer_get_text(wnd->log, &start, &end, FALSE);
+   gdk_clipboard_set_text(gtk_widget_get_clipboard(GTK_WIDGET(button)), text);
+   g_free(text);
+   adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new("Log copied"));
+}
+
+static void wnd_present_log(wxedid_wnd* wnd) {
+   GtkWidget* content = NULL;
+   if (gtk_text_buffer_get_char_count(wnd->log) == 0) {
+      content = adw_status_page_new();
+      adw_status_page_set_icon_name(ADW_STATUS_PAGE(content), "text-x-generic-symbolic");
+      adw_status_page_set_title(ADW_STATUS_PAGE(content), "Nothing logged");
+      adw_status_page_set_description(ADW_STATUS_PAGE(content),
+         "Messages from opening, editing, and saving an EDID appear here.");
+   } else {
+      GtkWidget* view = gtk_text_view_new_with_buffer(wnd->log);
+      gtk_text_view_set_editable(GTK_TEXT_VIEW(view), FALSE);
+      gtk_text_view_set_cursor_visible(GTK_TEXT_VIEW(view), FALSE);
+      gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(view), GTK_WRAP_WORD_CHAR);
+      gtk_text_view_set_left_margin(GTK_TEXT_VIEW(view), 18);
+      gtk_text_view_set_right_margin(GTK_TEXT_VIEW(view), 18);
+      gtk_text_view_set_top_margin(GTK_TEXT_VIEW(view), 12);
+      gtk_text_view_set_bottom_margin(GTK_TEXT_VIEW(view), 12);
+      gtk_widget_add_css_class(view, "byte-view");
+      gtk_accessible_update_property(GTK_ACCESSIBLE(view), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                     "EDID log", -1);
+      content = gtk_scrolled_window_new();
+      gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(content), view);
+   }
+
+   GtkWidget* header = adw_header_bar_new();
+   GtkWidget* copy = gtk_button_new_from_icon_name("edit-copy-symbolic");
+   gtk_widget_set_tooltip_text(copy, "Copy Log");
+   gtk_accessible_update_property(GTK_ACCESSIBLE(copy), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                  "Copy Log", -1);
+   gtk_widget_set_sensitive(copy, gtk_text_buffer_get_char_count(wnd->log) > 0);
+   g_signal_connect(copy, "clicked", G_CALLBACK(wnd_on_log_copy), wnd);
+   adw_header_bar_pack_start(ADW_HEADER_BAR(header), copy);
+   GtkWidget* toolbar = adw_toolbar_view_new();
+   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(toolbar), header);
+   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(toolbar), content);
+   AdwDialog* dialog = adw_dialog_new();
+   adw_dialog_set_title(dialog, "EDID Log");
+   adw_dialog_set_content_width(dialog, 640);
+   adw_dialog_set_content_height(dialog, 480);
+   adw_dialog_set_child(dialog, toolbar);
+   adw_dialog_present(dialog, GTK_WIDGET(wnd->window));
+}
+
+static void wnd_on_log_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wnd_present_log(static_cast<wxedid_wnd*>(user_data));
 }
 
 static void wnd_reload_source(wxedid_wnd* wnd);
@@ -2906,10 +2964,7 @@ static void wnd_on_banner_details(AdwBanner* /*banner*/, gpointer user_data) {
       wnd_reload_source(wnd);
       return;
    }
-   GVariant* state = g_action_get_state(G_ACTION(wnd->details_action));
-   bool visible = g_variant_get_boolean(state);
-   g_variant_unref(state);
-   if (! visible) g_action_activate(G_ACTION(wnd->details_action), NULL);
+   wnd_present_log(wnd);
 }
 
 static void wnd_on_source_banner(AdwBanner*, gpointer user_data) {
@@ -3327,7 +3382,7 @@ static bool path_is_hex_text(const char* path) {
    return hex;
 }
 
-static void wnd_load_file(wxedid_wnd* wnd, const char* path, bool hex) {
+static void wnd_read_file(wxedid_wnd* wnd, const char* path, bool hex) {
    wnd_clear_feedback(wnd);
    wnd->source_path = path;
    wnd->source_hex = hex;
@@ -3396,6 +3451,14 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path, bool hex) {
       return;
    }
    wnd_load_bytes(wnd, path, file_data, rd, false);
+}
+
+//notices logged while a file opens are kept for the Overview
+static void wnd_load_file(wxedid_wnd* wnd, const char* path, bool hex) {
+   wnd->loading = true;
+   wnd_read_file(wnd, path, hex);
+   wnd->loading = false;
+   if (wnd->loaded && wnd->overview_shown) wnd_refresh_overview(wnd);
 }
 
 static void wnd_reload_source(wxedid_wnd* wnd) {
@@ -4269,6 +4332,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                                  g_signal_handler_disconnect(gtk_recent_manager_get_default(),
                                                              w->recent_changed);
                               g_clear_object(&w->recent_menu);
+                              g_clear_object(&w->log);
                               g_clear_object(&w->tree_filtered);
                               g_clear_object(&w->tree_filter);
                               g_clear_object(&w->tree_model);
@@ -4305,13 +4369,10 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->redo_action));
    g_object_unref(wnd->redo_action);
 
-   wnd->details_action = g_simple_action_new_stateful(
-      "details", NULL, g_variant_new_boolean(FALSE));
-   g_simple_action_set_enabled(wnd->details_action, FALSE);
-   g_signal_connect(wnd->details_action, "activate",
-                    G_CALLBACK(wnd_on_details_action), wnd);
-   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->details_action));
-   g_object_unref(wnd->details_action);
+   GSimpleAction* log_action = g_simple_action_new("show-log", NULL);
+   g_signal_connect(log_action, "activate", G_CALLBACK(wnd_on_log_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(log_action));
+   g_object_unref(log_action);
 
    wnd->duplicate_action = g_simple_action_new("duplicate-group", NULL);
    g_signal_connect(wnd->duplicate_action, "activate",
@@ -4466,15 +4527,6 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_add_css_class(btn_save, "suggested-action");
    adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_save);
 
-   wnd->details_button = gtk_toggle_button_new();
-   gtk_button_set_icon_name(GTK_BUTTON(wnd->details_button), "dialog-information-symbolic");
-   gtk_actionable_set_action_name(GTK_ACTIONABLE(wnd->details_button), "win.details");
-   gtk_widget_set_tooltip_text(wnd->details_button, "Show details");
-   gtk_accessible_update_property(GTK_ACCESSIBLE(wnd->details_button),
-                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Show details",
-                                  -1);
-   gtk_widget_set_visible(wnd->details_button, FALSE);
-   adw_header_bar_pack_end(ADW_HEADER_BAR(header), wnd->details_button);
 
    GMenu* primary_menu = g_menu_new();
    GMenu* open_section = g_menu_new();
@@ -4508,7 +4560,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(option_section));
    g_object_unref(option_section);
    GMenu* help_section = g_menu_new();
-   g_menu_append(help_section, "Show details", "win.details");
+   g_menu_append(help_section, "EDID Log", "win.show-log");
    g_menu_append(help_section, "Keyboard Shortcuts", "win.shortcuts");
    g_menu_append(help_section, "About EDID Editor", "win.about");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(help_section));
@@ -4816,21 +4868,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_box_append(GTK_BOX(right), editor_heading);
    gtk_box_append(GTK_BOX(right), GTK_WIDGET(wnd->editor_stack));
 
-   wnd->log = GTK_TEXT_VIEW(gtk_text_view_new());
-   gtk_text_view_set_editable(wnd->log, FALSE);
-   gtk_text_view_set_monospace(wnd->log, TRUE);
-   gtk_text_view_set_wrap_mode(wnd->log, GTK_WRAP_WORD_CHAR);
-   gtk_text_view_set_left_margin(wnd->log, 12);
-   gtk_text_view_set_right_margin(wnd->log, 12);
-   gtk_text_view_set_top_margin(wnd->log, 8);
-   gtk_text_view_set_bottom_margin(wnd->log, 8);
-   GtkWidget* log_scroll = gtk_scrolled_window_new();
-   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(log_scroll), GTK_WIDGET(wnd->log));
-   gtk_widget_set_size_request(log_scroll, -1, 160);
-   wnd->log_revealer = GTK_REVEALER(gtk_revealer_new());
-   gtk_revealer_set_transition_type(wnd->log_revealer,
-                                    GTK_REVEALER_TRANSITION_TYPE_SLIDE_UP);
-   gtk_revealer_set_child(wnd->log_revealer, log_scroll);
+   wnd->log = gtk_text_buffer_new(NULL);
 
    GtkWidget* split_view = adw_overlay_split_view_new();
    wnd->split_view = ADW_OVERLAY_SPLIT_VIEW(split_view);
@@ -4942,7 +4980,6 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->banner));
    gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->source_banner));
    gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->content_stack));
-   gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->log_revealer));
 
    wnd->toast_overlay = ADW_TOAST_OVERLAY(adw_toast_overlay_new());
    adw_toast_overlay_set_child(wnd->toast_overlay, body);

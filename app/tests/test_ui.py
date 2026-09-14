@@ -465,6 +465,11 @@ def functional(Atspi, app, fixture):
                      "About dialog did not show the application name")
             close_dialog(Atspi, "About")
 
+            activate_menu_item(Atspi, "EDID Log")
+            wait_for(lambda: named(Atspi, "EDID log"), "the EDID Log did not show the log")
+            assert actionable(Atspi, "Copy Log"), "the EDID Log offers no copy button"
+            close_dialog(Atspi, "EDID Log")
+
             activate_menu_item(Atspi, "Keyboard Shortcuts")
             wait_for(lambda: named(Atspi, "Duplicate group"),
                      "keyboard shortcuts dialog did not list group shortcuts")
@@ -608,6 +613,11 @@ def broken(Atspi, app, fixture):
             wait_for(lambda: any(name_of(node).startswith("Modified")
                                  for node in nodes(Atspi)),
                      "the corrected block count was not marked as a change")
+            wait_for(lambda: named(Atspi, "Notes") and
+                     any("the block count now matches the data" in name_of(node)
+                         for node in nodes(Atspi)),
+                     "the overview did not note the corrected block count")
+            assert named(Atspi, "Show details") is None, "the details panel is still offered"
         finally:
             stop_app(process)
 
