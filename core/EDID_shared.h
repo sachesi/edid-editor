@@ -392,10 +392,13 @@ class EDID_cl {
 
       rcode ParseEDID_Base(u32_t& n_extblk);
       rcode ParseAltDtor  (u8_t *pinst, edi_grp_cl** pp_grp, i32_t offs = -1);
-      rcode ParseEDID_CEA ();
+      rcode ParseEDID_CEA (u32_t block = EDI_EXT0_IDX);
       rcode ParseEDID_DisplayID(u32_t block);
-      rcode ParseCEA_DBC  (u8_t *pinst);
+      rcode ParseCEA_DBC  (u8_t *pinst, GroupAr_cl& groups);
       static rcode ParseDBC_TAG(u8_t *pinst, edi_grp_cl** pp_grp);
+      //Blocks the data declares: the base block count, or the HDMI Forum EDID
+      //Extension Override count when the first CTA-861 block starts with one.
+      static u32_t DeclaredBlocks(const u8_t* data, size_t size);
       rcode CreateGroup   (group_template which, u8_t displayid_version,
                            edi_grp_cl** pp_grp);
       //After a successful write to field, build a new group from the current

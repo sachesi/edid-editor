@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Generate synthetic EDID test data.
 
-Produces seven binaries used by the headless core tests:
+Produces eight binaries used by the headless core tests:
   sample_base.bin : EDID 1.3 base block (DTD 640x480@60, MND text descriptor)
   sample_cea.bin  : base block + CTA-861 ext (VDB, HDMI VSDB, one DTD)
   sample_cea_displayid.bin : base + CTA-861 + DisplayID extension
@@ -9,6 +9,8 @@ Produces seven binaries used by the headless core tests:
   sample_cea_audio.bin : base + CTA-861 LPCM and extended audio descriptors
   sample_displayid_compact.bin : base + DisplayID without trailing payload padding
   sample_displayid_short_padding.bin : base + DisplayID with four padding bytes
+  sample_cea_eeodb.bin : base declaring one extension + two CTA-861 blocks,
+                         counted by an EDID Extension Override data block
 
 Usage: gen_sample_edid.py <out_dir>
 """
@@ -155,6 +157,32 @@ def short_padding_displayid_block():
     return chksum(e)
 
 
+def cea_eeodb_block(extensions):
+    e = bytearray(128)
+    e[0] = 0x02
+    e[1] = 0x03
+    payload = bytes([
+        0xE2, 0x78, extensions,       # HF-EEODB: extension count override
+        0x42, 16, 4,                  # VDB: 1080p60, 720p60
+    ])
+    e[4:4 + len(payload)] = payload
+    e[2] = 4 + len(payload)
+    return chksum(e)
+
+
+def cea_second_block():
+    e = bytearray(128)
+    e[0] = 0x02
+    e[1] = 0x03
+    payload = bytes([
+        0x23, 0x09, 0x07, 0x07,       # ADB: LPCM, 2 channels
+        0x67, 0x03, 0x0C, 0x00, 0x10, 0x00, 0x00, 0x2D,  # HDMI VSDB
+    ])
+    e[4:4 + len(payload)] = payload
+    e[2] = 4 + len(payload)
+    return chksum(e)
+
+
 def main():
     out_dir = sys.argv[1] if len(sys.argv) > 1 else "."
     base = base_block()
@@ -188,7 +216,10 @@ def main():
     with open(os.path.join(out_dir, "sample_cea_displayid.bin"), "wb") as f:
         f.write(bytes(base_multi) + bytes(cea_block()) + bytes(displayid_block()))
 
-    print("wrote seven EDID samples to", out_dir)
+    with open(os.path.join(out_dir, "sample_cea_eeodb.bin"), "wb") as f:
+        f.write(bytes(base_cea) + bytes(cea_eeodb_block(2)) + bytes(cea_second_block()))
+
+    print("wrote eight EDID samples to", out_dir)
 
 
 if __name__ == "__main__":

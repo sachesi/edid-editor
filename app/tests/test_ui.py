@@ -505,6 +505,16 @@ def broken(Atspi, app, fixture):
             stop_app(process)
 
 
+def two_cta(Atspi, app, fixture):
+    target = str(Path(fixture).with_name("sample_cea_eeodb.bin"))
+    process = launch_app(Atspi, app, target)
+    try:
+        wait_for(lambda: named(Atspi, "Block 2: CTA-861"),
+                 "the second CTA-861 extension was not parsed")
+    finally:
+        stop_app(process)
+
+
 def inside(app, fixture, scenario):
     import gi
     gi.require_version("Atspi", "2.0")
@@ -518,6 +528,8 @@ def inside(app, fixture, scenario):
         hex_import(Atspi, app, fixture)
     elif scenario == "broken":
         broken(Atspi, app, fixture)
+    elif scenario == "two-cta":
+        two_cta(Atspi, app, fixture)
     else:
         process = launch_app(Atspi, app, fixture)
         time.sleep(1)
@@ -537,6 +549,7 @@ def main():
     run_session(script, app, fixture, 900, "readonly")
     run_session(script, app, fixture, 900, "hex")
     run_session(script, app, fixture, 900, "broken")
+    run_session(script, app, fixture, 900, "two-cta")
     run_session(script, app, fixture, 360, "compact")
 
 

@@ -85,7 +85,7 @@ static edi_grp_cl* find_group(EDID_cl& EDID, u32_t type) {
 }
 
 int main(int argc, char* argv[]) {
-   if (argc != 3) return 2;
+   if (argc != 4) return 2;
    EDID_cl EDID;
    guilog_cl log;
    log.SetSink([](const char*, void*) {}, NULL);
@@ -142,6 +142,23 @@ int main(int argc, char* argv[]) {
          (find_field(rebuilt, "src phy") == NULL),
          "OUI change rebuilds the block with the HDMI Forum layout");
    delete rebuilt;
+
+   //the override block counts a second CTA-861 extension
+   FILE* input = std::fopen(argv[3], "rb");
+   EDID.Clear();
+   size_t size = (input != NULL) ? std::fread(EDID.getEDID(), 1, sizeof(edi_t), input) : 0;
+   if (input != NULL) std::fclose(input);
+   u32_t blocks = EDID_cl::DeclaredBlocks(EDID.getEDID()->buff, size);
+   check((blocks == 3) && (EDID.getEDID()->edi.base.num_extblk == 1),
+         "override block count replaces the base block count");
+   u32_t extensions = 0;
+   bool parsed = RCD_IS_OK(EDID.ParseEDID_Base(extensions)) &&
+                 RCD_IS_OK(EDID.ParseEDID_CEA(1)) && RCD_IS_OK(EDID.ParseEDID_CEA(2));
+   GroupAr_cl& second = *EDID.BlkGroupsAr[EDI_EXT1_IDX];
+   check(parsed && (EDID.getNumValidBlocks() == 3) && (second.GetCount() == 3) &&
+         ((second.Item(1)->getTypeID().t32 & ID_PARENT_MASK) == ID_ADB) &&
+         ((second.Item(2)->getTypeID().t32 & ID_PARENT_MASK) == ID_VSD),
+         "second CTA-861 extension parses its data blocks");
 
    std::printf("---\n%s\n", failures == 0 ? "ALL OK" : "FAILURES PRESENT");
    return failures == 0 ? 0 : 1;

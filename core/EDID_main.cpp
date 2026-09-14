@@ -469,7 +469,20 @@ bool EDID_cl::ReplaceGroup(edi_grp_cl* target, edi_grp_cl* replacement) {
    return false;
 }
 
-rcode EDID_cl::ParseCEA_DBC(u8_t *pinst) {
+u32_t EDID_cl::DeclaredBlocks(const u8_t* data, size_t size) {
+   if (size < sizeof(ediblk_t)) return 0;
+   u32_t extensions = data[126];
+   //HF-EEODB: first data block of block 1, Extended Tag Code 120
+   const u8_t* cta = data + sizeof(ediblk_t);
+   if ((size >= 2 * sizeof(ediblk_t)) && (cta[0] == 0x02) && (cta[2] >= 7) &&
+       ((cta[4] >> 5) == DBC_T_EXT) && ((cta[4] & 0x1f) >= 2) &&
+       (cta[5] == DBC_ET_HEOVR)) {
+      extensions = cta[6];
+   }
+   return extensions + 1;
+}
+
+rcode EDID_cl::ParseCEA_DBC(u8_t *pinst, GroupAr_cl& groups) {
    rcode       retU;
    rcode       retU2;
    u32_t       orflags;
@@ -501,12 +514,12 @@ rcode EDID_cl::ParseCEA_DBC(u8_t *pinst) {
 
    grp_sz = pgrp->getTotalSize();
    pGLog->slog.Printf("[%zu] offs %u: \"%s\", size %u",
-                      EDI_Ext0GrpAr.GetCount(), pgrp->getRelOffs(),
+                      groups.GetCount(), pgrp->getRelOffs(),
                       pgrp->CodeName.c_str(), grp_sz );
    pGLog->DoLog();
 
-   pgrp->setParentAr(&EDI_Ext0GrpAr);
-   EDI_Ext0GrpAr.Append(pgrp);
+   pgrp->setParentAr(&groups);
+   groups.Append(pgrp);
 
    if (! RCD_IS_OK(retU2)) {return retU2;}
    if (! RCD_IS_OK(retU )) {return retU ;}
@@ -515,7 +528,7 @@ rcode EDID_cl::ParseCEA_DBC(u8_t *pinst) {
    RCD_RETURN_OK(retU);
 }
 
-rcode EDID_cl::ParseEDID_CEA() {
+rcode EDID_cl::ParseEDID_CEA(u32_t block) {
    rcode       retU;
    edi_grp_cl *pgrp;
    u8_t       *p8_dtd;
@@ -526,9 +539,11 @@ rcode EDID_cl::ParseEDID_CEA() {
    i32_t       num_dtd;
    i32_t       blk0_dtd;
 
-   EDI_Ext0GrpAr.Empty();
+   if ((block < EDI_EXT0_IDX) || (block > EDI_EXT2_IDX)) RCD_RETURN_FAULT(retU);
+   GroupAr_cl& groups = *BlkGroupsAr[block];
+   groups.Empty();
 
-   u8_t *pext = EDID_buff.edi.ext0;
+   u8_t *pext = EDID_buff.blk[block];
 
    pGLog->DoLog("CEA-861:");
 
@@ -540,7 +555,7 @@ rcode EDID_cl::ParseEDID_CEA() {
    if (!RCD_IS_OK(retU)) return retU;
 
    pgrp->setAbsOffs(calcGroupOffs(pext));
-   EDI_Ext0GrpAr.Append(pgrp);
+   groups.Append(pgrp);
 
    cea_hdr  = reinterpret_cast <cea_hdr_t*> (pext);
    dtd_offs = cea_hdr->dtd_offs;
@@ -556,7 +571,10 @@ rcode EDID_cl::ParseEDID_CEA() {
    pGLog->DoLog("[0] offs 0: \"CHD\", size 4");
 
    //No DTD, no DBC
-   if (dtd_offs == 0) {num_valid_blocks++ ; RCD_RETURN_OK(retU);}
+   if (dtd_offs == 0) {
+      if (num_valid_blocks < (block + 1)) num_valid_blocks = block + 1;
+      RCD_RETURN_OK(retU);
+   }
 
    if ((dtd_offs >= 1) && (3 >= dtd_offs)) {
       wxedid_RCD_SET_FAULT_VMSG(retU, "[E!] CTA-861 Header: invalid DTD offset=%u", dtd_offs);
@@ -589,7 +607,7 @@ rcode EDID_cl::ParseEDID_CEA() {
             RCD_SET_OK(retU);
          }
 
-         retU = ParseCEA_DBC(pinst);
+         retU = ParseCEA_DBC(pinst, groups);
          if (! RCD_IS_OK(retU)) {
             if (! b_ERR_Ignore) return retU;
             RCD_SET_OK(retU);
@@ -663,10 +681,10 @@ rcode EDID_cl::ParseEDID_CEA() {
             pgrp->setRelOffs(offs % sizeof(edid_t)); //offset in extension block
 
             pGLog->slog.Printf("[%zu] offs %u: \"DTD\", size 18",
-                      EDI_Ext0GrpAr.GetCount(), pgrp->getRelOffs() );
+                      groups.GetCount(), pgrp->getRelOffs() );
             pGLog->DoLog();
 
-            EDI_Ext0GrpAr.Append(pgrp);
+            groups.Append(pgrp);
 
             pdtd       ++ ;
             max_dtd    -- ;
@@ -694,10 +712,10 @@ rcode EDID_cl::ParseEDID_CEA() {
          pgrp->setRelOffs(offs % sizeof(edid_t));
 
          pGLog->slog.Printf("[%zu] offs %u: \"DTD\", size 18",
-                            EDI_Ext0GrpAr.GetCount(), pgrp->getRelOffs() );
+                            groups.GetCount(), pgrp->getRelOffs() );
          pGLog->DoLog();
 
-         EDI_Ext0GrpAr.Append(pgrp);
+         groups.Append(pgrp);
 
          pdtd       ++ ;
          space_left -= sizeof(dtd_t);
@@ -707,7 +725,7 @@ rcode EDID_cl::ParseEDID_CEA() {
       p8_dtd = reinterpret_cast <u8_t*> (pdtd);
 
       pGLog->slog.Printf("[%zu] offs %zu: [free space]: %u bytes",
-                         EDI_Ext0GrpAr.GetCount(), (p8_dtd - pext), space_left );
+                         groups.GetCount(), (p8_dtd - pext), space_left );
       pGLog->DoLog();
 
       for (i32_t itb=0; itb<space_left; itb++) {
@@ -724,10 +742,10 @@ rcode EDID_cl::ParseEDID_CEA() {
       }
    }
 
-   num_valid_blocks++ ;
+   if (num_valid_blocks < (block + 1)) num_valid_blocks = block + 1;
 
    //free/used used bytes in the block
-   EDI_Ext0GrpAr.CalcDataSZ();
+   groups.CalcDataSZ(NULL);
 
    RCD_RETURN_OK(retU);
 }
@@ -1231,7 +1249,7 @@ rcode EDID_cl::AssembleEDID() {
          }
          pGLog->DoLog();
 
-         if ((block == EDI_EXT0_IDX) && (pbuf[0] == 0x02)) {
+         if ((block > EDI_BASE_IDX) && (pbuf[0] == 0x02)) {
             gtid = pgrp->getTypeID();
             if (gtid.base_id != 0) {
                if (ID_DTD != gtid.base_id) {
@@ -1295,7 +1313,7 @@ rcode EDID_cl::AssembleEDID() {
       }
 
       //CEA: clear unused bytes
-      if ((block == EDI_EXT0_IDX) && (pbuf[0] == 0x02)) {
+      if ((block > EDI_BASE_IDX) && (pbuf[0] == 0x02)) {
 
          pGLog->slog.Printf("[%u] offs: %u [free space]: %u bytes", idx_grp, offs, blk_sz );
          pGLog->DoLog();

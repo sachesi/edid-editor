@@ -16,15 +16,20 @@
 #include "EDID_class.h"
 #include "EDID_text.h"
 
-static bool parse_document(EDID_cl& EDID, u32_t& extensions, bool ignore_errors) {
+static bool parse_document(EDID_cl& EDID, u32_t& extensions, bool ignore_errors,
+                           size_t size) {
    EDID.b_ERR_Ignore = ignore_errors;
    rcode result = EDID.ParseEDID_Base(extensions);
    if (! RCD_IS_OK(result)) return false;
    edi_buf_t* buffer = EDID.getEDID();
+   //the file may hold only the blocks the base block counts
+   if (EDID_cl::DeclaredBlocks(buffer->buff, size) == (size / sizeof(ediblk_t)))
+      extensions = (size / sizeof(ediblk_t)) - 1;
+   if (extensions > EDI_EXT2_IDX) return false;
    for (u32_t block=1; block<=extensions; block++) {
       u8_t tag = buffer->blk[block][0];
-      if ((block == EDI_EXT0_IDX) && (tag == 0x02)) {
-         result = EDID.ParseEDID_CEA();
+      if (tag == 0x02) {
+         result = EDID.ParseEDID_CEA(block);
       } else if (tag == 0x70) {
          result = EDID.ParseEDID_DisplayID(block);
       } else {
@@ -88,7 +93,7 @@ int main(int argc, char* argv[]) {
       u32_t extensions = 0;
       bool valid_size = (size >= sizeof(ediblk_t)) &&
                         ((size % sizeof(ediblk_t)) == 0);
-      bool strict = valid_size && parse_document(EDID, extensions, false) &&
+      bool strict = valid_size && parse_document(EDID, extensions, false, size) &&
                     (size == (extensions + 1) * sizeof(ediblk_t));
       if (ignore_errors) {
          if (strict) {
@@ -100,7 +105,7 @@ int main(int argc, char* argv[]) {
          std::memcpy(buffer, &input_data, size);
       }
       bool parsed = ignore_errors
-         ? valid_size && parse_document(EDID, extensions, true) &&
+         ? valid_size && parse_document(EDID, extensions, true, size) &&
            (size == (extensions + 1) * sizeof(ediblk_t))
          : strict;
       rcode result;
@@ -130,7 +135,7 @@ int main(int argc, char* argv[]) {
       std::memcpy(buffer, &assembled_data, size);
       u32_t reparsed_extensions = 0;
       bool reparsed = assembled &&
-                      parse_document(EDID, reparsed_extensions, ignore_errors) &&
+                      parse_document(EDID, reparsed_extensions, ignore_errors, size) &&
                       (reparsed_extensions == extensions);
 
       std::printf("%s: %s (%zu bytes, %u extension%s%s)\n",

@@ -2439,24 +2439,38 @@ static void wnd_load_bytes(wxedid_wnd* wnd, const char* path,
       wnd->doc->GLog.DoLog(msg);
    }
 
-   u32_t n_extblk = loaded.edi.base.num_extblk;
+   //dumps often hold only the blocks the base block counts, even when an
+   //override block declares more
+   u32_t declared = EDID_cl::DeclaredBlocks(loaded.buff, blocks * sizeof(ediblk_t));
+   u32_t base_declared = 1U + loaded.edi.base.num_extblk;
    bool block_count_adjusted = false;
-   if ((n_extblk > 3) || ((1U + n_extblk) != blocks)) {
+   if ((declared != blocks) && (base_declared == blocks)) {
+      char msg[192];
+      snprintf(msg, sizeof(msg),
+               "[i] The EDID Extension Override block declares %u blocks; the file "
+               "holds the %zu blocks the base block declares", declared, blocks);
+      wnd->doc->GLog.DoLog(msg);
+   } else if (declared != blocks) {
       char msg[192];
       if (! ignore_errors) {
          snprintf(msg, sizeof(msg),
                   "[E!] Couldn’t open this EDID: it declares %u blocks, but the "
                   "file contains %zu. Choose a file with a matching block count.",
-                  1U + n_extblk, blocks);
+                  declared, blocks);
          wnd->doc->GLog.DoLog(msg);
          wnd_offer_retry(wnd);
          return;
       }
       snprintf(msg, sizeof(msg),
                "[i] This EDID declares %u blocks, but %zu are present; the block "
-               "count now matches the data", 1U + n_extblk, blocks);
+               "count now matches the data", declared, blocks);
       wnd->doc->GLog.DoLog(msg);
-      loaded.edi.base.num_extblk = static_cast<u8_t>(blocks - 1);
+      //the count lives in the override block when there is one
+      if (declared != (1U + loaded.edi.base.num_extblk)) {
+         loaded.buff[sizeof(ediblk_t) + 6] = static_cast<u8_t>(blocks - 1);
+      } else {
+         loaded.edi.base.num_extblk = static_cast<u8_t>(blocks - 1);
+      }
       block_count_adjusted = true;
    }
 
@@ -2476,12 +2490,13 @@ static void wnd_load_bytes(wxedid_wnd* wnd, const char* path,
 
    retU = wnd->doc->EDID.ParseEDID_Base(parsed_extblk);
    bool base_ok = RCD_IS_OK(retU);
+   parsed_extblk = blocks - 1;
    if (base_ok) {
       for (u32_t block=1; block<=parsed_extblk; block++) {
          u8_t tag = pbuf->blk[block][0];
          bool parsed = false;
-         if ((block == EDI_EXT0_IDX) && (tag == 0x02)) {
-            retU = wnd->doc->EDID.ParseEDID_CEA();
+         if (tag == 0x02) {
+            retU = wnd->doc->EDID.ParseEDID_CEA(block);
             parsed = true;
          } else if (tag == 0x70) {
             retU = wnd->doc->EDID.ParseEDID_DisplayID(block);
@@ -2740,9 +2755,11 @@ static void wnd_on_import_hex_action(GSimpleAction*, GVariant*, gpointer user_da
 static bool wnd_prepare_output(wxedid_wnd* wnd) {
    wnd_flush_refresh(wnd);
    edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
-   u32_t declared_blocks = 1U + pbuf->edi.base.num_extblk;
    u32_t parsed_blocks = wnd->doc->EDID.getNumValidBlocks();
-   if (declared_blocks != parsed_blocks) {
+   u32_t declared_blocks = EDID_cl::DeclaredBlocks(pbuf->buff,
+                                                   parsed_blocks * sizeof(ediblk_t));
+   if ((declared_blocks != parsed_blocks) &&
+       ((1U + pbuf->edi.base.num_extblk) != parsed_blocks)) {
       char msg[160];
       snprintf(msg, sizeof(msg),
                "[E!] Couldn’t write this EDID: it declares %u blocks, but only %u "

@@ -116,7 +116,7 @@ sample_data = custom_target(
   output : ['sample_base.bin', 'sample_cea.bin', 'sample_cea_displayid.bin',
             'sample_cea_t7.bin', 'sample_cea_audio.bin',
             'sample_displayid_compact.bin',
-            'sample_displayid_short_padding.bin'],
+            'sample_displayid_short_padding.bin', 'sample_cea_eeodb.bin'],
   command : [find_program('python3'), files('tests/gen_sample_edid.py'), '@OUTDIR@'],
   build_by_default : true,
 )
@@ -157,10 +157,11 @@ corpus_nonconformant = files(
 )
 test('corpus-roundtrip', test_corpus,
      args : [sample_data[0], sample_data[1], sample_data[2], sample_data[3],
-             sample_data[4], sample_data[5], sample_data[6],
+             sample_data[4], sample_data[5], sample_data[6], sample_data[7],
              corpus_conformant, '--ignore-errors', corpus_nonconformant])
 test('hex-text-report', test_text, args : [sample_data[2]])
 test('group-rebuild', test_rebuild, args : [sample_data[1]])
 test('hdmi-forum', test_hdmi_forum,
-     args : files('tests/corpus/samsung-sam756f.hex', 'tests/corpus/xiaomi-xmd0076.hex'))
+     args : [files('tests/corpus/samsung-sam756f.hex', 'tests/corpus/xiaomi-xmd0076.hex'),
+             sample_data[7]])
 test('displayid2', test_displayid2, args : files('tests/corpus/au-optronics-auofcb7.hex'))
