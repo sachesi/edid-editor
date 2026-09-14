@@ -308,6 +308,13 @@ def functional(Atspi, app, fixture):
             activate_menu_item(Atspi, "Undo")
             wait_for(lambda: named(Atspi, "Interlaced", Atspi.Role.SWITCH) and
                      not switch_on("Interlaced"), "undo did not turn the bit off")
+            # typing between valid values: 512 -> 1512 mm, no invalid step
+            width = wait_for(lambda: named(Atspi, "Image width", Atspi.Role.TEXT),
+                             "the image width was not editable")
+            assert width.get_editable_text_iface().insert_text(0, "1", 1)
+            wait_for(lambda: any(name_of(node).startswith("Modified") for node in nodes(Atspi)),
+                     "typing a valid value did not mark the EDID as modified")
+            activate_menu_item(Atspi, "Undo")
 
             def select_overview():
                 for node in nodes(Atspi):
