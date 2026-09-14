@@ -967,7 +967,12 @@ void EDID_cl::CEA_Set_DTD_Offset(u8_t *pbuf, GroupAr_cl *p_grp_ar) {
    }
 
    if (num_dtd > 0) goto done;
-   if (grp_cnt < 1) dtd_offs = 0; //No DBC and no DTD
+   if (grp_cnt > 1) {
+      pgrp = p_grp_ar->Item(grp_cnt - 1);
+      dtd_offs = pgrp->getRelOffs() + pgrp->getTotalSize();
+   } else {
+      dtd_offs = 0; //No DBC and no DTD
+   }
 
 done:
    cea_hdr->dtd_offs = dtd_offs;

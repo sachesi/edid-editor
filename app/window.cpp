@@ -17,12 +17,25 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <unistd.h>
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <vector>
+#include <glib/gstdio.h>
 #include <pango/pangocairo.h>
 
 struct wxedid_timing;
+
+struct wxedid_history_entry {
+   edi_grp_cl*   group;
+   edi_dynfld_t* field;
+   bool          integer;
+   std::string   before_text;
+   std::string   after_text;
+   u32_t         before_value;
+   u32_t         after_value;
+};
 
 //------------
 // per-document state
@@ -55,9 +68,17 @@ struct wxedid_wnd {
    GtkWidget*          open_button;
    GtkWidget*          save_button;
    GSimpleAction*      save_action;
+   GSimpleAction*      save_as_action;
+   GSimpleAction*      undo_action;
+   GSimpleAction*      redo_action;
    GSimpleAction*      details_action;
+   std::vector<wxedid_history_entry> history;
+   size_t              history_position;
+   long                saved_history_position;
    bool                loaded;
    bool                dirty;
+   bool                source_writable;
+   bool                applying_history;
    bool                banner_is_validation;
    bool                close_confirmation_open;
    bool                details_available;
@@ -105,6 +126,10 @@ static void wnd_update_header_controls(wxedid_wnd* wnd);
 static void wnd_refresh_selected_tree_label(wxedid_wnd* wnd);
 static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
                               EDID_cl* pEDID);
+static void wnd_record_history(wxedid_wnd* wnd, edi_grp_cl* group,
+                               edi_dynfld_t* field, bool integer,
+                               const wxc_String& before_text, u32_t before_value,
+                               const wxc_String& after_text, u32_t after_value);
 
 static void wnd_refresh_group_title(wxedid_wnd* wnd, edi_grp_cl* pgrp) {
    if (pgrp == NULL) return;
@@ -232,11 +257,6 @@ static void row_set_valid(wxedid_row* row, bool valid) {
    wnd_update_document_ui(row->wnd);
 }
 
-static void row_mark_changed(wxedid_row* row) {
-   row->wnd->dirty = true;
-   wnd_update_document_ui(row->wnd);
-}
-
 //------------
 //entry changed: write valid text back via the field handler
 static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
@@ -245,13 +265,22 @@ static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
    const char* txt = gtk_editable_get_text(entry);
    wxc_String  sval(txt);
    u32_t       ival = 0;
+   wxc_String  before_text;
+   u32_t       before_value = 0;
+   ( r->pEDID->*r->pfld->field.handlerfn )(
+      OP_READ, before_text, before_value, r->pfld);
 
    rcode retU = ( r->pEDID->*r->pfld->field.handlerfn )(OP_WRSTR, sval, ival, r->pfld);
 
    if (RCD_IS_OK(retU)) {
+      wxc_String after_text;
+      u32_t after_value = 0;
+      ( r->pEDID->*r->pfld->field.handlerfn )(
+         OP_READ, after_text, after_value, r->pfld);
+      wnd_record_history(r->wnd, r->pgrp, r->pfld, false,
+                         before_text, before_value, after_text, after_value);
       gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
       row_set_valid(r, true);
-      row_mark_changed(r);
       wnd_refresh_group_title(r->wnd, r->pgrp);
       wnd_refresh_selected_tree_label(r->wnd);
       timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
@@ -274,13 +303,25 @@ static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer
    u32_t* vals = (u32_t*) idx;
    u32_t  val  = vals[pos];
 
+   wxc_String before_text;
+   u32_t before_value = 0;
+   ( r->pEDID->*r->pfld->field.handlerfn )(
+      OP_READ, before_text, before_value, r->pfld);
    wxc_String sval;
    rcode retU = ( r->pEDID->*r->pfld->field.handlerfn )(OP_WRINT, sval, val, r->pfld);
 
    if (RCD_IS_OK(retU)) {
+      wxc_String after_text;
+      u32_t after_value = 0;
+      ( r->pEDID->*r->pfld->field.handlerfn )(
+         OP_READ, after_text, after_value, r->pfld);
+      wnd_record_history(r->wnd, r->pgrp, r->pfld, true,
+                         before_text, before_value, after_text, after_value);
       gtk_widget_remove_css_class(GTK_WIDGET(dd), "error");
       row_set_valid(r, true);
-      row_mark_changed(r);
+      wnd_refresh_group_title(r->wnd, r->pgrp);
+      wnd_refresh_selected_tree_label(r->wnd);
+      timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
    } else {
       gtk_widget_add_css_class(GTK_WIDGET(dd), "error");
       row_set_valid(r, false);
@@ -330,6 +371,33 @@ static std::string field_display_name(const char* name) {
    return display;
 }
 
+static std::string field_help_summary(const char* description) {
+   if ((description == NULL) || (*description == 0)) return {};
+
+   std::string summary;
+   bool previous_space = false;
+   for (const char* ch = description; *ch != 0; ch++) {
+      if ((*ch == '\n') || (*ch == '\r')) break;
+      bool space = g_ascii_isspace(static_cast<guchar>(*ch));
+      if (space) {
+         if (! summary.empty() && ! previous_space) summary.push_back(' ');
+      } else {
+         summary.push_back(*ch);
+      }
+      previous_space = space;
+      if ((summary.size() >= 140) && (*ch == ' ')) break;
+   }
+   while (! summary.empty() && (summary.back() == ' ')) summary.pop_back();
+   if (summary.size() > 140) {
+      size_t cut = summary.rfind(' ', 137);
+      if (cut != std::string::npos) {
+         summary.resize(cut);
+         summary += "…";
+      }
+   }
+   return summary;
+}
+
 static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
                         wxedid_wnd* wnd) {
    //drop old rows
@@ -357,6 +425,9 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
 
       GtkWidget* card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
       gtk_widget_set_size_request(card, 240, -1);
+
+      std::string help = field_help_summary(pfld->field.desc);
+      if (! help.empty()) gtk_widget_set_tooltip_text(card, help.c_str());
 
       GtkWidget* card_content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
       gtk_widget_set_margin_start(card_content, 12);
@@ -449,6 +520,12 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       }
 
       gtk_box_append(GTK_BOX(card_content), widget);
+      if (! help.empty()) {
+         gtk_widget_set_tooltip_text(widget, help.c_str());
+         gtk_accessible_update_property(GTK_ACCESSIBLE(widget),
+                                        GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                        help.c_str(), -1);
+      }
       gtk_flow_box_append(list, card);
       gtk_widget_add_css_class(gtk_widget_get_parent(card), "card");
    }
@@ -621,12 +698,21 @@ static void timing_on_changed(GtkSpinButton* spin, gpointer user_data) {
    gtk_spin_button_set_value(spin, value);
 
    edi_dynfld_t* field = timing->fields[changed];
+   wxc_String before_text;
+   u32_t before_value = 0;
+   (timing->wnd->doc->EDID.*field->field.handlerfn)(
+      OP_READ, before_text, before_value, field);
    wxc_String sval;
    rcode ret = (timing->wnd->doc->EDID.*field->field.handlerfn)(
       OP_WRINT, sval, value, field);
    if (RCD_IS_OK(ret)) {
+      wxc_String after_text;
+      u32_t after_value = 0;
+      (timing->wnd->doc->EDID.*field->field.handlerfn)(
+         OP_READ, after_text, after_value, field);
+      wnd_record_history(timing->wnd, timing->pgrp, field, true,
+                         before_text, before_value, after_text, after_value);
       gtk_widget_remove_css_class(GTK_WIDGET(spin), "error");
-      timing->wnd->dirty = true;
       timing_update_outputs(timing);
       wnd_refresh_group_title(timing->wnd, timing->pgrp);
       wnd_refresh_selected_tree_label(timing->wnd);
@@ -704,8 +790,8 @@ static GtkWidget* timing_section(const char* title, GtkGrid** grid_out) {
    GtkWidget* grid = gtk_grid_new();
    gtk_grid_set_column_spacing(GTK_GRID(grid), 6);
    gtk_grid_set_row_spacing(GTK_GRID(grid), 6);
-   gtk_widget_set_margin_start(grid, 12);
-   gtk_widget_set_margin_end(grid, 12);
+   gtk_widget_set_margin_start(grid, 9);
+   gtk_widget_set_margin_end(grid, 9);
    gtk_widget_set_margin_bottom(grid, 12);
    gtk_box_append(GTK_BOX(card), grid);
    *grid_out = GTK_GRID(grid);
@@ -900,6 +986,12 @@ static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
       }
       edi_dynfld_t* field = pgrp->FieldsAr.Item(field_indices[idx]);
       timing->fields[idx] = field;
+      std::string help = field_help_summary(field->field.desc);
+      gtk_widget_set_tooltip_text(GTK_WIDGET(timing->spins[idx]),
+                                  help.empty() ? NULL : help.c_str());
+      gtk_accessible_update_property(GTK_ACCESSIBLE(timing->spins[idx]),
+                                     GTK_ACCESSIBLE_PROPERTY_DESCRIPTION,
+                                     help.empty() ? NULL : help.c_str(), -1);
       wxc_String text;
       u32_t value = 0;
       rcode ret = (pEDID->*field->field.handlerfn)(OP_READ, text, value, field);
@@ -1041,14 +1133,8 @@ static void tree_name_unbind(GtkSignalListItemFactory* /*factory*/,
    g_object_unref(obj);
 }
 
-static void wnd_refresh_selected_tree_label(wxedid_wnd* wnd) {
-   GtkTreeListRow* row = GTK_TREE_LIST_ROW(
-      gtk_single_selection_get_selected_item(wnd->tree_sel));
-   if (row == NULL) return;
-   GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
-   if (obj == NULL) return;
-   wxedid_item* item = WXEDID_ITEM(obj);
-   if ((item->pgrp != NULL) && (item->bound_label != NULL)) {
+static void wnd_refresh_tree_label(wxedid_item* item) {
+   if ((item != NULL) && (item->pgrp != NULL) && (item->bound_label != NULL)) {
       wxc_String name;
       item->pgrp->getGrpName(*item->pEDID, name);
       std::string display = item->pgrp->CodeName.IsEmpty()
@@ -1057,7 +1143,111 @@ static void wnd_refresh_selected_tree_label(wxedid_wnd* wnd) {
       gtk_label_set_text(item->bound_label, display.c_str());
       gtk_widget_set_tooltip_text(GTK_WIDGET(item->bound_label), display.c_str());
    }
+}
+
+static edi_grp_cl* wnd_selected_group(wxedid_wnd* wnd) {
+   GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+      gtk_single_selection_get_selected_item(wnd->tree_sel));
+   if (row == NULL) return NULL;
+   GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
+   if (obj == NULL) return NULL;
+   edi_grp_cl* group = WXEDID_ITEM(obj)->pgrp;
    g_object_unref(obj);
+   return group;
+}
+
+static void wnd_refresh_selected_tree_label(wxedid_wnd* wnd) {
+   GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+      gtk_single_selection_get_selected_item(wnd->tree_sel));
+   if (row == NULL) return;
+   GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
+   if (obj == NULL) return;
+   wnd_refresh_tree_label(WXEDID_ITEM(obj));
+   g_object_unref(obj);
+}
+
+static void wnd_refresh_group_tree_label(wxedid_wnd* wnd, edi_grp_cl* group) {
+   guint count = g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model));
+   for (guint position=0; position<count; position++) {
+      GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+         g_list_model_get_item(G_LIST_MODEL(wnd->tree_model), position));
+      GObject* obj = G_OBJECT(gtk_tree_list_row_get_item(row));
+      wxedid_item* item = WXEDID_ITEM(obj);
+      if (item->pgrp == group) wnd_refresh_tree_label(item);
+      g_object_unref(obj);
+      g_object_unref(row);
+   }
+}
+
+static void wnd_update_history_state(wxedid_wnd* wnd) {
+   wnd->dirty = (wnd->saved_history_position < 0) ||
+      (wnd->history_position != static_cast<size_t>(wnd->saved_history_position));
+   g_simple_action_set_enabled(wnd->undo_action, wnd->history_position > 0);
+   g_simple_action_set_enabled(wnd->redo_action,
+                               wnd->history_position < wnd->history.size());
+}
+
+static void wnd_record_history(wxedid_wnd* wnd, edi_grp_cl* group,
+                               edi_dynfld_t* field, bool integer,
+                               const wxc_String& before_text, u32_t before_value,
+                               const wxc_String& after_text, u32_t after_value) {
+   if (wnd->applying_history) return;
+   if (integer ? (before_value == after_value) : (before_text == after_text)) return;
+
+   if (wnd->history_position < wnd->history.size()) {
+      if ((wnd->saved_history_position >= 0) &&
+          (static_cast<size_t>(wnd->saved_history_position) > wnd->history_position)) {
+         wnd->saved_history_position = -1;
+      }
+      wnd->history.erase(wnd->history.begin() + wnd->history_position,
+                         wnd->history.end());
+   }
+   wnd->history.push_back({group, field, integer,
+                           before_text.c_str(), after_text.c_str(),
+                           before_value, after_value});
+   wnd->history_position = wnd->history.size();
+   wnd_update_history_state(wnd);
+}
+
+static void wnd_apply_history(wxedid_wnd* wnd, bool redo) {
+   if (redo) {
+      if (wnd->history_position >= wnd->history.size()) return;
+   } else if (wnd->history_position == 0) {
+      return;
+   }
+
+   size_t index = redo ? wnd->history_position : wnd->history_position - 1;
+   const wxedid_history_entry& entry = wnd->history[index];
+   wxc_String text(redo ? entry.after_text.c_str() : entry.before_text.c_str());
+   u32_t value = redo ? entry.after_value : entry.before_value;
+   wnd->applying_history = true;
+   rcode result = (wnd->doc->EDID.*entry.field->field.handlerfn)(
+      entry.integer ? OP_WRINT : OP_WRSTR, text, value, entry.field);
+   wnd->applying_history = false;
+   if (! RCD_IS_OK(result)) {
+      wnd->doc->GLog.DoLog(
+         "[E!] Couldn’t restore the previous value. Reopen the file before editing again.");
+      return;
+   }
+
+   wnd->history_position = redo ? index + 1 : index;
+   wnd->invalid_fields = 0;
+   wnd_refresh_group_tree_label(wnd, entry.group);
+   if (wnd_selected_group(wnd) == entry.group) {
+      wnd_refresh_group_title(wnd, entry.group);
+      rows_reload(wnd->fields, entry.group, &wnd->doc->EDID, wnd);
+      timing_load_group(wnd->timing, entry.group, &wnd->doc->EDID);
+   }
+   wnd_update_history_state(wnd);
+   wnd_update_document_ui(wnd);
+}
+
+static void wnd_on_undo_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wnd_apply_history(static_cast<wxedid_wnd*>(user_data), false);
+}
+
+static void wnd_on_redo_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wnd_apply_history(static_cast<wxedid_wnd*>(user_data), true);
 }
 
 static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
@@ -1093,15 +1283,31 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
 static void wnd_update_document_ui(wxedid_wnd* wnd) {
    bool can_save = wnd->loaded && wnd->dirty && (wnd->invalid_fields == 0);
    g_simple_action_set_enabled(wnd->save_action, can_save);
+   g_simple_action_set_enabled(wnd->save_as_action,
+                               wnd->loaded && (wnd->invalid_fields == 0));
    gtk_widget_set_visible(wnd->save_button, wnd->loaded);
+   gtk_button_set_label(GTK_BUTTON(wnd->save_button), "_Save");
+   gtk_button_set_use_underline(GTK_BUTTON(wnd->save_button), TRUE);
+   gtk_widget_set_tooltip_text(
+      wnd->save_button,
+      wnd->source_writable ? "Save changes (Ctrl+S)" :
+                             "Save a writable copy (Ctrl+S)");
 
    if (wnd->loaded) {
       char* basename = g_path_get_basename(wnd->doc->path);
       char* display_path = g_filename_display_name(wnd->doc->path);
       char* window_name = g_strdup_printf("%s — EDID Editor", basename);
-      char* subtitle = wnd->dirty
-         ? g_strdup_printf("Modified · %s", display_path)
-         : g_strdup(display_path);
+      const char* state = wnd->dirty ? "Modified" : NULL;
+      char* subtitle = NULL;
+      if (! wnd->source_writable && (state != NULL)) {
+         subtitle = g_strdup_printf("%s · Read-only · %s", state, display_path);
+      } else if (! wnd->source_writable) {
+         subtitle = g_strdup_printf("Read-only · %s", display_path);
+      } else if (state != NULL) {
+         subtitle = g_strdup_printf("%s · %s", state, display_path);
+      } else {
+         subtitle = g_strdup(display_path);
+      }
 
       adw_window_title_set_title(wnd->window_title, basename);
       adw_window_title_set_subtitle(wnd->window_title, subtitle);
@@ -1131,6 +1337,7 @@ static void wnd_update_document_ui(wxedid_wnd* wnd) {
 
 static void wnd_update_header_controls(wxedid_wnd* wnd) {
    bool collapsed = adw_overlay_split_view_get_collapsed(wnd->split_view);
+   gtk_widget_set_visible(GTK_WIDGET(wnd->window_title), ! collapsed);
    gtk_widget_set_visible(wnd->open_button, wnd->loaded && ! collapsed);
    gtk_widget_set_visible(wnd->sidebar_button, wnd->loaded && collapsed);
    gtk_widget_set_visible(wnd->details_button,
@@ -1343,14 +1550,20 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
 
    wnd->loaded = base_ok;
    wnd->dirty = false;
+   wnd->source_writable = false;
    wnd->invalid_fields = 0;
+   wnd->history.clear();
+   wnd->history_position = 0;
+   wnd->saved_history_position = 0;
    if (base_ok) {
       snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
+      wnd->source_writable = (g_access(path, W_OK) == 0);
       gtk_stack_set_visible_child_name(wnd->content_stack, "editor");
    } else {
       wnd->doc->path[0] = 0;
       gtk_stack_set_visible_child_name(wnd->content_stack, "empty");
    }
+   wnd_update_history_state(wnd);
    wnd_update_document_ui(wnd);
 }
 
@@ -1492,10 +1705,12 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
    char msg[1152];
    snprintf(msg, sizeof(msg), "[i] Saved %zu bytes to %s", wr, path);
    wnd->doc->GLog.DoLog(msg);
-   if (path != wnd->doc->path) {
+   if (strcmp(path, wnd->doc->path) != 0) {
       snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
    }
-   wnd->dirty = false;
+   wnd->source_writable = (g_access(wnd->doc->path, W_OK) == 0);
+   wnd->saved_history_position = static_cast<long>(wnd->history_position);
+   wnd_update_history_state(wnd);
    wnd_update_document_ui(wnd);
 
    char* basename = g_path_get_basename(wnd->doc->path);
@@ -1541,25 +1756,55 @@ static void wnd_on_save_response(GObject* source, GAsyncResult* result,
    g_object_unref(window);
 }
 
-static void wnd_request_save(wxedid_wnd* wnd) {
-   //already have a path: save in place
-   if (wnd->doc->path[0] != 0) {
-      wnd_save_to_file(wnd, wnd->doc->path);
-      return;
-   }
-
+static void wnd_present_save_dialog(wxedid_wnd* wnd) {
    GtkFileDialog* dialog = gtk_file_dialog_new();
    gtk_file_dialog_set_title(dialog, "Save EDID binary");
    gtk_file_dialog_set_accept_label(dialog, "Save");
-   gtk_file_dialog_set_initial_name(dialog, "edid.bin");
+   char* basename = g_path_get_basename(wnd->doc->path);
+   char* initial_name = NULL;
+   if (! wnd->source_writable && (basename != NULL)) {
+      char* extension = strrchr(basename, '.');
+      if ((extension != NULL) && (extension != basename)) {
+         char* stem = g_strndup(basename, extension - basename);
+         initial_name = g_strdup_printf("%s-copy%s", stem, extension);
+         g_free(stem);
+      } else {
+         initial_name = g_strdup_printf("%s-copy", basename);
+      }
+   }
+   gtk_file_dialog_set_initial_name(
+      dialog, initial_name != NULL ? initial_name :
+      ((basename != NULL) && (basename[0] != 0) ? basename : "edid.bin"));
+   g_free(initial_name);
+   g_free(basename);
+
+   char* directory = g_path_get_dirname(wnd->doc->path);
+   if ((directory != NULL) && (directory[0] != 0)) {
+      GFile* folder = g_file_new_for_path(directory);
+      gtk_file_dialog_set_initial_folder(dialog, folder);
+      g_object_unref(folder);
+   }
+   g_free(directory);
    gtk_file_dialog_save(dialog, wnd->window, NULL, wnd_on_save_response,
                         g_object_ref(wnd->window));
    g_object_unref(dialog);
 }
 
+static void wnd_request_save(wxedid_wnd* wnd) {
+   if ((wnd->doc->path[0] != 0) && wnd->source_writable) {
+      wnd_save_to_file(wnd, wnd->doc->path);
+   } else {
+      wnd_present_save_dialog(wnd);
+   }
+}
+
 static void wnd_on_save_action(GSimpleAction* /*action*/, GVariant* /*parameter*/,
                                gpointer user_data) {
    wnd_request_save((wxedid_wnd*) user_data);
+}
+
+static void wnd_on_save_as_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wnd_present_save_dialog(static_cast<wxedid_wnd*>(user_data));
 }
 
 static void wnd_on_toggle_sidebar(GtkButton* /*button*/, gpointer user_data) {
@@ -1635,6 +1880,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    wxedid_wnd* wnd = new wxedid_wnd{};
    wnd->doc        = new wxedid_doc;
    wnd->doc->path[0] = 0;
+   wnd->saved_history_position = 0;
 
    GtkWidget* window = adw_application_window_new(GTK_APPLICATION(app));
    wnd->window = GTK_WINDOW(window);
@@ -1661,6 +1907,22 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->save_action));
    g_object_unref(wnd->save_action);
 
+   wnd->save_as_action = g_simple_action_new("save-as", NULL);
+   g_signal_connect(wnd->save_as_action, "activate",
+                    G_CALLBACK(wnd_on_save_as_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->save_as_action));
+   g_object_unref(wnd->save_as_action);
+
+   wnd->undo_action = g_simple_action_new("undo", NULL);
+   g_signal_connect(wnd->undo_action, "activate", G_CALLBACK(wnd_on_undo_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->undo_action));
+   g_object_unref(wnd->undo_action);
+
+   wnd->redo_action = g_simple_action_new("redo", NULL);
+   g_signal_connect(wnd->redo_action, "activate", G_CALLBACK(wnd_on_redo_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->redo_action));
+   g_object_unref(wnd->redo_action);
+
    wnd->details_action = g_simple_action_new_stateful(
       "details", NULL, g_variant_new_boolean(FALSE));
    g_simple_action_set_enabled(wnd->details_action, FALSE);
@@ -1671,8 +1933,15 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
 
    const char* open_accels[] = {"<Control>o", NULL};
    const char* save_accels[] = {"<Control>s", NULL};
+   const char* save_as_accels[] = {"<Control><Shift>s", NULL};
+   const char* undo_accels[] = {"<Control>z", NULL};
+   const char* redo_accels[] = {"<Control><Shift>z", NULL};
    gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.open", open_accels);
    gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.save", save_accels);
+   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.save-as",
+                                         save_as_accels);
+   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.undo", undo_accels);
+   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.redo", redo_accels);
 
    //header bar
    GtkWidget* header = adw_header_bar_new();
@@ -1704,13 +1973,15 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
 
    GMenu* primary_menu = g_menu_new();
    g_menu_append(primary_menu, "Open…", "win.open");
+   g_menu_append(primary_menu, "Save As…", "win.save-as");
+   g_menu_append(primary_menu, "Undo", "win.undo");
+   g_menu_append(primary_menu, "Redo", "win.redo");
    g_menu_append(primary_menu, "Show details", "win.details");
    GtkWidget* btn_menu = gtk_menu_button_new();
    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(btn_menu), "open-menu-symbolic");
    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(btn_menu), G_MENU_MODEL(primary_menu));
    gtk_menu_button_set_primary(GTK_MENU_BUTTON(btn_menu), TRUE);
    gtk_widget_set_tooltip_text(btn_menu, "Main menu");
-   gtk_widget_set_visible(btn_menu, FALSE);
    g_object_unref(primary_menu);
    adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_menu);
 
@@ -1841,7 +2112,6 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
       breakpoint,
       G_OBJECT(split_view), "collapsed", TRUE,
       G_OBJECT(split_view), "show-sidebar", FALSE,
-      G_OBJECT(btn_menu), "visible", TRUE,
       G_OBJECT(wnd->timing->drawing), "height-request", 220,
       NULL);
    adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), breakpoint);
@@ -1908,6 +2178,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_vexpand(GTK_WIDGET(wnd->toast_overlay), TRUE);
 
    adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), content);
+   wnd_update_history_state(wnd);
    wnd_update_document_ui(wnd);
    gtk_window_present(GTK_WINDOW(window));
 }

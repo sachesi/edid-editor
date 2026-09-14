@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Generate synthetic EDID test data.
 
-Produces three binaries used by the headless core tests:
+Produces four binaries used by the headless core tests:
   sample_base.bin : EDID 1.3 base block (DTD 640x480@60, MND text descriptor)
   sample_cea.bin  : base block + CTA-861 ext (VDB, HDMI VSDB, one DTD)
   sample_cea_displayid.bin : base + CTA-861 + DisplayID extension
+  sample_cea_t7.bin : base + CTA-861 Type VII detailed timing
 
 Usage: gen_sample_edid.py <out_dir>
 """
@@ -72,6 +73,23 @@ def cea_block():
     return chksum(e)
 
 
+def cea_t7_block():
+    e = bytearray(128)
+    e[0] = 0x02                            # CTA-861 tag
+    e[1] = 0x03                            # revision 3
+    payload = bytes([
+        0xF6, 34,                          # extended block, tag 34, length 22
+        0x02, 0x5C, 0xAF, 0x03,           # revision 2, 241.500 MHz
+        0x04, 0x00, 0x0A, 0xA0, 0x00,     # 2560 active, 160 blank
+        0x30, 0x80, 0x20, 0x00,           # H offset 48, width 32
+        0xA0, 0x05, 0x29, 0x00,           # 1440 active, 41 blank
+        0x03, 0x80, 0x05, 0x00,           # V offset 3, width 5
+    ])
+    e[4:4 + len(payload)] = payload
+    e[2] = 4 + len(payload)                # first DTD / end of data blocks
+    return chksum(e)
+
+
 def displayid_block():
     e = bytearray(128)
     e[0] = 0x70                            # DisplayID extension tag
@@ -114,6 +132,9 @@ def main():
     with open(os.path.join(out_dir, "sample_cea.bin"), "wb") as f:
         f.write(bytes(base_cea) + bytes(cea_block()))
 
+    with open(os.path.join(out_dir, "sample_cea_t7.bin"), "wb") as f:
+        f.write(bytes(base_cea) + bytes(cea_t7_block()))
+
     base_multi = bytearray(base)
     base_multi[126] = 2                    # two extension blocks
     chksum(base_multi)
@@ -121,7 +142,8 @@ def main():
     with open(os.path.join(out_dir, "sample_cea_displayid.bin"), "wb") as f:
         f.write(bytes(base_multi) + bytes(cea_block()) + bytes(displayid_block()))
 
-    print("wrote sample_base.bin, sample_cea.bin, sample_cea_displayid.bin to", out_dir)
+    print("wrote sample_base.bin, sample_cea.bin, sample_cea_displayid.bin, "
+          "sample_cea_t7.bin to", out_dir)
 
 
 if __name__ == "__main__":

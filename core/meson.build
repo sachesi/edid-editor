@@ -53,10 +53,19 @@ test_displayid = executable(
   install : false,
 )
 
+test_t7_timing = executable(
+  'test-t7-timing',
+  'tests/test_t7_timing.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
 #synthetic EDID sample data (generated, checked in as build tests below)
 sample_data = custom_target(
   'sample-edid-data',
-  output : ['sample_base.bin', 'sample_cea.bin', 'sample_cea_displayid.bin'],
+  output : ['sample_base.bin', 'sample_cea.bin', 'sample_cea_displayid.bin',
+            'sample_cea_t7.bin'],
   command : [find_program('python3'), files('tests/gen_sample_edid.py'), '@OUTDIR@'],
   build_by_default : true,
 )
@@ -67,3 +76,4 @@ test('edit-roundtrip-displayid', test_edit_roundtrip, args : [sample_data[2]])
 test('displayid-roundtrip', test_displayid,
      args : [sample_data[2], '--require-raw'])
 test('reload-ownership', test_reload_ownership, args : [sample_data[1]])
+test('t7-timing-roundtrip', test_t7_timing, args : [sample_data[3]])
