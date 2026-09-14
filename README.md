@@ -15,13 +15,13 @@ recomputes the checksums and keeps data the editor does not understand.
 
 ## Building and installing
 
-    meson setup builddir
-    meson compile -C builddir
-    meson test -C builddir
-    sudo meson install -C builddir     # to /usr/local unless setup was given --prefix
+    just build
+    sudo just install        # or: just prefix=$HOME/.local install
+    just uninstall           # with sudo if it was installed with sudo
 
-    builddir/app/edid-editor [FILE]
+    just run [FILE]          # a debug build, uninstalled
 
+`just` runs Meson; `meson setup`, `meson compile` and `meson install` work as well.
 Building needs Meson, a C++17 compiler, and the development packages for GTK 4 and
 libadwaita 1.8 or newer; it is developed against GTK 4.22 and libadwaita 1.9. The tests
 of the interface also need Weston, Xwayland, xdotool, the session bus and the Python
