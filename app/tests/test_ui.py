@@ -40,10 +40,13 @@ def run_session(script, app, fixture, width, scenario):
                                 stderr=subprocess.STDOUT, timeout=55)
         stream.seek(0)
         diagnostics = stream.read()
+    # weston exits successfully whatever its client returns, so the scenario
+    # reports success through a marker file instead.
+    passed = (Path(runtime) / "scenario-passed").exists()
     shutil.rmtree(runtime, ignore_errors=True)
-    if result.returncode != 0:
+    if result.returncode != 0 or not passed:
         sys.stderr.write(diagnostics)
-        raise SystemExit(result.returncode)
+        raise SystemExit(result.returncode or 1)
     rejected = ("Gtk-CRITICAL", "Adwaita-CRITICAL", "GLib-GObject-CRITICAL",
                 "exceeds AdwApplicationWindow width")
     for marker in rejected:
@@ -53,9 +56,20 @@ def run_session(script, app, fixture, width, scenario):
 
 
 def walk(node):
+    # Nodes can vanish while a dialog or row closes; skip them.
+    if node is None:
+        return
     yield node
-    for index in range(node.get_child_count()):
-        yield from walk(node.get_child_at_index(index))
+    try:
+        count = node.get_child_count()
+    except Exception:
+        return
+    for index in range(count):
+        try:
+            child = node.get_child_at_index(index)
+        except Exception:
+            continue
+        yield from walk(child)
 
 
 def wait_for(predicate, message, timeout=8):
@@ -72,29 +86,134 @@ def nodes(Atspi):
     return list(walk(Atspi.get_desktop(0)))
 
 
+def name_of(node):
+    try:
+        return node.get_name() or ""
+    except Exception:
+        return ""
+
+
+def role_of(node):
+    try:
+        return node.get_role()
+    except Exception:
+        return None
+
+
 def named(Atspi, name, role=None):
     for node in nodes(Atspi):
-        if node.get_name() == name and (role is None or node.get_role() == role):
+        if name_of(node) == name and (role is None or role_of(node) == role):
             return node
     return None
 
 
-def shortcut(keys):
-    subprocess.run(["xdotool", "key", keys], check=True)
+def count_named_part(Atspi, text):
+    return sum(text in name_of(node) for node in nodes(Atspi))
+
+
+def group_count(Atspi, code):
+    # The list view exposes only realized rows; filter so every match is realized.
+    search = wait_for(lambda: named(Atspi, "Search groups", Atspi.Role.ENTRY),
+                      "group search was not exposed")
+    search.get_editable_text_iface().set_text_contents(code)
+    time.sleep(0.4)
+    count = sum(role_of(node) == Atspi.Role.LABEL and
+                name_of(node).startswith(code + ":") for node in nodes(Atspi))
+    search.get_editable_text_iface().set_text_contents("")
+    time.sleep(0.5)
+    return count
+
+
+def text_of(Atspi, node):
+    return Atspi.Text.get_text(node, 0, Atspi.Text.get_character_count(node))
+
+
+# Keyboard and pointer events cannot be injected into the headless XWayland
+# session, so every step goes through accessibility actions instead.
+def actionable(Atspi, name, role=None):
+    for node in nodes(Atspi):
+        if name_of(node) != name or (role is not None and role_of(node) != role):
+            continue
+        try:
+            if node.get_action_iface().get_n_actions() > 0:
+                return node
+        except Exception:
+            continue
+    return None
+
+
+def press(Atspi, name, role=None):
+    node = wait_for(lambda: actionable(Atspi, name, role), f"{name} was not exposed")
+    assert node.get_action_iface().do_action(0), f"{name} did not activate"
+    time.sleep(0.3)
+
+
+def menu_item(Atspi, name):
+    # Popover menu items are labelled by a label whose text, not name,
+    # carries the item title.
+    roles = (Atspi.Role.MENU_ITEM, Atspi.Role.CHECK_MENU_ITEM)
+    for node in nodes(Atspi):
+        if role_of(node) not in roles:
+            continue
+        try:
+            relations = node.get_relation_set()
+        except Exception:
+            continue
+        for relation in relations:
+            if relation.get_relation_type() != Atspi.RelationType.LABELLED_BY:
+                continue
+            for index in range(relation.get_n_targets()):
+                try:
+                    if text_of(Atspi, relation.get_target(index)) == name:
+                        return node
+                except Exception:
+                    continue
+    return None
+
+
+def close_dialog(Atspi, title):
+    dialog = wait_for(lambda: named(Atspi, title, Atspi.Role.DIALOG),
+                      f"{title} dialog did not open")
+    for node in walk(dialog):
+        if name_of(node) == "Close" and role_of(node) == Atspi.Role.PUSH_BUTTON:
+            assert node.get_action_iface().do_action(0)
+            wait_for(lambda: named(Atspi, title, Atspi.Role.DIALOG) is None,
+                     f"{title} dialog did not close")
+            return
+    raise AssertionError(f"{title} dialog has no Close button")
+
+
+def activate_menu_item(Atspi, name, menu="Main menu"):
+    press(Atspi, menu)
+    item = wait_for(lambda: menu_item(Atspi, name), f"{name} menu item was not exposed")
+    assert item.get_action_iface().do_action(0), f"{name} did not activate"
+    time.sleep(0.3)
+
+
+def window_exists(title):
+    return subprocess.run(["xdotool", "search", "--name", title],
+                          capture_output=True).returncode == 0
+
+
+def select_group(Atspi, index):
+    def attempt():
+        lists = [node for node in nodes(Atspi) if role_of(node) == Atspi.Role.LIST]
+        try:
+            return bool(lists) and lists[-1].get_selection_iface().select_child(index)
+        except Exception:
+            return False
+    wait_for(attempt, f"group {index} could not be selected")
     time.sleep(0.5)
 
 
-def count_named_part(Atspi, text):
-    return sum(text in node.get_name() for node in nodes(Atspi))
-
-
-def launch_app(Atspi, app, path):
+def launch_app(Atspi, app, path, title=None):
     env = os.environ.copy()
     env.update({"GDK_BACKEND": "x11", "GSK_RENDERER": "cairo", "GTK_A11Y": "atspi"})
     process = subprocess.Popen([app, path], env=env, text=True,
                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    title = Path(path).name if title is None else title
     wait_for(lambda: any(node.get_role() == Atspi.Role.FRAME and
-                         Path(path).name in node.get_name()
+                         title in node.get_name()
                          for node in nodes(Atspi)), "application window did not open")
     return process
 
@@ -120,124 +239,128 @@ def functional(Atspi, app, fixture):
             search = wait_for(lambda: named(Atspi, "Search groups", Atspi.Role.ENTRY),
                               "group search was not exposed")
             search.get_editable_text_iface().set_text_contents("T7VTB")
-            wait_for(lambda: any("T7VTB" in node.get_name() for node in nodes(Atspi)),
+            wait_for(lambda: any("T7VTB" in name_of(node) for node in nodes(Atspi)),
                      "matching group disappeared during search")
             search.get_editable_text_iface().set_text_contents("no-such-edid-group")
             wait_for(lambda: named(Atspi, "No matching groups"),
                      "empty search state did not appear")
             search.get_editable_text_iface().set_text_contents("")
+            wait_for(lambda: named(Atspi, "No matching groups") is None,
+                     "clearing the search did not restore the groups")
 
-            lists = [node for node in nodes(Atspi) if node.get_role() == Atspi.Role.LIST]
-            assert lists and lists[-1].get_selection_iface().select_child(21)
-            time.sleep(0.5)
-            assert lists[-1].get_component_iface().grab_focus()
-            shortcut("shift+F10")
-            wait_for(lambda: named(Atspi, "Move Up", Atspi.Role.MENU_ITEM),
-                     "group context menu did not open from the keyboard")
-            shortcut("Escape")
+            select_group(Atspi, 21)
+            wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
+                     "selecting the timing group did not open the timing editor")
 
-            original_groups = count_named_part(Atspi, "T7VTB")
-            duplicate = wait_for(lambda: named(Atspi, "Duplicate group (Ctrl+D)"),
-                                 "duplicate group action was not exposed")
-            assert duplicate.get_action_iface().do_action(0)
-            wait_for(lambda: count_named_part(Atspi, "T7VTB") > original_groups,
+            original_groups = group_count(Atspi, "T7VTB")
+            press(Atspi, "Duplicate group (Ctrl+D)")
+            wait_for(lambda: group_count(Atspi, "T7VTB") > original_groups,
                      "duplicate group did not update the sidebar")
-            lists = [node for node in nodes(Atspi) if node.get_role() == Atspi.Role.LIST]
-            assert lists[-1].get_component_iface().grab_focus()
-            shortcut("Delete")
-            confirm = wait_for(lambda: named(Atspi, "Delete", Atspi.Role.PUSH_BUTTON),
-                               "delete confirmation did not open")
-            assert confirm.get_action_iface().do_action(0)
-            wait_for(lambda: count_named_part(Atspi, "T7VTB") == original_groups,
+            press(Atspi, "Delete group (Delete)")
+            press(Atspi, "Delete", Atspi.Role.PUSH_BUTTON)
+            wait_for(lambda: group_count(Atspi, "T7VTB") == original_groups,
                      "confirmed group deletion did not update the sidebar")
+            activate_menu_item(Atspi, "Undo")
+            wait_for(lambda: group_count(Atspi, "T7VTB") > original_groups,
+                     "undo did not restore the deleted group")
+            activate_menu_item(Atspi, "Redo")
+            wait_for(lambda: group_count(Atspi, "T7VTB") == original_groups,
+                     "redo did not delete the group again")
+            activate_menu_item(Atspi, "Undo")
+            activate_menu_item(Atspi, "Undo")
+            wait_for(lambda: group_count(Atspi, "T7VTB") == original_groups,
+                     "undo did not remove the duplicated group")
+            assert target.read_bytes() == original
 
-            add = wait_for(lambda: named(Atspi, "Add a group"),
-                           "add group menu was not exposed")
-            assert add.get_action_iface().do_action(0)
-            extended_audio = wait_for(lambda: named(Atspi, "Extended Audio Block"),
-                                      "safe audio template was not listed")
-            assert extended_audio.get_action_iface().do_action(0)
-            wait_for(lambda: count_named_part(Atspi, "ADB: Audio Data Block") > 0,
+            activate_menu_item(Atspi, "Extended Audio Block", menu="Add a group")
+            wait_for(lambda: group_count(Atspi, "ADB") > 0,
                      "extended audio block was not added")
-            delete = wait_for(lambda: named(Atspi, "Delete group (Delete)"),
-                              "delete group action was not exposed")
-            assert delete.get_action_iface().do_action(0)
-            confirm = wait_for(lambda: named(Atspi, "Delete", Atspi.Role.PUSH_BUTTON),
-                               "audio block delete confirmation did not open")
-            assert confirm.get_action_iface().do_action(0)
-            wait_for(lambda: count_named_part(Atspi, "ADB: Audio Data Block") == 0,
+            activate_menu_item(Atspi, "Undo")
+            wait_for(lambda: group_count(Atspi, "ADB") == 0,
+                     "undo did not remove the added audio block")
+            activate_menu_item(Atspi, "Redo")
+            wait_for(lambda: group_count(Atspi, "ADB") > 0,
+                     "redo did not add the audio block again")
+            press(Atspi, "Delete group (Delete)")
+            press(Atspi, "Delete", Atspi.Role.PUSH_BUTTON)
+            wait_for(lambda: group_count(Atspi, "ADB") == 0,
                      "audio block was not deleted")
 
+            select_group(Atspi, 21)
             spin = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
                             "timing editor did not open")
             assert int(spin.get_value_iface().get_current_value()) == 241500
-            fields_button = named(Atspi, "Fields")
-            assert fields_button is not None and fields_button.get_action_iface().do_action(0)
-            pixel_entry = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.ENTRY),
+            press(Atspi, "Fields")
+            pixel_entry = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.TEXT),
                                    "field editor did not expose its label")
-            text = pixel_entry.get_editable_text_iface()
-            original_pixel_text = text.get_text(0, pixel_entry.get_text_iface()
-                                                .get_character_count())
-            text.set_text_contents("not-a-number")
-            wait_for(lambda: any(node.get_name().startswith("Pixel clock:")
-                                 for node in nodes(Atspi)),
+            original_pixel_text = text_of(Atspi, pixel_entry)
+            assert original_pixel_text
+            pixel_entry.get_editable_text_iface().set_text_contents("not-a-number")
+            wait_for(lambda: named(Atspi, "Enter a valid value", Atspi.Role.LABEL),
                      "field-local validation detail did not appear")
-            text.set_text_contents(original_pixel_text)
-            wait_for(lambda: not any(node.get_name().startswith("Pixel clock:")
-                                     for node in nodes(Atspi)),
+            pixel_entry.get_editable_text_iface().set_text_contents(original_pixel_text)
+            wait_for(lambda: named(Atspi, "Enter a valid value", Atspi.Role.LABEL) is None,
                      "field-local validation detail did not clear")
-            byte_button = named(Atspi, "Bytes")
-            assert byte_button is not None and byte_button.get_action_iface().do_action(0)
+
+            press(Atspi, "Bytes")
             raw = wait_for(lambda: named(Atspi, "Selected group bytes"),
                            "byte view was not exposed")
-            text_iface = raw.get_text_iface()
-            raw_before = text_iface.get_text(0, text_iface.get_character_count())
-            timing_button = named(Atspi, "Timing")
-            assert timing_button is not None and timing_button.get_action_iface().do_action(0)
+            raw_before = text_of(Atspi, raw)
+            assert "0084" in raw_before and "Hex bytes" in raw_before
+            press(Atspi, "Timing")
             spin = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
                             "timing editor did not reopen")
-            spin.get_component_iface().grab_focus()
-            for value in (241501, 241502, 241503):
-                assert spin.get_value_iface().set_current_value(value)
-            menu = named(Atspi, "Main menu")
-            assert menu is not None and menu.get_component_iface().grab_focus()
-            shortcut("ctrl+z")
-            assert int(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
-                       .get_value_iface().get_current_value()) == 241500
-            shortcut("ctrl+shift+z")
-            assert int(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
-                       .get_value_iface().get_current_value()) == 241503
-
-            byte_button = named(Atspi, "Bytes")
-            assert byte_button is not None and byte_button.get_action_iface().do_action(0)
+            assert spin.get_value_iface().set_current_value(241503)
+            activate_menu_item(Atspi, "Undo")
+            wait_for(lambda: int(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
+                                 .get_value_iface().get_current_value()) == 241500,
+                     "undo did not restore the pixel clock")
+            activate_menu_item(Atspi, "Redo")
+            wait_for(lambda: int(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
+                                 .get_value_iface().get_current_value()) == 241503,
+                     "redo did not reapply the pixel clock")
+            press(Atspi, "Bytes")
             raw = wait_for(lambda: named(Atspi, "Selected group bytes"),
                            "byte view was not exposed")
-            text_iface = raw.get_text_iface()
-            raw_text = text_iface.get_text(0, text_iface.get_character_count())
-            assert "0084" in raw_text and "Hex bytes" in raw_text
-            assert raw_text != raw_before
+            assert text_of(Atspi, raw) != raw_before
 
-            shortcut("ctrl+s")
+            press(Atspi, "Save", Atspi.Role.PUSH_BUTTON)
             wait_for(lambda: target.read_bytes() != original, "save did not write edits")
             saved = target.read_bytes()
             assert len(saved) == len(original)
             assert all(sum(saved[index:index + 128]) % 256 == 0
                        for index in range(0, len(saved), 128))
 
-            shortcut("ctrl+shift+s")
-            result = subprocess.run(["xdotool", "search", "--name", "Save EDID binary"],
-                                    capture_output=True)
-            assert result.returncode == 0
-            shortcut("Escape")
+            activate_menu_item(Atspi, "Save As…")
+            wait_for(lambda: window_exists("Save EDID binary"),
+                     "Save As did not open a file dialog")
+            press(Atspi, "Cancel", Atspi.Role.PUSH_BUTTON)
+            wait_for(lambda: not window_exists("Save EDID binary"),
+                     "Save As dialog did not close")
 
-            menu = named(Atspi, "Main menu")
-            assert menu is not None and menu.get_action_iface().do_action(0)
-            about = wait_for(lambda: named(Atspi, "About EDID Editor"),
-                             "About menu item did not appear")
-            assert about.get_action_iface().do_action(0)
-            wait_for(lambda: named(Atspi, "About EDID Editor", Atspi.Role.DIALOG),
-                     "About dialog did not open")
-            shortcut("Escape")
+            activate_menu_item(Atspi, "About EDID Editor")
+            wait_for(lambda: named(Atspi, "EDID Editor", Atspi.Role.LABEL),
+                     "About dialog did not show the application name")
+            close_dialog(Atspi, "About")
+
+            activate_menu_item(Atspi, "Keyboard Shortcuts")
+            wait_for(lambda: named(Atspi, "Duplicate group"),
+                     "keyboard shortcuts dialog did not list group shortcuts")
+            close_dialog(Atspi, "Keyboard Shortcuts")
+
+            search = named(Atspi, "Search groups", Atspi.Role.ENTRY)
+            search.get_editable_text_iface().set_text_contents("MND")
+            wait_for(lambda: count_named_part(Atspi, "MND: ") > 0 and
+                     count_named_part(Atspi, "BED: ") == 0,
+                     "search did not narrow the list to the monitor name")
+            select_group(Atspi, 1)
+            press(Atspi, "Fields")
+            wait_for(lambda: named(Atspi, "Monitor name", Atspi.Role.LABEL),
+                     "read-only monitor name was not shown as text")
+            assert named(Atspi, "Monitor name", Atspi.Role.TEXT) is None
+            activate_menu_item(Atspi, "Edit Read-Only Fields")
+            wait_for(lambda: named(Atspi, "Monitor name", Atspi.Role.TEXT),
+                     "read-only field did not become editable")
         finally:
             stop_app(process)
 
@@ -250,16 +373,71 @@ def readonly(Atspi, app, fixture):
         original = target.read_bytes()
         process = launch_app(Atspi, app, str(target))
         try:
-            lists = [node for node in nodes(Atspi) if node.get_role() == Atspi.Role.LIST]
-            assert lists and lists[-1].get_selection_iface().select_child(21)
+            select_group(Atspi, 21)
             spin = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
                             "timing editor did not open")
             assert spin.get_value_iface().set_current_value(241501)
-            shortcut("ctrl+s")
-            result = subprocess.run(["xdotool", "search", "--name", "Save EDID binary"],
-                                    capture_output=True)
-            assert result.returncode == 0
+            press(Atspi, "Save", Atspi.Role.PUSH_BUTTON)
+            wait_for(lambda: window_exists("Save EDID binary"),
+                     "saving a read-only file did not ask for a new file")
             assert target.read_bytes() == original
+        finally:
+            stop_app(process)
+
+
+def hex_import(Atspi, app, fixture):
+    with tempfile.TemporaryDirectory(prefix="wxedid-hex-") as directory:
+        source = Path(directory) / "display.hex"
+        data = Path(fixture).read_bytes()
+        rows = [" ".join(f"{byte:02x}" for byte in data[index:index + 16])
+                for index in range(0, len(data), 16)]
+        source.write_text("\n".join(rows) + "\n")
+        original = source.read_bytes()
+        process = launch_app(Atspi, app, str(source))
+        try:
+            wait_for(lambda: any(name_of(node).startswith("Imported")
+                                 for node in nodes(Atspi)),
+                     "hex import was not marked as imported")
+            wait_for(lambda: group_count(Atspi, "T7VTB") > 0,
+                     "imported hex did not parse the CTA-861 block")
+            for item, title in (("Export Hex…", "Export EDID as hex"),
+                                ("Save Report…", "Save EDID report")):
+                activate_menu_item(Atspi, item)
+                wait_for(lambda: window_exists(title), f"{title} dialog did not open")
+                press(Atspi, "Cancel", Atspi.Role.PUSH_BUTTON)
+                wait_for(lambda: not window_exists(title), f"{title} dialog did not close")
+            select_group(Atspi, 21)
+            spin = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
+                            "timing editor did not open")
+            assert spin.get_value_iface().set_current_value(241501)
+            press(Atspi, "Save", Atspi.Role.PUSH_BUTTON)
+            wait_for(lambda: window_exists("Save EDID binary"),
+                     "saving imported hex did not ask for a binary file")
+            assert source.read_bytes() == original
+        finally:
+            stop_app(process)
+
+
+def broken(Atspi, app, fixture):
+    with tempfile.TemporaryDirectory(prefix="wxedid-broken-") as directory:
+        target = Path(directory) / "broken.bin"
+        data = bytearray(Path(fixture).read_bytes())
+        data[126] += 1
+        data[127] = (-sum(data[:127])) & 0xff
+        target.write_bytes(bytes(data))
+        process = launch_app(Atspi, app, str(target), title="EDID Editor")
+        try:
+            wait_for(lambda: named(Atspi, "Open Anyway"),
+                     "broken EDID did not offer to open anyway")
+            assert named(Atspi, "Block 0: Base EDID") is None
+            press(Atspi, "Open Anyway")
+            wait_for(lambda: named(Atspi, "Block 0: Base EDID"),
+                     "opening anyway did not load the EDID")
+            wait_for(lambda: group_count(Atspi, "T7VTB") > 0,
+                     "opening anyway did not parse the present extension")
+            wait_for(lambda: any(name_of(node).startswith("Modified")
+                                 for node in nodes(Atspi)),
+                     "the corrected block count was not marked as a change")
         finally:
             stop_app(process)
 
@@ -273,10 +451,15 @@ def inside(app, fixture, scenario):
         functional(Atspi, app, fixture)
     elif scenario == "readonly":
         readonly(Atspi, app, fixture)
+    elif scenario == "hex":
+        hex_import(Atspi, app, fixture)
+    elif scenario == "broken":
+        broken(Atspi, app, fixture)
     else:
         process = launch_app(Atspi, app, fixture)
         time.sleep(1)
         stop_app(process)
+    (Path(os.environ["XDG_RUNTIME_DIR"]) / "scenario-passed").touch()
 
 
 def main():
@@ -289,6 +472,8 @@ def main():
     fixture = str(Path(sys.argv[2]).resolve())
     run_session(script, app, fixture, 900, "functional")
     run_session(script, app, fixture, 900, "readonly")
+    run_session(script, app, fixture, 900, "hex")
+    run_session(script, app, fixture, 900, "broken")
     run_session(script, app, fixture, 360, "compact")
 
 

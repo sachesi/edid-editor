@@ -13,6 +13,7 @@
 #include "EDID_class.h"
 #include "CEA_class.h"
 #include "CEA_ET_class.h"
+#include "EDID_text.h"
 #include "wxedid-config.h"
 
 #include <cstdio>
@@ -28,7 +29,17 @@
 
 struct wxedid_timing;
 
+enum history_kind {
+   HISTORY_FIELD,  //field value change
+   HISTORY_INSERT, //group inserted at index of array
+   HISTORY_REMOVE, //group removed from index of array
+   HISTORY_MOVE,   //group moved from index one step up or down
+};
+
+//Structural entries own their group while it is out of the document: an
+//insert while undone, a removal while applied.
 struct wxedid_history_entry {
+   history_kind  kind;
    edi_grp_cl*   group;
    edi_dynfld_t* field;
    bool          integer;
@@ -36,6 +47,10 @@ struct wxedid_history_entry {
    std::string   after_text;
    u32_t         before_value;
    u32_t         after_value;
+   GroupAr_cl*   array;
+   edi_grp_cl*   parent; //sub-group parent, restores into an emptied array
+   u32_t         index;
+   bool          up;
 };
 
 //------------
@@ -85,17 +100,27 @@ struct wxedid_wnd {
    GSimpleAction*      move_down_action;
    GSimpleAction*      add_cta_action;
    GSimpleAction*      add_displayid_action;
+   GSimpleAction*      export_hex_action;
+   GSimpleAction*      save_report_action;
+   GSimpleAction*      ignore_errors_action;
+   GSimpleAction*      ignore_read_only_action;
    GtkPopoverMenu*     group_menu;
    edi_grp_cl*         pending_delete;
+   edi_grp_cl*         last_selected;  //restored when a search shows it again
    std::string         tree_query;
+   std::string         source_path;   //last file opened or attempted
+   bool                source_hex;    //source_path holds hexadecimal text
    std::vector<wxedid_history_entry> history;
    size_t              history_position;
    long                saved_history_position;
    bool                loaded;
    bool                dirty;
    bool                source_writable;
+   bool                document_hex;  //document was imported from hex text
+   bool                load_had_errors;
    bool                applying_history;
    bool                banner_is_validation;
+   bool                banner_offers_retry;
    bool                close_confirmation_open;
    bool                details_available;
    u32_t               invalid_fields;
@@ -295,8 +320,11 @@ static void row_set_valid(wxedid_row* row, bool valid) {
 }
 
 static void row_show_validation(wxedid_row* row, rcode result) {
-   char detail[512];
-   wxedid_RCD_GET_MSG(result, detail, sizeof(detail));
+   //only volatile-message faults carry text; others name a source location
+   char detail[512] = "Enter a valid value";
+   if (result.detail.rcode == RCD_FVMSG) {
+      wxedid_RCD_GET_MSG(result, detail, sizeof(detail));
+   }
    const char* message = detail;
    if (g_str_has_prefix(message, "[E!] ")) message += 5;
    gtk_label_set_text(row->error_label, message);
@@ -307,6 +335,9 @@ static void row_show_validation(wxedid_row* row, rcode result) {
    snprintf(banner, sizeof(banner), "%s: %s", field.c_str(), message);
    adw_banner_set_title(row->wnd->banner, banner);
    adw_banner_set_button_label(row->wnd->banner, NULL);
+   adw_banner_set_revealed(row->wnd->banner, TRUE);
+   row->wnd->banner_is_validation = true;
+   row->wnd->banner_offers_retry = false;
 }
 
 static void row_clear_validation(wxedid_row* row) {
@@ -526,6 +557,22 @@ static std::string field_help_summary(const char* description) {
    return summary;
 }
 
+//dropdown button: ellipsize long value names so cards keep their width
+static void dropdown_label_setup(GtkSignalListItemFactory*, GtkListItem* item,
+                                 gpointer ellipsize) {
+   GtkWidget* label = gtk_label_new(NULL);
+   gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+   if (ellipsize != NULL) gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
+   gtk_list_item_set_child(item, label);
+}
+
+static void dropdown_label_bind(GtkSignalListItemFactory*, GtkListItem* item,
+                                gpointer) {
+   GtkStringObject* value = GTK_STRING_OBJECT(gtk_list_item_get_item(item));
+   gtk_label_set_text(GTK_LABEL(gtk_list_item_get_child(item)),
+                      gtk_string_object_get_string(value));
+}
+
 static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
                         wxedid_wnd* wnd) {
    //drop old rows
@@ -570,7 +617,16 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
       gtk_widget_add_css_class(label, "caption");
       gtk_widget_add_css_class(label, "dim-label");
-      gtk_box_append(GTK_BOX(card_content), label);
+      gtk_widget_set_hexpand(label, TRUE);
+      GtkWidget* title_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+      gtk_box_append(GTK_BOX(title_row), label);
+      if ((pfld->field.flags & F_NU) != 0) {
+         GtkWidget* unused = gtk_label_new("Not used");
+         gtk_widget_add_css_class(unused, "caption");
+         gtk_widget_add_css_class(unused, "dim-label");
+         gtk_box_append(GTK_BOX(title_row), unused);
+      }
+      gtk_box_append(GTK_BOX(card_content), title_row);
 
       GtkWidget* validation = gtk_label_new(NULL);
       gtk_label_set_xalign(GTK_LABEL(validation), 0.0);
@@ -603,6 +659,20 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
 
             GtkDropDown* dd = GTK_DROP_DOWN(gtk_drop_down_new(
                G_LIST_MODEL(items), NULL));
+            GtkListItemFactory* button_factory = gtk_signal_list_item_factory_new();
+            g_signal_connect(button_factory, "setup",
+                             G_CALLBACK(dropdown_label_setup), GINT_TO_POINTER(1));
+            g_signal_connect(button_factory, "bind",
+                             G_CALLBACK(dropdown_label_bind), NULL);
+            gtk_drop_down_set_factory(dd, button_factory);
+            g_object_unref(button_factory);
+            GtkListItemFactory* list_factory = gtk_signal_list_item_factory_new();
+            g_signal_connect(list_factory, "setup",
+                             G_CALLBACK(dropdown_label_setup), NULL);
+            g_signal_connect(list_factory, "bind",
+                             G_CALLBACK(dropdown_label_bind), NULL);
+            gtk_drop_down_set_list_factory(dd, list_factory);
+            g_object_unref(list_factory);
             gtk_drop_down_set_selected(dd, (cur >= 0) ? (guint) cur : GTK_INVALID_LIST_POSITION);
             gtk_widget_set_hexpand(GTK_WIDGET(dd), TRUE);
             gtk_widget_set_halign(GTK_WIDGET(dd), GTK_ALIGN_FILL);
@@ -623,7 +693,7 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       }
 
       if (widget == NULL) {
-         if (field_writable(pfld->field)) {
+         if (field_writable(pfld->field) || pEDID->b_RD_Ignore) {
             //text entry
             GtkEntry* entry = GTK_ENTRY(gtk_entry_new());
             gtk_editable_set_text(GTK_EDITABLE(entry), sval.c_str());
@@ -663,7 +733,18 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
          }
       }
 
-      gtk_box_append(GTK_BOX(card_content), widget);
+      wxc_String unit;
+      pEDID->getValUnitName(unit, pfld->field.flags);
+      if (unit.IsEmpty()) {
+         gtk_box_append(GTK_BOX(card_content), widget);
+      } else {
+         GtkWidget* value_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+         gtk_box_append(GTK_BOX(value_row), widget);
+         GtkWidget* unit_label = gtk_label_new(unit.c_str());
+         gtk_widget_add_css_class(unit_label, "dim-label");
+         gtk_box_append(GTK_BOX(value_row), unit_label);
+         gtk_box_append(GTK_BOX(card_content), value_row);
+      }
       gtk_box_append(GTK_BOX(card_content), validation);
       gtk_accessible_update_property(GTK_ACCESSIBLE(widget),
                                      GTK_ACCESSIBLE_PROPERTY_LABEL,
@@ -1302,6 +1383,20 @@ static void tree_filter_items_changed(GListModel*, guint, guint, guint,
    wnd_update_search_state(static_cast<wxedid_wnd*>(user_data));
 }
 
+static guint wnd_filtered_position(wxedid_wnd* wnd, edi_grp_cl* group) {
+   guint count = g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_filtered));
+   for (guint position=0; position<count; position++) {
+      GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+         g_list_model_get_item(G_LIST_MODEL(wnd->tree_filtered), position));
+      GObject* object = G_OBJECT(gtk_tree_list_row_get_item(row));
+      bool found = WXEDID_ITEM(object)->pgrp == group;
+      g_object_unref(object);
+      g_object_unref(row);
+      if (found) return position;
+   }
+   return GTK_INVALID_LIST_POSITION;
+}
+
 static void tree_search_changed(GtkSearchEntry* entry, gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
    char* folded = g_utf8_casefold(gtk_editable_get_text(GTK_EDITABLE(entry)), -1);
@@ -1309,6 +1404,12 @@ static void tree_search_changed(GtkSearchEntry* entry, gpointer user_data) {
    g_free(folded);
    gtk_filter_changed(GTK_FILTER(wnd->tree_filter), GTK_FILTER_CHANGE_DIFFERENT);
    wnd_update_search_state(wnd);
+   if ((wnd->last_selected != NULL) &&
+       (gtk_single_selection_get_selected_item(wnd->tree_sel) == NULL)) {
+      guint position = wnd_filtered_position(wnd, wnd->last_selected);
+      if (position != GTK_INVALID_LIST_POSITION)
+         gtk_single_selection_set_selected(wnd->tree_sel, position);
+   }
 }
 
 static void tree_search_clear(GtkButton*, gpointer user_data) {
@@ -1542,6 +1643,38 @@ static void wnd_update_history_state(wxedid_wnd* wnd) {
                                wnd->history_position < wnd->history.size());
 }
 
+static bool history_entry_owns_group(const wxedid_wnd* wnd, size_t index) {
+   const wxedid_history_entry& entry = wnd->history[index];
+   if (entry.kind == HISTORY_INSERT) return index >= wnd->history_position;
+   if (entry.kind == HISTORY_REMOVE) return index < wnd->history_position;
+   return false;
+}
+
+static void wnd_drop_history(wxedid_wnd* wnd, size_t from) {
+   for (size_t index=from; index<wnd->history.size(); index++) {
+      if (history_entry_owns_group(wnd, index)) delete wnd->history[index].group;
+   }
+   wnd->history.erase(wnd->history.begin() + from, wnd->history.end());
+}
+
+static void wnd_clear_history(wxedid_wnd* wnd) {
+   wnd_drop_history(wnd, 0);
+   wnd->history_position = 0;
+}
+
+static void wnd_push_history(wxedid_wnd* wnd, const wxedid_history_entry& entry) {
+   if (wnd->history_position < wnd->history.size()) {
+      if ((wnd->saved_history_position >= 0) &&
+          (static_cast<size_t>(wnd->saved_history_position) > wnd->history_position)) {
+         wnd->saved_history_position = -1;
+      }
+      wnd_drop_history(wnd, wnd->history_position);
+   }
+   wnd->history.push_back(entry);
+   wnd->history_position = wnd->history.size();
+   wnd_update_history_state(wnd);
+}
+
 static void wnd_record_history(wxedid_wnd* wnd, edi_grp_cl* group,
                                edi_dynfld_t* field, bool integer,
                                const wxc_String& before_text, u32_t before_value,
@@ -1549,19 +1682,70 @@ static void wnd_record_history(wxedid_wnd* wnd, edi_grp_cl* group,
    if (wnd->applying_history) return;
    if (integer ? (before_value == after_value) : (before_text == after_text)) return;
 
-   if (wnd->history_position < wnd->history.size()) {
-      if ((wnd->saved_history_position >= 0) &&
-          (static_cast<size_t>(wnd->saved_history_position) > wnd->history_position)) {
-         wnd->saved_history_position = -1;
-      }
-      wnd->history.erase(wnd->history.begin() + wnd->history_position,
-                         wnd->history.end());
+   wxedid_history_entry entry = {};
+   entry.kind = HISTORY_FIELD;
+   entry.group = group;
+   entry.field = field;
+   entry.integer = integer;
+   entry.before_text = before_text.c_str();
+   entry.after_text = after_text.c_str();
+   entry.before_value = before_value;
+   entry.after_value = after_value;
+   wnd_push_history(wnd, entry);
+}
+
+static void wnd_record_structure(wxedid_wnd* wnd, history_kind kind,
+                                 edi_grp_cl* group, GroupAr_cl* array,
+                                 u32_t index, bool up, edi_grp_cl* parent) {
+   wxedid_history_entry entry = {};
+   entry.kind = kind;
+   entry.group = group;
+   entry.array = array;
+   entry.parent = parent;
+   entry.index = index;
+   entry.up = up;
+   wnd_push_history(wnd, entry);
+}
+
+//insert a group that a removal took out, at its original index
+static void history_restore_group(const wxedid_history_entry& entry) {
+   GroupAr_cl* array = entry.array;
+   if (array->GetCount() == 0) {
+      array->InsertInto(entry.parent, entry.group);
+   } else if (entry.index > 0) {
+      array->InsertDn(entry.index - 1, entry.group);
+   } else {
+      array->InsertUp(0, entry.group);
    }
-   wnd->history.push_back({group, field, integer,
-                           before_text.c_str(), after_text.c_str(),
-                           before_value, after_value});
-   wnd->history_position = wnd->history.size();
-   wnd_update_history_state(wnd);
+}
+
+//replay or revert a structural entry; returns the group to select
+static edi_grp_cl* history_apply_structure(const wxedid_history_entry& entry,
+                                           bool redo, bool* ok) {
+   GroupAr_cl* array = entry.array;
+   *ok = true;
+   if (entry.kind == HISTORY_MOVE) {
+      if (redo) {
+         if (entry.up) array->MoveUp(entry.index); else array->MoveDn(entry.index);
+      } else {
+         if (entry.up) array->MoveDn(entry.index - 1); else array->MoveUp(entry.index + 1);
+      }
+      return entry.group;
+   }
+
+   bool insert = (entry.kind == HISTORY_INSERT) == redo;
+   if (insert) {
+      history_restore_group(entry);
+      return entry.group;
+   }
+   if ((entry.index >= array->GetCount()) ||
+       (array->Item(entry.index) != entry.group) ||
+       (array->Cut(entry.index) != entry.group)) {
+      *ok = false;
+      return NULL;
+   }
+   if (entry.index < array->GetCount()) return array->Item(entry.index);
+   return (entry.index > 0) ? array->Item(entry.index - 1) : entry.parent;
 }
 
 static void wnd_apply_history(wxedid_wnd* wnd, bool redo) {
@@ -1573,6 +1757,23 @@ static void wnd_apply_history(wxedid_wnd* wnd, bool redo) {
 
    size_t index = redo ? wnd->history_position : wnd->history_position - 1;
    const wxedid_history_entry& entry = wnd->history[index];
+   if (entry.kind != HISTORY_FIELD) {
+      bool ok = false;
+      edi_grp_cl* selection = history_apply_structure(entry, redo, &ok);
+      if (! ok) {
+         wnd->doc->GLog.DoLog(
+            "[E!] Couldn’t restore the previous structure. Reopen the file before "
+            "editing again.");
+         return;
+      }
+      wnd->history_position = redo ? index + 1 : index;
+      wnd->invalid_fields = 0;
+      wnd_rebuild_tree(wnd, selection);
+      wnd_update_history_state(wnd);
+      wnd_update_document_ui(wnd);
+      return;
+   }
+
    wxc_String text(redo ? entry.after_text.c_str() : entry.before_text.c_str());
    u32_t value = redo ? entry.after_value : entry.before_value;
    wnd->applying_history = true;
@@ -1617,6 +1818,7 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
    if (obj == NULL) return;
 
    wxedid_item* it = WXEDID_ITEM(obj);
+   wnd->last_selected = it->pgrp;
    wxc_String group_name;
    if (it->pgrp != NULL) {
       it->pgrp->getGrpName(*it->pEDID, group_name);
@@ -1636,6 +1838,8 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
       adw_overlay_split_view_set_show_sidebar(wnd->split_view, FALSE);
    }
    wnd_update_group_actions(wnd);
+   gtk_list_view_scroll_to(wnd->tree, gtk_single_selection_get_selected(wnd->tree_sel),
+                           GTK_LIST_SCROLL_NONE, NULL);
 
    g_object_unref(obj);   //gtk_tree_list_row_get_item() transfers a full ref
 }
@@ -1643,9 +1847,6 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
 static void wnd_finish_structure_change(wxedid_wnd* wnd,
                                         edi_grp_cl* selection,
                                         const char* message) {
-   wnd->history.clear();
-   wnd->history_position = 0;
-   wnd->saved_history_position = -1;
    wnd->invalid_fields = 0;
    wnd_rebuild_tree(wnd, selection);
    wnd_update_history_state(wnd);
@@ -1668,6 +1869,8 @@ static void wnd_on_duplicate_group(GSimpleAction*, GVariant*, gpointer user_data
       return;
    }
    array->InsertDn(group->getParentArIdx(), copy);
+   wnd_record_structure(wnd, HISTORY_INSERT, copy, array, copy->getParentArIdx(),
+                        false, copy->getParentGrp());
    wnd_finish_structure_change(wnd, copy, "Group duplicated");
 }
 
@@ -1678,6 +1881,8 @@ static void wnd_move_group(wxedid_wnd* wnd, bool up) {
    u32_t index = group->getParentArIdx();
    if (up ? array->CanMoveUp(index) : array->CanMoveDn(index)) {
       if (up) array->MoveUp(index); else array->MoveDn(index);
+      wnd_record_structure(wnd, HISTORY_MOVE, group, array, index, up,
+                           group->getParentGrp());
       wnd_finish_structure_change(wnd, group,
                                   up ? "Group moved up" : "Group moved down");
    }
@@ -1703,11 +1908,14 @@ static void wnd_on_delete_group_response(GObject* source, GAsyncResult* result,
    if ((array == NULL) || ! array->CanDelete(group->getParentArIdx())) return;
 
    u32_t index = group->getParentArIdx();
+   edi_grp_cl* parent = group->getParentGrp();
    edi_grp_cl* next = (index + 1 < array->GetCount()) ? array->Item(index + 1) :
-                      (index > 0) ? array->Item(index - 1) : NULL;
-   wnd->history.clear();
-   wnd->history_position = 0;
-   array->Delete(index);
+                      (index > 0) ? array->Item(index - 1) : parent;
+   if (array->Cut(index) != group) {
+      wnd_show_error(wnd, "This group couldn’t be deleted");
+      return;
+   }
+   wnd_record_structure(wnd, HISTORY_REMOVE, group, array, index, false, parent);
    wnd_finish_structure_change(wnd, next, "Group deleted");
 }
 
@@ -1785,6 +1993,8 @@ static void wnd_on_add_cta_group(GSimpleAction*, GVariant* parameter,
       wnd_show_error(wnd, "This CTA group does not fit in the selected block");
       return;
    }
+   wnd_record_structure(wnd, HISTORY_INSERT, group, array, group->getParentArIdx(),
+                        false, NULL);
    wnd_finish_structure_change(wnd, group, "CTA group added");
 }
 
@@ -1802,6 +2012,8 @@ static void wnd_on_add_displayid_group(GSimpleAction*, GVariant*,
       wnd_show_error(wnd, "A DisplayID block does not fit in the selected section");
       return;
    }
+   wnd_record_structure(wnd, HISTORY_INSERT, group, array, group->getParentArIdx(),
+                        false, NULL);
    wnd_finish_structure_change(wnd, group, "DisplayID data block added");
 }
 
@@ -1865,13 +2077,16 @@ static gboolean wnd_on_tree_key(GtkEventControllerKey*, guint keyval,
 static void wnd_update_document_ui(wxedid_wnd* wnd) {
    bool can_save = wnd->loaded && wnd->dirty && (wnd->invalid_fields == 0);
    g_simple_action_set_enabled(wnd->save_action, can_save);
-   g_simple_action_set_enabled(wnd->save_as_action,
-                               wnd->loaded && (wnd->invalid_fields == 0));
+   bool can_write = wnd->loaded && (wnd->invalid_fields == 0);
+   g_simple_action_set_enabled(wnd->save_as_action, can_write);
+   g_simple_action_set_enabled(wnd->export_hex_action, can_write);
+   g_simple_action_set_enabled(wnd->save_report_action, can_write);
    gtk_widget_set_visible(wnd->save_button, wnd->loaded);
    gtk_button_set_label(GTK_BUTTON(wnd->save_button), "_Save");
    gtk_button_set_use_underline(GTK_BUTTON(wnd->save_button), TRUE);
    gtk_widget_set_tooltip_text(
       wnd->save_button,
+      wnd->document_hex    ? "Save as an EDID binary (Ctrl+S)" :
       wnd->source_writable ? "Save changes (Ctrl+S)" :
                              "Save a writable copy (Ctrl+S)");
 
@@ -1881,7 +2096,11 @@ static void wnd_update_document_ui(wxedid_wnd* wnd) {
       char* window_name = g_strdup_printf("%s — EDID Editor", basename);
       const char* state = wnd->dirty ? "Modified" : NULL;
       char* subtitle = NULL;
-      if (! wnd->source_writable && (state != NULL)) {
+      if (wnd->document_hex) {
+         subtitle = (state != NULL)
+            ? g_strdup_printf("%s · Imported · %s", state, display_path)
+            : g_strdup_printf("Imported · %s", display_path);
+      } else if (! wnd->source_writable && (state != NULL)) {
          subtitle = g_strdup_printf("%s · Read-only · %s", state, display_path);
       } else if (! wnd->source_writable) {
          subtitle = g_strdup_printf("Read-only · %s", display_path);
@@ -1910,6 +2129,7 @@ static void wnd_update_document_ui(wxedid_wnd* wnd) {
       adw_banner_set_button_label(wnd->banner, NULL);
       adw_banner_set_revealed(wnd->banner, TRUE);
       wnd->banner_is_validation = true;
+      wnd->banner_offers_retry = false;
    } else if (wnd->banner_is_validation) {
       adw_banner_set_revealed(wnd->banner, FALSE);
       wnd->banner_is_validation = false;
@@ -1931,6 +2151,7 @@ static void wnd_show_error(wxedid_wnd* wnd, const char* message) {
    adw_banner_set_button_label(wnd->banner, "Details");
    adw_banner_set_revealed(wnd->banner, TRUE);
    wnd->banner_is_validation = false;
+   wnd->banner_offers_retry = false;
 }
 
 static void wnd_clear_feedback(wxedid_wnd* wnd) {
@@ -1943,6 +2164,7 @@ static void wnd_clear_feedback(wxedid_wnd* wnd) {
    wnd_update_header_controls(wnd);
    adw_banner_set_revealed(wnd->banner, FALSE);
    wnd->banner_is_validation = false;
+   wnd->banner_offers_retry = false;
 }
 
 static void wnd_on_details_action(GSimpleAction* action, GVariant* /*parameter*/,
@@ -1957,8 +2179,17 @@ static void wnd_on_details_action(GSimpleAction* action, GVariant* /*parameter*/
                                visible ? "Hide details" : "Show details");
 }
 
+static void wnd_reload_source(wxedid_wnd* wnd);
+
 static void wnd_on_banner_details(AdwBanner* /*banner*/, gpointer user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+   if (wnd->banner_offers_retry) {
+      wnd->doc->EDID.b_ERR_Ignore = true;
+      g_simple_action_set_state(wnd->ignore_errors_action,
+                                g_variant_new_boolean(TRUE));
+      wnd_reload_source(wnd);
+      return;
+   }
    GVariant* state = g_action_get_state(G_ACTION(wnd->details_action));
    bool visible = g_variant_get_boolean(state);
    g_variant_unref(state);
@@ -1996,12 +2227,13 @@ static void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group = NULL) {
       }
    }
 
+   wnd->last_selected = NULL;
    gtk_single_selection_set_selected(wnd->tree_sel, GTK_INVALID_LIST_POSITION);
    gtk_filter_list_model_set_model(wnd->tree_filtered, NULL);
    g_clear_object(&wnd->tree_model);
+   //the tree list model takes ownership of root
    wnd->tree_model = gtk_tree_list_model_new(
       G_LIST_MODEL(root), FALSE, FALSE, tree_item_expand, NULL, NULL);
-   g_object_unref(root);
    gtk_editable_set_text(GTK_EDITABLE(wnd->tree_search), "");
    gtk_filter_list_model_set_model(wnd->tree_filtered,
                                    G_LIST_MODEL(wnd->tree_model));
@@ -2035,64 +2267,66 @@ static void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group = NULL) {
    gtk_single_selection_set_selected(wnd->tree_sel, selected);
 }
 
-static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
-   wnd_clear_feedback(wnd);
+static void wnd_offer_retry(wxedid_wnd* wnd) {
+   if (wnd->doc->EDID.b_ERR_Ignore || wnd->source_path.empty()) return;
+   adw_banner_set_button_label(wnd->banner, "Open Anyway");
+   adw_banner_set_revealed(wnd->banner, TRUE);
+   wnd->banner_offers_retry = true;
+}
 
-   FILE* in = fopen(path, "rb");
-   if (in == NULL) {
-      char msg[1400];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t open %s: %s. Check its permissions, then try again.",
-               path, strerror(errno));
-      wnd->doc->GLog.DoLog(msg);
-      return;
-   }
-
-   u8_t file_data[sizeof(edi_t) + 1] = {};
-   size_t rd = fread(file_data, 1, sizeof(file_data), in);
-   bool read_failed = (ferror(in) != 0);
-   int read_errno = errno;
-   fclose(in);
-
-   if (read_failed) {
-      char msg[1400];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t read %s: %s. Check the file, then try again.",
-               path, strerror(read_errno));
-      wnd->doc->GLog.DoLog(msg);
-      return;
-   }
-   if ((rd > sizeof(edi_t)) || (rd < sizeof(ediblk_t)) ||
-       ((rd % sizeof(ediblk_t)) != 0)) {
+static void wnd_load_bytes(wxedid_wnd* wnd, const char* path,
+                           const u8_t* data, size_t size, bool hex_source) {
+   bool ignore_errors = wnd->doc->EDID.b_ERR_Ignore;
+   bool partial = (size % sizeof(ediblk_t)) != 0;
+   if ((size == 0) || (size > sizeof(edi_t)) || (partial && ! ignore_errors)) {
       char msg[1400];
       snprintf(msg, sizeof(msg),
                "[E!] Couldn’t open %s: EDID data must contain 1 to 4 complete "
                "128-byte blocks. Choose another EDID file.", path);
       wnd->doc->GLog.DoLog(msg);
+      if ((size > 0) && (size <= sizeof(edi_t))) wnd_offer_retry(wnd);
       return;
    }
 
    edi_buf_t loaded = {};
-   memcpy(loaded.buff, file_data, rd);
+   memcpy(loaded.buff, data, size);
+   size_t blocks = (size + sizeof(ediblk_t) - 1) / sizeof(ediblk_t);
+   if (partial) {
+      char msg[160];
+      snprintf(msg, sizeof(msg),
+               "[i] The last block is incomplete; its missing %zu bytes are read as zero",
+               (blocks * sizeof(ediblk_t)) - size);
+      wnd->doc->GLog.DoLog(msg);
+   }
 
    u32_t n_extblk = loaded.edi.base.num_extblk;
-   size_t expected = (1U + n_extblk) * sizeof(ediblk_t);
-   if ((n_extblk > 3) || (rd != expected)) {
+   bool block_count_adjusted = false;
+   if ((n_extblk > 3) || ((1U + n_extblk) != blocks)) {
       char msg[192];
+      if (! ignore_errors) {
+         snprintf(msg, sizeof(msg),
+                  "[E!] Couldn’t open this EDID: it declares %u blocks, but the "
+                  "file contains %zu. Choose a file with a matching block count.",
+                  1U + n_extblk, blocks);
+         wnd->doc->GLog.DoLog(msg);
+         wnd_offer_retry(wnd);
+         return;
+      }
       snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t open this EDID: it declares %u blocks, but the "
-               "file contains %zu. Choose a file with a matching block count.",
-               1U + n_extblk, rd / sizeof(ediblk_t));
+               "[i] This EDID declares %u blocks, but %zu are present; the block "
+               "count now matches the data", 1U + n_extblk, blocks);
       wnd->doc->GLog.DoLog(msg);
-      return;
+      loaded.edi.base.num_extblk = static_cast<u8_t>(blocks - 1);
+      block_count_adjusted = true;
    }
 
    wnd->doc->EDID.Clear();
    edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
-   memcpy(pbuf->buff, loaded.buff, rd);
+   memcpy(pbuf->buff, loaded.buff, blocks * sizeof(ediblk_t));
 
    rcode retU;
    u32_t parsed_extblk = 0;
+   bool extension_failed = false;
 
    retU = wnd->doc->EDID.ParseEDID_Base(parsed_extblk);
    bool base_ok = RCD_IS_OK(retU);
@@ -2110,6 +2344,7 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
          if (parsed && ! RCD_IS_OK(retU)) {
             wnd->doc->GLog.PrintRcode(retU);
             wnd->doc->EDID.BlkGroupsAr[block]->Clear();
+            extension_failed = true;
          }
       }
       wnd->doc->EDID.ForceNumValidBlocks(1U + parsed_extblk);
@@ -2137,13 +2372,13 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    wnd->loaded = base_ok;
    wnd->dirty = false;
    wnd->source_writable = false;
+   wnd->document_hex = hex_source;
    wnd->invalid_fields = 0;
-   wnd->history.clear();
-   wnd->history_position = 0;
-   wnd->saved_history_position = 0;
+   wnd_clear_history(wnd);
+   wnd->saved_history_position = block_count_adjusted ? -1 : 0;
    if (base_ok) {
       snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
-      wnd->source_writable = (g_access(path, W_OK) == 0);
+      wnd->source_writable = ! hex_source && (g_access(path, W_OK) == 0);
       gtk_stack_set_visible_child_name(wnd->content_stack, "editor");
       wnd_rebuild_tree(wnd);
    } else {
@@ -2152,6 +2387,109 @@ static void wnd_load_file(wxedid_wnd* wnd, const char* path) {
    }
    wnd_update_history_state(wnd);
    wnd_update_document_ui(wnd);
+   wnd->load_had_errors = ! base_ok || extension_failed || partial ||
+                          block_count_adjusted;
+   if (! base_ok || extension_failed) wnd_offer_retry(wnd);
+}
+
+static bool path_is_hex_text(const char* path) {
+   char* folded = g_utf8_casefold(path, -1);
+   bool hex = g_str_has_suffix(folded, ".hex") || g_str_has_suffix(folded, ".txt");
+   g_free(folded);
+   return hex;
+}
+
+static void wnd_load_file(wxedid_wnd* wnd, const char* path, bool hex) {
+   wnd_clear_feedback(wnd);
+   wnd->source_path = path;
+   wnd->source_hex = hex;
+   wnd->load_had_errors = true;
+
+   if (hex) {
+      GStatBuf info;
+      if ((g_stat(path, &info) == 0) && (info.st_size > 65536)) {
+         char msg[1400];
+         snprintf(msg, sizeof(msg),
+                  "[E!] Couldn’t import %s: it is too large to be EDID hex text. "
+                  "Choose another file.", path);
+         wnd->doc->GLog.DoLog(msg);
+         return;
+      }
+      char* contents = NULL;
+      gsize length = 0;
+      GError* error = NULL;
+      if (! g_file_get_contents(path, &contents, &length, &error)) {
+         char msg[1400];
+         snprintf(msg, sizeof(msg),
+                  "[E!] Couldn’t read %s: %s. Check the file, then try again.",
+                  path, error->message);
+         wnd->doc->GLog.DoLog(msg);
+         g_error_free(error);
+         return;
+      }
+      std::vector<u8_t> bytes;
+      std::string problem;
+      bool decoded = edid_hex_decode(contents, length, bytes, problem);
+      g_free(contents);
+      if (! decoded) {
+         char msg[1400];
+         snprintf(msg, sizeof(msg),
+                  "[E!] Couldn’t import %s: %s. Choose a file with EDID hex data.",
+                  path, problem.c_str());
+         wnd->doc->GLog.DoLog(msg);
+         return;
+      }
+      wnd_load_bytes(wnd, path, bytes.data(), bytes.size(), true);
+      return;
+   }
+
+   FILE* in = fopen(path, "rb");
+   if (in == NULL) {
+      char msg[1400];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t open %s: %s. Check its permissions, then try again.",
+               path, strerror(errno));
+      wnd->doc->GLog.DoLog(msg);
+      return;
+   }
+
+   u8_t file_data[sizeof(edi_t) + 1] = {};
+   size_t rd = fread(file_data, 1, sizeof(file_data), in);
+   bool read_failed = (ferror(in) != 0);
+   int read_errno = errno;
+   fclose(in);
+
+   if (read_failed) {
+      char msg[1400];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t read %s: %s. Check the file, then try again.",
+               path, strerror(read_errno));
+      wnd->doc->GLog.DoLog(msg);
+      return;
+   }
+   wnd_load_bytes(wnd, path, file_data, rd, false);
+}
+
+static void wnd_reload_source(wxedid_wnd* wnd) {
+   std::string path = wnd->source_path;
+   if (! path.empty()) wnd_load_file(wnd, path.c_str(), wnd->source_hex);
+}
+
+static GListStore* file_filters(const char* name, const char* const* patterns) {
+   GListStore* filters = g_list_store_new(GTK_TYPE_FILE_FILTER);
+   GtkFileFilter* filter = gtk_file_filter_new();
+   gtk_file_filter_set_name(filter, name);
+   for (const char* const* pattern = patterns; *pattern != NULL; pattern++) {
+      gtk_file_filter_add_suffix(filter, *pattern);
+   }
+   g_list_store_append(filters, filter);
+   g_object_unref(filter);
+   GtkFileFilter* all = gtk_file_filter_new();
+   gtk_file_filter_set_name(all, "All files");
+   gtk_file_filter_add_pattern(all, "*");
+   g_list_store_append(filters, all);
+   g_object_unref(all);
+   return filters;
 }
 
 static void wnd_on_open_response(GObject* source, GAsyncResult* result,
@@ -2166,7 +2504,8 @@ static void wnd_on_open_response(GObject* source, GAsyncResult* result,
       if (wnd != NULL) {
          char* path = g_file_get_path(file);
          if (path != NULL) {
-            wnd_load_file(wnd, path);
+            bool import_hex = g_object_get_data(source, "wxedid-import-hex") != NULL;
+            wnd_load_file(wnd, path, import_hex || path_is_hex_text(path));
             g_free(path);
          } else {
             wnd->doc->GLog.DoLog(
@@ -2189,10 +2528,20 @@ static void wnd_on_open_response(GObject* source, GAsyncResult* result,
    g_object_unref(window);
 }
 
-static void wnd_present_open_dialog(wxedid_wnd* wnd) {
+static void wnd_present_open_dialog(wxedid_wnd* wnd, bool import_hex) {
    GtkFileDialog* dialog = gtk_file_dialog_new();
-   gtk_file_dialog_set_title(dialog, "Open EDID binary");
-   gtk_file_dialog_set_accept_label(dialog, "Open");
+   gtk_file_dialog_set_title(dialog, import_hex ? "Import EDID from hex"
+                                                : "Open EDID file");
+   gtk_file_dialog_set_accept_label(dialog, import_hex ? "Import" : "Open");
+   static const char* const binary_patterns[] = {"bin", "hex", "txt", NULL};
+   static const char* const hex_patterns[] = {"hex", "txt", NULL};
+   GListStore* filters = file_filters(import_hex ? "Hex text" : "EDID files",
+                                      import_hex ? hex_patterns : binary_patterns);
+   gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
+   g_object_unref(filters);
+   if (import_hex) {
+      g_object_set_data(G_OBJECT(dialog), "wxedid-import-hex", GINT_TO_POINTER(1));
+   }
    gtk_file_dialog_open(dialog, wnd->window, NULL, wnd_on_open_response,
                         g_object_ref(wnd->window));
    g_object_unref(dialog);
@@ -2203,12 +2552,13 @@ static void wnd_on_discard_open_response(GObject* source, GAsyncResult* result,
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
    const char* response = adw_alert_dialog_choose_finish(
       ADW_ALERT_DIALOG(source), result);
-   if (0 == strcmp(response, "discard")) wnd_present_open_dialog(wnd);
+   bool import_hex = g_object_get_data(source, "wxedid-import-hex") != NULL;
+   if (0 == strcmp(response, "discard")) wnd_present_open_dialog(wnd, import_hex);
 }
 
-static void wnd_request_open(wxedid_wnd* wnd) {
+static void wnd_request_open(wxedid_wnd* wnd, bool import_hex) {
    if (! wnd->dirty) {
-      wnd_present_open_dialog(wnd);
+      wnd_present_open_dialog(wnd, import_hex);
       return;
    }
 
@@ -2223,26 +2573,33 @@ static void wnd_request_open(wxedid_wnd* wnd) {
    adw_alert_dialog_set_default_response(dialog, "cancel");
    adw_alert_dialog_set_response_appearance(dialog, "discard",
                                             ADW_RESPONSE_DESTRUCTIVE);
+   if (import_hex) {
+      g_object_set_data(G_OBJECT(dialog), "wxedid-import-hex", GINT_TO_POINTER(1));
+   }
    adw_alert_dialog_choose(dialog, GTK_WIDGET(wnd->window), NULL,
                            wnd_on_discard_open_response, wnd);
 }
 
 static void wnd_on_open_action(GSimpleAction* /*action*/, GVariant* /*parameter*/,
                                gpointer user_data) {
-   wnd_request_open((wxedid_wnd*) user_data);
+   wnd_request_open((wxedid_wnd*) user_data, false);
+}
+
+static void wnd_on_import_hex_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wnd_request_open(static_cast<wxedid_wnd*>(user_data), true);
 }
 
 //------------
-// save: write the buffer to a given path, recompute checksums first
-static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
+// output: assemble groups into the buffer and recompute checksums
+static bool wnd_prepare_output(wxedid_wnd* wnd) {
    edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
    u32_t declared_blocks = 1U + pbuf->edi.base.num_extblk;
    u32_t parsed_blocks = wnd->doc->EDID.getNumValidBlocks();
    if (declared_blocks != parsed_blocks) {
       char msg[160];
       snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t save this EDID: it declares %u blocks, but only %u "
-               "were parsed. Reopen valid EDID data, then save again.",
+               "[E!] Couldn’t write this EDID: it declares %u blocks, but only %u "
+               "were parsed. Reopen valid EDID data, then try again.",
                declared_blocks, parsed_blocks);
       wnd->doc->GLog.DoLog(msg);
       return false;
@@ -2254,7 +2611,7 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
       char msg[1400];
       wxedid_RCD_GET_MSG(retU, detail, sizeof(detail));
       snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t save this EDID: %s. Fix invalid data, then save again.",
+               "[E!] Couldn’t write this EDID: %s. Fix invalid data, then try again.",
                detail);
       wnd->doc->GLog.DoLog(msg);
       return false;
@@ -2267,6 +2624,14 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
       }
    }
    wnd_refresh_raw_view(wnd);
+   return true;
+}
+
+//------------
+// save: write the buffer to a given path, recompute checksums first
+static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
+   if (! wnd_prepare_output(wnd)) return false;
+   edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
 
    FILE* out = fopen(path, "wb");
    if (out == NULL) {
@@ -2297,6 +2662,7 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
       snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
    }
    wnd->source_writable = (g_access(wnd->doc->path, W_OK) == 0);
+   wnd->document_hex = false;
    wnd->saved_history_position = static_cast<long>(wnd->history_position);
    wnd_update_history_state(wnd);
    wnd_update_document_ui(wnd);
@@ -2350,7 +2716,13 @@ static void wnd_present_save_dialog(wxedid_wnd* wnd) {
    gtk_file_dialog_set_accept_label(dialog, "Save");
    char* basename = g_path_get_basename(wnd->doc->path);
    char* initial_name = NULL;
-   if (! wnd->source_writable && (basename != NULL)) {
+   if (wnd->document_hex && (basename != NULL)) {
+      char* extension = strrchr(basename, '.');
+      char* stem = (extension != NULL) && (extension != basename)
+         ? g_strndup(basename, extension - basename) : g_strdup(basename);
+      initial_name = g_strdup_printf("%s.bin", stem);
+      g_free(stem);
+   } else if (! wnd->source_writable && (basename != NULL)) {
       char* extension = strrchr(basename, '.');
       if ((extension != NULL) && (extension != basename)) {
          char* stem = g_strndup(basename, extension - basename);
@@ -2393,6 +2765,121 @@ static void wnd_on_save_action(GSimpleAction* /*action*/, GVariant* /*parameter*
 
 static void wnd_on_save_as_action(GSimpleAction*, GVariant*, gpointer user_data) {
    wnd_present_save_dialog(static_cast<wxedid_wnd*>(user_data));
+}
+
+//------------
+// text output: hex export and structure report
+struct wxedid_text_output {
+   GtkWindow*  window;
+   std::string contents;
+   const char* done; //toast title prefix
+};
+
+static void wnd_on_text_save_response(GObject* source, GAsyncResult* result,
+                                      gpointer user_data) {
+   wxedid_text_output* output = static_cast<wxedid_text_output*>(user_data);
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(
+      g_object_get_data(G_OBJECT(output->window), "wxedid-wnd"));
+   GError* error = NULL;
+   GFile* file = gtk_file_dialog_save_finish(GTK_FILE_DIALOG(source), result, &error);
+
+   if ((file != NULL) && (wnd != NULL)) {
+      char* path = g_file_get_path(file);
+      GError* write_error = NULL;
+      if (path == NULL) {
+         wnd->doc->GLog.DoLog(
+            "[E!] Couldn’t save to the selected location: only local files are "
+            "supported. Choose a local file.");
+      } else if (! g_file_set_contents(path, output->contents.data(),
+                                       output->contents.size(), &write_error)) {
+         char msg[1400];
+         snprintf(msg, sizeof(msg),
+                  "[E!] Couldn’t save %s: %s. Check its permissions, then try again.",
+                  path, write_error->message);
+         wnd->doc->GLog.DoLog(msg);
+         g_error_free(write_error);
+      } else {
+         char msg[1152];
+         snprintf(msg, sizeof(msg), "[i] Saved %zu bytes to %s",
+                  output->contents.size(), path);
+         wnd->doc->GLog.DoLog(msg);
+         char* basename = g_path_get_basename(path);
+         char* title = g_strdup_printf("%s %s", output->done, basename);
+         adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(title));
+         g_free(title);
+         g_free(basename);
+      }
+      g_free(path);
+   } else if ((wnd != NULL) && (error != NULL) &&
+              ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
+              ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
+      char msg[1200];
+      snprintf(msg, sizeof(msg),
+               "[E!] Couldn’t choose where to save: %s. Try again or choose another location.",
+               error->message);
+      wnd->doc->GLog.DoLog(msg);
+   }
+
+   if (file != NULL) g_object_unref(file);
+   g_clear_error(&error);
+   g_object_unref(output->window);
+   delete output;
+}
+
+static void wnd_present_text_save_dialog(wxedid_wnd* wnd, const char* title,
+                                         const char* extension,
+                                         const char* filter_name,
+                                         std::string contents,
+                                         const char* done) {
+   GtkFileDialog* dialog = gtk_file_dialog_new();
+   gtk_file_dialog_set_title(dialog, title);
+   gtk_file_dialog_set_accept_label(dialog, "Save");
+   const char* patterns[] = {extension, NULL};
+   GListStore* filters = file_filters(filter_name, patterns);
+   gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
+   g_object_unref(filters);
+
+   char* basename = g_path_get_basename(wnd->doc->path);
+   char* dot = strrchr(basename, '.');
+   if ((dot != NULL) && (dot != basename)) *dot = 0;
+   char* initial_name = g_strdup_printf("%s.%s", basename, extension);
+   gtk_file_dialog_set_initial_name(dialog, initial_name);
+   g_free(initial_name);
+   g_free(basename);
+
+   char* directory = g_path_get_dirname(wnd->doc->path);
+   if ((directory != NULL) && (directory[0] != 0)) {
+      GFile* folder = g_file_new_for_path(directory);
+      gtk_file_dialog_set_initial_folder(dialog, folder);
+      g_object_unref(folder);
+   }
+   g_free(directory);
+
+   wxedid_text_output* output = new wxedid_text_output{
+      GTK_WINDOW(g_object_ref(wnd->window)), std::move(contents), done,
+   };
+   gtk_file_dialog_save(dialog, wnd->window, NULL, wnd_on_text_save_response, output);
+   g_object_unref(dialog);
+}
+
+static void wnd_on_export_hex_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   if (! wnd_prepare_output(wnd)) return;
+   edi_buf_t* buffer = wnd->doc->EDID.getEDID();
+   std::string hex = edid_hex_encode(
+      buffer->buff, wnd->doc->EDID.getNumValidBlocks() * sizeof(ediblk_t));
+   wnd_present_text_save_dialog(wnd, "Export EDID as hex", "hex", "Hex text",
+                                hex, "Exported");
+}
+
+static void wnd_on_save_report_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   if (! wnd_prepare_output(wnd)) return;
+   char* source = g_path_get_basename(wnd->doc->path);
+   std::string report = edid_text_report(wnd->doc->EDID, source, WXEDID_VERSION);
+   g_free(source);
+   wnd_present_text_save_dialog(wnd, "Save EDID report", "txt", "Text",
+                                report, "Saved report");
 }
 
 static void wnd_on_toggle_sidebar(GtkButton* /*button*/, gpointer user_data) {
@@ -2461,6 +2948,74 @@ static void wnd_on_about_action(GSimpleAction*, GVariant*, gpointer user_data) {
    adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(wnd->window));
 }
 
+static void wnd_on_ignore_errors_state(GSimpleAction* action, GVariant* value,
+                                       gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   bool enabled = g_variant_get_boolean(value);
+   g_simple_action_set_state(action, value);
+   wnd->doc->EDID.b_ERR_Ignore = enabled;
+   if (! enabled || ! wnd->load_had_errors || wnd->source_path.empty()) return;
+   if (wnd->dirty) {
+      adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(
+         "Open the file again to read it with errors ignored"));
+      return;
+   }
+   wnd_reload_source(wnd);
+}
+
+static void wnd_on_ignore_read_only_state(GSimpleAction* action, GVariant* value,
+                                          gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   g_simple_action_set_state(action, value);
+   wnd->doc->EDID.b_RD_Ignore = g_variant_get_boolean(value);
+   edi_grp_cl* group = wnd_selected_group(wnd);
+   if (group != NULL) rows_reload(wnd->fields, group, &wnd->doc->EDID, wnd);
+}
+
+static void wnd_on_shortcuts_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   struct shortcut {
+      const char* title;
+      const char* accelerator;
+   };
+   struct section {
+      const char* title;
+      shortcut    items[6];
+   };
+   static const section sections[] = {
+      {"Files", {
+         {"Open a file", "<Control>o"},
+         {"Save changes", "<Control>s"},
+         {"Save as a new file", "<Control><Shift>s"},
+      }},
+      {"Editing", {
+         {"Undo", "<Control>z"},
+         {"Redo", "<Control><Shift>z"},
+      }},
+      {"Groups", {
+         {"Duplicate group", "<Control>d"},
+         {"Delete group", "Delete"},
+         {"Move group up", "<Alt>Up"},
+         {"Move group down", "<Alt>Down"},
+         {"Show group menu", "<Shift>F10"},
+      }},
+      {"General", {
+         {"Keyboard shortcuts", "<Control>question"},
+      }},
+   };
+   AdwDialog* dialog = adw_shortcuts_dialog_new();
+   for (const section& spec : sections) {
+      AdwShortcutsSection* group = adw_shortcuts_section_new(spec.title);
+      for (const shortcut& item : spec.items) {
+         if (item.title == NULL) break;
+         adw_shortcuts_section_add(group,
+                                   adw_shortcuts_item_new(item.title, item.accelerator));
+      }
+      adw_shortcuts_dialog_add(ADW_SHORTCUTS_DIALOG(dialog), group);
+   }
+   adw_dialog_present(dialog, GTK_WIDGET(wnd->window));
+}
+
 //------------
 // 'open' signal: files passed on the command line
 void wxedid_app_open(AdwApplication* app, GFile** files, gint n_files,
@@ -2478,7 +3033,7 @@ void wxedid_app_open(AdwApplication* app, GFile** files, gint n_files,
    for (gint i=0; i<n_files; i++) {
       char* path = g_file_get_path(files[i]);
       if (path != NULL) {
-         wnd_load_file(wnd, path);
+         wnd_load_file(wnd, path, path_is_hex_text(path));
          g_free(path);
       }
    }
@@ -2503,6 +3058,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                               g_clear_object(&w->tree_filtered);
                               g_clear_object(&w->tree_filter);
                               g_clear_object(&w->tree_model);
+                              wnd_clear_history(w);
                               delete w->timing;
                               delete w->doc;
                               delete w;
@@ -2578,6 +3134,44 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->add_displayid_action));
    g_object_unref(wnd->add_displayid_action);
 
+   GSimpleAction* import_action = g_simple_action_new("import-hex", NULL);
+   g_signal_connect(import_action, "activate", G_CALLBACK(wnd_on_import_hex_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(import_action));
+   g_object_unref(import_action);
+
+   wnd->export_hex_action = g_simple_action_new("export-hex", NULL);
+   g_signal_connect(wnd->export_hex_action, "activate",
+                    G_CALLBACK(wnd_on_export_hex_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->export_hex_action));
+   g_object_unref(wnd->export_hex_action);
+
+   wnd->save_report_action = g_simple_action_new("save-report", NULL);
+   g_signal_connect(wnd->save_report_action, "activate",
+                    G_CALLBACK(wnd_on_save_report_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->save_report_action));
+   g_object_unref(wnd->save_report_action);
+
+   wnd->ignore_errors_action = g_simple_action_new_stateful(
+      "ignore-errors", NULL, g_variant_new_boolean(FALSE));
+   g_signal_connect(wnd->ignore_errors_action, "change-state",
+                    G_CALLBACK(wnd_on_ignore_errors_state), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->ignore_errors_action));
+   g_object_unref(wnd->ignore_errors_action);
+
+   wnd->ignore_read_only_action = g_simple_action_new_stateful(
+      "ignore-read-only", NULL, g_variant_new_boolean(FALSE));
+   g_signal_connect(wnd->ignore_read_only_action, "change-state",
+                    G_CALLBACK(wnd_on_ignore_read_only_state), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window),
+                           G_ACTION(wnd->ignore_read_only_action));
+   g_object_unref(wnd->ignore_read_only_action);
+
+   GSimpleAction* shortcuts_action = g_simple_action_new("shortcuts", NULL);
+   g_signal_connect(shortcuts_action, "activate",
+                    G_CALLBACK(wnd_on_shortcuts_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(shortcuts_action));
+   g_object_unref(shortcuts_action);
+
    GSimpleAction* about_action = g_simple_action_new("about", NULL);
    g_signal_connect(about_action, "activate", G_CALLBACK(wnd_on_about_action), wnd);
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(about_action));
@@ -2594,6 +3188,9 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                                          save_as_accels);
    gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.undo", undo_accels);
    gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.redo", redo_accels);
+   const char* shortcuts_accels[] = {"<Control>question", NULL};
+   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.shortcuts",
+                                         shortcuts_accels);
 
    //header bar
    GtkWidget* header = adw_header_bar_new();
@@ -2624,12 +3221,33 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    adw_header_bar_pack_end(ADW_HEADER_BAR(header), wnd->details_button);
 
    GMenu* primary_menu = g_menu_new();
-   g_menu_append(primary_menu, "Open…", "win.open");
-   g_menu_append(primary_menu, "Save As…", "win.save-as");
-   g_menu_append(primary_menu, "Undo", "win.undo");
-   g_menu_append(primary_menu, "Redo", "win.redo");
-   g_menu_append(primary_menu, "Show details", "win.details");
-   g_menu_append(primary_menu, "About EDID Editor", "win.about");
+   GMenu* open_section = g_menu_new();
+   g_menu_append(open_section, "Open…", "win.open");
+   g_menu_append(open_section, "Import Hex…", "win.import-hex");
+   g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(open_section));
+   g_object_unref(open_section);
+   GMenu* save_section = g_menu_new();
+   g_menu_append(save_section, "Save As…", "win.save-as");
+   g_menu_append(save_section, "Export Hex…", "win.export-hex");
+   g_menu_append(save_section, "Save Report…", "win.save-report");
+   g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(save_section));
+   g_object_unref(save_section);
+   GMenu* edit_section = g_menu_new();
+   g_menu_append(edit_section, "Undo", "win.undo");
+   g_menu_append(edit_section, "Redo", "win.redo");
+   g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(edit_section));
+   g_object_unref(edit_section);
+   GMenu* option_section = g_menu_new();
+   g_menu_append(option_section, "Ignore EDID Errors", "win.ignore-errors");
+   g_menu_append(option_section, "Edit Read-Only Fields", "win.ignore-read-only");
+   g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(option_section));
+   g_object_unref(option_section);
+   GMenu* help_section = g_menu_new();
+   g_menu_append(help_section, "Show details", "win.details");
+   g_menu_append(help_section, "Keyboard Shortcuts", "win.shortcuts");
+   g_menu_append(help_section, "About EDID Editor", "win.about");
+   g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(help_section));
+   g_object_unref(help_section);
    GtkWidget* btn_menu = gtk_menu_button_new();
    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(btn_menu), "open-menu-symbolic");
    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(btn_menu), G_MENU_MODEL(primary_menu));
