@@ -2406,21 +2406,46 @@ static void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group = NULL) {
       position++;
    }
 
-   guint first = GTK_INVALID_LIST_POSITION;
-   guint selected = GTK_INVALID_LIST_POSITION;
+   //select the requested group, or the first selectable row
+   edi_grp_cl* target_group = NULL;
+   int target_block = -1;
    guint count = g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_filtered));
    for (position=0; position<count; position++) {
       GtkTreeListRow* row = GTK_TREE_LIST_ROW(
          g_list_model_get_item(G_LIST_MODEL(wnd->tree_filtered), position));
       GObject* object = G_OBJECT(gtk_tree_list_row_get_item(row));
       wxedid_item* item = WXEDID_ITEM(object);
-      if ((first == GTK_INVALID_LIST_POSITION) && item->selectable) first = position;
-      if (item->pgrp == select_group) selected = position;
+      bool first = (target_group == NULL) && (target_block < 0) && item->selectable;
+      bool requested = (select_group != NULL) && (item->pgrp == select_group);
+      if (first || requested) {
+         target_group = item->pgrp;
+         target_block = item->raw_block;
+      }
       g_object_unref(object);
       g_object_unref(row);
+      if (requested) break;
    }
-   if (selected == GTK_INVALID_LIST_POSITION) selected = first;
-   gtk_single_selection_set_selected(wnd->tree_sel, selected);
+   if ((target_group == NULL) && (target_block < 0)) return;
+
+   //selecting can deliver pending row insertions that shift positions, so
+   //select by item and correct the position once if it moved
+   for (int attempt=0; attempt<2; attempt++) {
+      guint target = GTK_INVALID_LIST_POSITION;
+      count = g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_filtered));
+      for (position=0; (position<count) && (target == GTK_INVALID_LIST_POSITION); position++) {
+         GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+            g_list_model_get_item(G_LIST_MODEL(wnd->tree_filtered), position));
+         GObject* object = G_OBJECT(gtk_tree_list_row_get_item(row));
+         wxedid_item* item = WXEDID_ITEM(object);
+         if ((item->pgrp == target_group) && (item->raw_block == target_block) &&
+             item->selectable) target = position;
+         g_object_unref(object);
+         g_object_unref(row);
+      }
+      if (target == GTK_INVALID_LIST_POSITION) return;
+      if (gtk_single_selection_get_selected(wnd->tree_sel) == target) return;
+      gtk_single_selection_set_selected(wnd->tree_sel, target);
+   }
 }
 
 static void wnd_offer_retry(wxedid_wnd* wnd) {

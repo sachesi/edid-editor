@@ -251,6 +251,8 @@ def functional(Atspi, app, fixture):
         original = target.read_bytes()
         process = launch_app(Atspi, app, str(target))
         try:
+            wait_for(lambda: named(Atspi, "OXC, prod_ID 0x1234", Atspi.Role.LABEL),
+                     "opening a file did not select its first group")
             search = wait_for(lambda: named(Atspi, "Search groups", Atspi.Role.ENTRY),
                               "group search was not exposed")
             search.get_editable_text_iface().set_text_contents("T7VTB")
@@ -541,6 +543,9 @@ def two_cta(Atspi, app, fixture):
     target = str(Path(fixture).with_name("sample_cea_eeodb.bin"))
     process = launch_app(Atspi, app, target)
     try:
+        search = wait_for(lambda: named(Atspi, "Search groups", Atspi.Role.ENTRY),
+                          "group search was not exposed")
+        search.get_editable_text_iface().set_text_contents("ADB")
         wait_for(lambda: named(Atspi, "Block 2: CTA-861"),
                  "the second CTA-861 extension was not parsed")
     finally:
