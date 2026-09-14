@@ -142,6 +142,22 @@ def actionable(Atspi, name, role=None):
     return None
 
 
+def press_last(Atspi, name):
+    # Rebuilt field cards can leave stale nodes ahead of the current ones.
+    def newest():
+        found = [node for node in nodes(Atspi) if name_of(node) == name]
+        for node in reversed(found):
+            try:
+                if node.get_action_iface().get_n_actions() > 0:
+                    return node
+            except Exception:
+                continue
+        return None
+    node = wait_for(newest, f"{name} was not exposed")
+    assert node.get_action_iface().do_action(0), f"{name} did not activate"
+    time.sleep(0.3)
+
+
 def press(Atspi, name, role=None):
     node = wait_for(lambda: actionable(Atspi, name, role), f"{name} was not exposed")
     assert node.get_action_iface().do_action(0), f"{name} did not activate"
@@ -271,6 +287,11 @@ def functional(Atspi, app, fixture):
                     node.get_state_set().contains(Atspi.StateType.CHECKED)
             select_group(Atspi, 15)
             press(Atspi, "Fields")
+            press_last(Atspi, "About Pixel clock")
+            wait_for(lambda: any("divisible by 0.25MHz" in name_of(node)
+                                 for node in nodes(Atspi)),
+                     "the field help did not show the full description")
+            press_last(Atspi, "About Pixel clock")
             interlaced = wait_for(lambda: named(Atspi, "Interlaced", Atspi.Role.SWITCH),
                                   "a single bit was not shown as a switch")
             assert not switch_on("Interlaced")
@@ -352,6 +373,10 @@ def functional(Atspi, app, fixture):
             pixel_entry.get_editable_text_iface().set_text_contents("241.51")
             wait_for(lambda: any(name_of(node).startswith("Modified") for node in nodes(Atspi)),
                      "a valid entry edit did not mark the EDID as modified")
+            press(Atspi, "Bytes")
+            wait_for(lambda: named(Atspi, "Pixel clock · bytes 0x087–0x089", Atspi.Role.LABEL),
+                     "the bytes view did not mark the edited field")
+            press(Atspi, "Fields")
             activate_menu_item(Atspi, "Undo")
 
             press(Atspi, "Bytes")

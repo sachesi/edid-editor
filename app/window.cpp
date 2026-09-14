@@ -133,6 +133,9 @@ struct wxedid_wnd {
    bool                close_confirmation_open;
    bool                details_available;
    bool                show_reserved;
+   edi_grp_cl*         highlight_group; //group of the field shown in the bytes view
+   edi_dynfld_t*       highlight_field;
+   GtkLabel*           raw_caption;
    GtkWidget*          reserved_note;  //"N reserved fields are hidden"
    GtkLabel*           reserved_label;
    u32_t               invalid_fields;
@@ -483,6 +486,8 @@ static void row_on_entry_changed(GtkEditable* entry, gpointer user_data) {
                             before_text, before_value, after_text, after_value);
       }
       gtk_widget_remove_css_class(GTK_WIDGET(entry), "error");
+      r->wnd->highlight_group = r->pgrp;
+      r->wnd->highlight_field = r->pfld;
       row_clear_validation(r);
       row_set_valid(r, true);
       wnd_refresh_group_title(r->wnd, r->pgrp);
@@ -526,6 +531,8 @@ static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer
       wnd_record_history(r->wnd, r->pgrp, r->pfld, true,
                          before_text, before_value, after_text, after_value);
       gtk_widget_remove_css_class(GTK_WIDGET(dd), "error");
+      r->wnd->highlight_group = r->pgrp;
+      r->wnd->highlight_field = r->pfld;
       row_clear_validation(r);
       row_set_valid(r, true);
       wnd_refresh_group_title(r->wnd, r->pgrp);
@@ -562,6 +569,8 @@ static void row_on_switch_notify(GtkSwitch* toggle, GParamSpec* /*pspec*/, gpoin
          OP_READ, after_text, after_value, r->pfld);
       wnd_record_history(r->wnd, r->pgrp, r->pfld, false,
                          before_text, before_value, after_text, after_value);
+      r->wnd->highlight_group = r->pgrp;
+      r->wnd->highlight_field = r->pfld;
       row_clear_validation(r);
       wnd_refresh_group_title(r->wnd, r->pgrp);
       wnd_refresh_selected_tree_label(r->wnd);
@@ -850,8 +859,59 @@ static void dropdown_label_bind(GtkSignalListItemFactory*, GtkListItem* item,
                       gtk_string_object_get_string(value));
 }
 
+//full field description, created when the help button is first used
+static void field_help_popup(GtkMenuButton* button, gpointer user_data) {
+   if (gtk_menu_button_get_popover(button) != NULL) return;
+   edi_dynfld_t* pfld = static_cast<edi_dynfld_t*>(user_data);
+   std::string text = pfld->field.desc;
+   for (char& ch : text) {
+      if (ch == '\t') ch = ' ';
+   }
+   while (! text.empty() && (text.back() == '\n')) text.pop_back();
+
+   GtkWidget* box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+   gtk_widget_set_margin_start(box, 6);
+   gtk_widget_set_margin_end(box, 6);
+   gtk_widget_set_margin_top(box, 6);
+   gtk_widget_set_margin_bottom(box, 6);
+   GtkWidget* title = gtk_label_new(field_display_name(pfld->field.name).c_str());
+   gtk_label_set_xalign(GTK_LABEL(title), 0.0);
+   gtk_widget_add_css_class(title, "heading");
+   gtk_box_append(GTK_BOX(box), title);
+   GtkWidget* body = gtk_label_new(text.c_str());
+   gtk_label_set_xalign(GTK_LABEL(body), 0.0);
+   gtk_label_set_wrap(GTK_LABEL(body), TRUE);
+   gtk_label_set_max_width_chars(GTK_LABEL(body), 48);
+   gtk_box_append(GTK_BOX(box), body);
+
+   GtkWidget* popover = gtk_popover_new();
+   gtk_popover_set_child(GTK_POPOVER(popover), box);
+   gtk_menu_button_set_popover(button, popover);
+}
+
+//the focused field's bytes are marked in the bytes view
+static void wnd_highlight_field(wxedid_wnd* wnd, edi_grp_cl* pgrp, edi_dynfld_t* pfld) {
+   wnd->highlight_group = pgrp;
+   wnd->highlight_field = pfld;
+   wnd_refresh_raw_view(wnd);
+}
+
+static void card_on_focus_enter(GtkEventControllerFocus*, gpointer user_data) {
+   wxedid_row* row = static_cast<wxedid_row*>(user_data);
+   wnd_highlight_field(row->wnd, row->pgrp, row->pfld);
+}
+
+static void card_on_pressed(GtkGestureClick*, int, double, double, gpointer user_data) {
+   wxedid_row* row = static_cast<wxedid_row*>(user_data);
+   wnd_highlight_field(row->wnd, row->pgrp, row->pfld);
+}
+
 static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
                         wxedid_wnd* wnd) {
+   if (pgrp != wnd->highlight_group) {
+      wnd->highlight_group = NULL;
+      wnd->highlight_field = NULL;
+   }
    //drop old rows
    wnd->invalid_fields = 0;
    if (wnd->reserved_note != NULL) gtk_widget_set_visible(wnd->reserved_note, FALSE);
@@ -918,6 +978,21 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
          gtk_widget_add_css_class(unused, "caption");
          gtk_widget_add_css_class(unused, "dim-label");
          gtk_box_append(GTK_BOX(title_row), unused);
+      }
+      if ((pfld->field.desc != NULL) && (pfld->field.desc[0] != 0)) {
+         GtkWidget* about = gtk_menu_button_new();
+         gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(about), "help-about-symbolic");
+         gtk_widget_add_css_class(about, "flat");
+         gtk_widget_add_css_class(about, "circular");
+         gtk_widget_set_valign(about, GTK_ALIGN_CENTER);
+         std::string about_label = "About " + title;
+         gtk_widget_set_tooltip_text(about, about_label.c_str());
+         gtk_accessible_update_property(GTK_ACCESSIBLE(about),
+                                        GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                        about_label.c_str(), -1);
+         gtk_menu_button_set_create_popup_func(GTK_MENU_BUTTON(about),
+                                               field_help_popup, pfld, NULL);
+         gtk_box_append(GTK_BOX(title_row), about);
       }
       gtk_box_append(GTK_BOX(card_content), title_row);
 
@@ -1049,6 +1124,19 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
 
       gtk_box_append(GTK_BOX(card_content), widget);
       gtk_box_append(GTK_BOX(card_content), validation);
+      //the card remembers its field for the bytes view
+      wxedid_row* marker = new wxedid_row{
+         pfld, pgrp, pEDID, wnd, ROW_LABEL, widget, GTK_LABEL(validation), 0, true,
+         false, static_cast<size_t>(-1), {}, 0
+      };
+      g_object_set_data_full(G_OBJECT(card), "field", marker,
+                             [](gpointer data){ delete (wxedid_row*) data; });
+      GtkEventController* card_focus = gtk_event_controller_focus_new();
+      g_signal_connect(card_focus, "enter", G_CALLBACK(card_on_focus_enter), marker);
+      gtk_widget_add_controller(card, card_focus);
+      GtkGesture* card_click = gtk_gesture_click_new();
+      g_signal_connect(card_click, "pressed", G_CALLBACK(card_on_pressed), marker);
+      gtk_widget_add_controller(card, GTK_EVENT_CONTROLLER(card_click));
       gtk_accessible_update_property(GTK_ACCESSIBLE(widget),
                                      GTK_ACCESSIBLE_PROPERTY_LABEL,
                                      title.c_str(), -1);
@@ -1929,6 +2017,38 @@ static void wnd_refresh_raw_view(wxedid_wnd* wnd) {
       offset = static_cast<u32_t>(item->raw_block) * sizeof(ediblk_t);
    }
 
+   //bytes of the highlighted field, relative to the shown data
+   edi_dynfld_t* field = (item->pgrp != NULL) && (item->pgrp == wnd->highlight_group)
+      ? wnd->highlight_field : NULL;
+   u32_t mark_start = 0;
+   u32_t mark_count = 0;
+   if (field != NULL) {
+      long start = (field->base + field->field.offs) - data;
+      bool bits = (field->field.flags & (F_BIT | F_BFD)) != 0;
+      u32_t count = bits ? 1 : std::max<u32_t>(1, field->field.fld_sz);
+      if ((start >= 0) && (static_cast<u32_t>(start) < size)) {
+         mark_start = static_cast<u32_t>(start);
+         mark_count = std::min(count, size - mark_start);
+      }
+   }
+   if (mark_count > 0) {
+      std::string name = field_display_name(field->field.name);
+      char where[160];
+      u32_t first = offset + mark_start;
+      if ((field->field.flags & F_BIT) != 0) {
+         snprintf(where, sizeof(where), "%s · bit %u of byte 0x%03X",
+                  name.c_str(), field->field.shift, first);
+      } else if (mark_count == 1) {
+         snprintf(where, sizeof(where), "%s · byte 0x%03X", name.c_str(), first);
+      } else {
+         snprintf(where, sizeof(where), "%s · bytes 0x%03X–0x%03X", name.c_str(),
+                  first, first + mark_count - 1);
+      }
+      gtk_label_set_text(wnd->raw_caption, where);
+   } else {
+      gtk_label_set_text(wnd->raw_caption, "Select a field to mark its bytes");
+   }
+
    GString* text = g_string_new("Offset  Hex bytes                                         Text\n");
    for (u32_t pos=0; pos<size; pos += 16) {
       g_string_append_printf(text, "%04X    ", offset + pos);
@@ -1946,8 +2066,23 @@ static void wnd_refresh_raw_view(wxedid_wnd* wnd) {
       }
       g_string_append_c(text, '\n');
    }
-   gtk_text_buffer_set_text(gtk_text_view_get_buffer(wnd->raw_view), text->str, -1);
+   GtkTextBuffer* buffer = gtk_text_view_get_buffer(wnd->raw_view);
+   gtk_text_buffer_set_text(buffer, text->str, -1);
    g_string_free(text, TRUE);
+   for (u32_t pos=mark_start; pos<mark_start + mark_count; pos++) {
+      //line 0 is the heading; hex pairs start at column 8, text at 57
+      GtkTextIter from;
+      GtkTextIter to;
+      int line = 1 + static_cast<int>(pos / 16);
+      int column = 8 + static_cast<int>(pos % 16) * 3;
+      gtk_text_buffer_get_iter_at_line_offset(buffer, &from, line, column);
+      gtk_text_buffer_get_iter_at_line_offset(buffer, &to, line, column + 2);
+      gtk_text_buffer_apply_tag_by_name(buffer, "field", &from, &to);
+      column = 57 + static_cast<int>(pos % 16);
+      gtk_text_buffer_get_iter_at_line_offset(buffer, &from, line, column);
+      gtk_text_buffer_get_iter_at_line_offset(buffer, &to, line, column + 1);
+      gtk_text_buffer_apply_tag_by_name(buffer, "field", &from, &to);
+   }
    g_object_unref(obj);
 }
 
@@ -2686,6 +2821,8 @@ static void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group = NULL) {
    }
 
    wnd->last_selected = NULL;
+   wnd->highlight_group = NULL;
+   wnd->highlight_field = NULL;
    gtk_single_selection_set_selected(wnd->tree_sel, GTK_INVALID_LIST_POSITION);
    gtk_filter_list_model_set_model(wnd->tree_filtered, NULL);
    g_clear_object(&wnd->tree_model);
@@ -4059,11 +4196,25 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_accessible_update_property(GTK_ACCESSIBLE(wnd->raw_view),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
                                   "Selected group bytes", -1);
-   GtkWidget* raw_scroll = gtk_scrolled_window_new();
-   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(raw_scroll),
+   gtk_text_buffer_create_tag(gtk_text_view_get_buffer(wnd->raw_view), "field",
+                              "background", "rgba(53,132,228,0.3)",
+                              "weight", PANGO_WEIGHT_BOLD, NULL);
+   GtkWidget* raw_text_scroll = gtk_scrolled_window_new();
+   gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(raw_text_scroll),
                                   GTK_POLICY_AUTOMATIC, GTK_POLICY_AUTOMATIC);
-   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(raw_scroll),
+   gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(raw_text_scroll),
                                  GTK_WIDGET(wnd->raw_view));
+   gtk_widget_set_vexpand(raw_text_scroll, TRUE);
+   wnd->raw_caption = GTK_LABEL(gtk_label_new(NULL));
+   gtk_label_set_xalign(wnd->raw_caption, 0.0);
+   gtk_label_set_ellipsize(wnd->raw_caption, PANGO_ELLIPSIZE_END);
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->raw_caption), "caption");
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->raw_caption), "dim-label");
+   gtk_widget_set_margin_start(GTK_WIDGET(wnd->raw_caption), 18);
+   gtk_widget_set_margin_end(GTK_WIDGET(wnd->raw_caption), 18);
+   GtkWidget* raw_scroll = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
+   gtk_box_append(GTK_BOX(raw_scroll), GTK_WIDGET(wnd->raw_caption));
+   gtk_box_append(GTK_BOX(raw_scroll), raw_text_scroll);
 
    wnd->editor_stack = ADW_VIEW_STACK(adw_view_stack_new());
    adw_view_stack_set_hhomogeneous(wnd->editor_stack, FALSE);
