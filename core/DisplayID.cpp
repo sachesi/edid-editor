@@ -27,6 +27,28 @@ sm_vmap DID_stereo_map = {
    {2, {0, "stereo on user action", NULL}}
 };
 
+sm_vmap DID_product_map = {
+   {0, {0, "Extension section"                   , NULL}},
+   {1, {0, "Test structure"                      , NULL}},
+   {2, {0, "Display panel or other transducer"   , NULL}},
+   {3, {0, "Standalone display device"           , NULL}},
+   {4, {0, "Television receiver"                 , NULL}},
+   {5, {0, "Repeater/translator"                 , NULL}},
+   {6, {0, "Direct drive monitor"                , NULL}}
+};
+
+sm_vmap DID2_product_map = {
+   {0, {0, "Same use case as the base section"   , NULL}},
+   {1, {0, "Test structure"                      , NULL}},
+   {2, {0, "Generic display"                     , NULL}},
+   {3, {0, "Television"                          , NULL}},
+   {4, {0, "Desktop productivity display"        , NULL}},
+   {5, {0, "Desktop gaming display"              , NULL}},
+   {6, {0, "Presentation display"                , NULL}},
+   {7, {0, "Head-mounted VR display"             , NULL}},
+   {8, {0, "Head-mounted AR display"             , NULL}}
+};
+
 const char* displayid_data_block_name(u8_t version, u8_t tag) {
    if (version < 0x20) {
       static const char* names[] = {
@@ -65,14 +87,20 @@ const edi_field_t displayid_hdr_cl::fields[] = {
     "Revision", "DisplayID revision"},
    {&EDID_cl::ByteVal, 0, 2, 0, 1, F_BTE|F_INT|F_RD, 0, 121,
     "Payload length", "Bytes occupied by DisplayID data blocks"},
-   {&EDID_cl::ByteVal, 0, 3, 0, 1, F_BTE|F_HEX, 0, 0xff,
-    "Product type", "Display product type"},
    {&EDID_cl::ByteVal, 0, 4, 0, 1, F_BTE|F_INT|F_RD, 0, 0xff,
     "Extension count", "Additional DisplayID sections"},
    {&EDID_cl::ByteVal, 0, 5, 0, 1, F_BTE|F_HEX|F_RD, 0, 0xff,
     "DisplayID checksum", "Checksum of the DisplayID structure"},
    {&EDID_cl::ByteVal, 0, 6, 0, 1, F_BTE|F_HEX|F_RD, 0, 0xff,
     "EDID checksum", "Checksum of the 128-byte extension block"}
+};
+
+//the product type's meaning depends on the DisplayID version
+static const edi_field_t displayid_product_fld[] = {
+   {&EDID_cl::ByteVal, VS_DID_PRODUCT, 3, 0, 1, F_BTE|F_HEX|F_VS, 0, 0xff,
+    "Product type", "Display product type"},
+   {&EDID_cl::ByteVal, VS_DID2_PRODUCT, 3, 0, 1, F_BTE|F_HEX|F_VS, 0, 0xff,
+    "Product use case", "Display product primary use case"}
 };
 
 rcode displayid_hdr_cl::init(const u8_t* inst, u32_t /*orflags*/,
@@ -88,8 +116,12 @@ rcode displayid_hdr_cl::init(const u8_t* inst, u32_t /*orflags*/,
    inst_data[6] = inst[127];
    dat_sz = 7;
 
-   return init_fields(fields, inst_data, sizeof(fields) / sizeof(fields[0]),
-                      false, "DisplayID header", "DisplayID extension header", "DID-HDR");
+   retU = init_fields(fields, inst_data, 4, false, "DisplayID header",
+                      "DisplayID extension header", "DID-HDR");
+   if (! RCD_IS_OK(retU)) return retU;
+   retU = init_fields(&displayid_product_fld[(inst[1] >= 0x20) ? 1 : 0], inst_data, 1, true);
+   if (! RCD_IS_OK(retU)) return retU;
+   return init_fields(&fields[4], inst_data, (sizeof(fields) / sizeof(fields[0])) - 4, true);
 }
 
 void displayid_hdr_cl::SpawnInstance(u8_t* pinst) {

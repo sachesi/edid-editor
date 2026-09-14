@@ -71,6 +71,8 @@ enum vmap_selector_idx {
    VS_VID_IF_TYPE,
    VS_VID_COLOR_DEPTH,
    VS_DID_STEREO,
+   VS_DID_PRODUCT,
+   VS_DID2_PRODUCT,
    VS_NUM_OF
 };
 

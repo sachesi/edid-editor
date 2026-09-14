@@ -107,6 +107,11 @@ int main(int argc, char* argv[]) {
 
    //expected values are those printed by edid-decode for the same data
    check(load_hex(EDID, argv[1]), "load DisplayID 2.0 panel");
+   edi_grp_cl* header = EDID.BlkGroupsAr[EDI_EXT0_IDX]->Item(0);
+   edi_dynfld_t* use_case = find_field(header, "Product use case");
+   wxc_String label;
+   if (use_case != NULL) EDID.getValDesc(label, use_case, value_of(EDID, header, "Product use case"), VD_NAME);
+   check(label == wxc_String("Generic display"), "DisplayID 2.0 product use case has a label");
    edi_grp_cl* timing = find_subgroup(EDID, "DID-T7");
    wxc_String name;
    if (timing != NULL) timing->getGrpName(EDID, name);
