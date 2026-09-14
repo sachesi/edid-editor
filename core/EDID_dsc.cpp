@@ -1191,6 +1191,7 @@ const edi_rootgp_dsc_t ast_cl::AST_dsc = {
    .Desc     = ast_cl::Desc,
    .PadDsc   = "Single padding byte, required 0x0A (LF)",
    .type_id  = ID_AST | ID_DMT2,
+   .grp_offs = 0,
    .grp_arsz = 1,
    .grp_ar   = ast_cl::STI_grp
 };

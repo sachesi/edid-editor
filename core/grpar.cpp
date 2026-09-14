@@ -101,7 +101,6 @@ void GroupAr_cl::UpdateAbsOffs(u32_t idx, u32_t abs_offs, bool b_updt_soffs) {
 edi_grp_cl* GroupAr_cl::base_Cut(u32_t idx) {
    u32_t        abs_offs;
    edi_grp_cl  *pgrp;
-   edi_grp_cl **p_pgrp;
 
    pgrp     = Detach(idx);
    abs_offs = pgrp->getAbsOffs();
@@ -174,7 +173,6 @@ void GroupAr_cl::base_MoveUp(u32_t idx) {
 void GroupAr_cl::base_MoveDn(u32_t idx) {
    u32_t        abs_offs;
    edi_grp_cl  *pgrp;
-   edi_grp_cl **p_pgrp;
 
    pgrp      = Detach(idx);
    abs_offs  = pgrp->getAbsOffs();
@@ -813,7 +811,6 @@ edi_grp_cl* SubGrpAr_cl::Cut(u32_t idx) {
    u32_t        parent_idx;
    edi_grp_cl  *parent;
    edi_grp_cl  *pgrp;
-   edi_grp_cl **p_pgrp;
 
    pgrp     = Detach(idx);
    abs_offs = pgrp->getAbsOffs();
@@ -918,7 +915,6 @@ void SubGrpAr_cl::MoveDn(u32_t idx) {
    u32_t        abs_offs;
    u32_t        rel_offs;
    edi_grp_cl  *pgrp;
-   edi_grp_cl **p_pgrp;
 
    pgrp      = Detach(idx);
    abs_offs  = pgrp->getAbsOffs();

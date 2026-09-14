@@ -172,7 +172,7 @@ rcode EDID_cl::ProdYr(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_f
 }
 
 //EDID: STI dynamic block name
-void EDID_cl::STI_DBN(EDID_cl& EDID, wxc_String& dyngp_name, wxArGrpField& FieldsAr) {
+void EDID_cl::STI_DBN(EDID_cl& /*EDID*/, wxc_String& dyngp_name, wxArGrpField& FieldsAr) {
    enum {
       STI_IDX_DMT2 = 3,
    };

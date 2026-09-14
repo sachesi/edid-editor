@@ -204,7 +204,7 @@ class edi_grp_cl : public wxTreeItemData {
       wxc_String       GroupName;
       wxc_String       GroupDesc;
 
-      virtual void   getGrpName(EDID_cl& EDID, wxc_String& gp_name) {gp_name = GroupName;};
+      virtual void   getGrpName(EDID_cl& /*EDID*/, wxc_String& gp_name) {gp_name = GroupName;};
 
       inline  void   CopyInstData (const u8_t *pinst, u32_t datsz);
       virtual void   SpawnInstance(u8_t *pinst); //copy local data back to EDID buffer
@@ -243,8 +243,9 @@ class edi_grp_cl : public wxTreeItemData {
 
       virtual void        delete_subg () {return;};
 
-      virtual rcode Append_UNK_DAT(const u8_t* inst, u32_t dlen, u32_t orflags,
-                                   u32_t abs_offs, u32_t rel_offs, edi_grp_cl* parent_grp)
+      virtual rcode Append_UNK_DAT(const u8_t* /*inst*/, u32_t /*dlen*/, u32_t /*orflags*/,
+                                   u32_t /*abs_offs*/, u32_t /*rel_offs*/,
+                                   edi_grp_cl* /*parent_grp*/)
                                   {rcode rcd; rcd.value=RCD_OK; return rcd;};
 
       virtual edi_grp_cl* Clone(rcode&, u32_t) {return NULL;};
