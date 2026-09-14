@@ -1,6 +1,15 @@
+#the application icon, found through the resource base path when the
+#program runs from the build directory
+app_resources = import('gnome').compile_resources(
+  'edid-editor-resources',
+  'edid-editor.gresource.xml',
+  c_name : 'edid_editor',
+)
+
 app_sources = [
   'main.cpp',
   'window.cpp',
+  app_resources,
 ]
 
 app_deps = [
