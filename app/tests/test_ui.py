@@ -265,6 +265,34 @@ def functional(Atspi, app, fixture):
             wait_for(lambda: named(Atspi, "No matching groups") is None,
                      "clearing the search did not restore the groups")
 
+            def switch_on(name):
+                node = named(Atspi, name, Atspi.Role.SWITCH)
+                return node is not None and \
+                    node.get_state_set().contains(Atspi.StateType.CHECKED)
+            select_group(Atspi, 15)
+            press(Atspi, "Fields")
+            interlaced = wait_for(lambda: named(Atspi, "Interlaced", Atspi.Role.SWITCH),
+                                  "a single bit was not shown as a switch")
+            assert not switch_on("Interlaced")
+            assert interlaced.get_action_iface().do_action(0)
+            wait_for(lambda: switch_on("Interlaced"), "the switch did not turn on")
+            wait_for(lambda: any(name_of(node).startswith("Modified") for node in nodes(Atspi)),
+                     "turning on a bit did not change the EDID")
+            activate_menu_item(Atspi, "Undo")
+            wait_for(lambda: named(Atspi, "Interlaced", Atspi.Role.SWITCH) and
+                     not switch_on("Interlaced"), "undo did not turn the bit off")
+
+            select_group(Atspi, 6)
+            wait_for(lambda: named(Atspi, "7 reserved fields are hidden", Atspi.Role.LABEL),
+                     "reserved fields were not hidden")
+            assert named(Atspi, "Reserved0", Atspi.Role.SWITCH) is None
+            press(Atspi, "Show Reserved Fields", Atspi.Role.PUSH_BUTTON)
+            wait_for(lambda: named(Atspi, "Reserved0", Atspi.Role.SWITCH),
+                     "showing reserved fields did not list them")
+            activate_menu_item(Atspi, "Show Reserved Fields")
+            wait_for(lambda: named(Atspi, "Reserved0", Atspi.Role.SWITCH) is None,
+                     "reserved fields were not hidden again")
+
             select_group(Atspi, 21)
             wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
                      "selecting the timing group did not open the timing editor")
@@ -401,7 +429,7 @@ def functional(Atspi, app, fixture):
             activate_menu_item(Atspi, "Extended Audio Block", menu="Add a group")
             press(Atspi, "Move group up (Alt+Up)")
             press(Atspi, "Fields")
-            length = wait_for(lambda: named(Atspi, "Blk length", Atspi.Role.TEXT),
+            length = wait_for(lambda: named(Atspi, "Block length", Atspi.Role.TEXT),
                               "block length was not editable")
             length.get_editable_text_iface().set_text_contents("6")
             select_group(Atspi, 1)

@@ -132,6 +132,9 @@ struct wxedid_wnd {
    bool                banner_offers_retry;
    bool                close_confirmation_open;
    bool                details_available;
+   bool                show_reserved;
+   GtkWidget*          reserved_note;  //"N reserved fields are hidden"
+   GtkLabel*           reserved_label;
    u32_t               invalid_fields;
 };
 
@@ -303,6 +306,7 @@ enum {
    ROW_LABEL,     //read-only or not writable: label only
    ROW_ENTRY,     //text entry (OP_WRSTR)
    ROW_COMBO,     //value selector dropdown (F_VS)
+   ROW_SWITCH,    //single bit (F_BIT)
 };
 
 struct wxedid_row {
@@ -333,6 +337,19 @@ static bool field_writable(const edi_field_t& f) {
 
 static bool field_has_selector(const edi_field_t& f) {
    return ((f.flags & F_VS) != 0) && (f.vmap_idx != VS_NO_SELECTOR);
+}
+
+//reserved bits and bytes, named or described as such
+static bool field_is_reserved(const edi_field_t& f) {
+   const char* name = (f.name != NULL) ? f.name : "";
+   if (g_ascii_strncasecmp(name, "rsvd", 4) == 0) return true;
+   if (g_ascii_strncasecmp(name, "resvd", 5) == 0) return true;
+   if (g_ascii_strncasecmp(name, "reserved", 8) == 0) return true;
+   if ((g_ascii_strncasecmp(name, "res", 3) == 0) && g_ascii_isdigit(name[3])) return true;
+   if (g_str_has_suffix(name, "_res") || g_str_has_suffix(name, "_rsvd")) return true;
+   const char* desc = (f.desc != NULL) ? f.desc : "";
+   return (g_ascii_strcasecmp(desc, "reserved (0)") == 0) ||
+          (g_ascii_strcasecmp(desc, "reserved 0") == 0);
 }
 
 static void row_set_valid(wxedid_row* row, bool valid) {
@@ -524,6 +541,43 @@ static void row_on_combo_notify(GtkDropDown* dd, GParamSpec* /*pspec*/, gpointer
    }
 }
 
+//switch toggled: write the bit as text, like an entry
+static void row_on_switch_notify(GtkSwitch* toggle, GParamSpec* /*pspec*/, gpointer user_data) {
+   wxedid_row* r = (wxedid_row*) user_data;
+
+   wxc_String before_text;
+   u32_t before_value = 0;
+   ( r->pEDID->*r->pfld->field.handlerfn )(
+      OP_READ, before_text, before_value, r->pfld);
+   bool active = gtk_switch_get_active(toggle);
+   if (active == (before_value != 0)) return;
+   wxc_String sval(active ? "1" : "0");
+   u32_t ival = 0;
+   rcode retU = ( r->pEDID->*r->pfld->field.handlerfn )(OP_WRSTR, sval, ival, r->pfld);
+
+   if (RCD_IS_OK(retU)) {
+      wxc_String after_text;
+      u32_t after_value = 0;
+      ( r->pEDID->*r->pfld->field.handlerfn )(
+         OP_READ, after_text, after_value, r->pfld);
+      wnd_record_history(r->wnd, r->pgrp, r->pfld, false,
+                         before_text, before_value, after_text, after_value);
+      row_clear_validation(r);
+      wnd_refresh_group_title(r->wnd, r->pgrp);
+      wnd_refresh_selected_tree_label(r->wnd);
+      timing_load_group(r->wnd->timing, r->pgrp, r->pEDID);
+      wnd_refresh_raw_view(r->wnd);
+      wnd_request_refresh(r->wnd, r->pgrp, r->pfld, RCD_IS_TRUE(retU), true);
+      wnd_update_document_ui(r->wnd);
+   } else {
+      //the bit keeps its value: put the switch back
+      g_signal_handlers_block_by_func(toggle, (gpointer) row_on_switch_notify, r);
+      gtk_switch_set_active(toggle, before_value != 0);
+      g_signal_handlers_unblock_by_func(toggle, (gpointer) row_on_switch_notify, r);
+      row_show_validation(r, retU);
+   }
+}
+
 //------------
 // field list: rebuilt when a group is selected in the tree
 static void fields_refresh(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl& EDID) {
@@ -551,10 +605,196 @@ static std::string field_display_name(const char* name) {
       {"VESA compat", "VESA compatibility"},
       {"IF Type", "Interface type"},
       {"Color Depth", "Color depth"},
+      {"sync_green", "Sync on green"},
+      {"comp_sync", "Composite sync"},
+      {"sep_sync", "Separate sync"},
+      {"blank_black", "Blank-to-black setup"},
+      {"sync_wh_lvl", "Signal levels"},
+      {"max_hsize", "Screen width"},
+      {"max_vsize", "Screen height"},
+      {"dpms_off", "DPMS off"},
+      {"dpms_susp", "DPMS suspend"},
+      {"dpms_stby", "DPMS standby"},
+      {"vsig_format", "Signal format"},
+      {"std_srbg", "sRGB default"},
+      {"dtd0_native", "Native preferred timing"},
+      {"gtf_cfreq", "Continuous frequency"},
+      {"red_x", "Red x"}, {"red_y", "Red y"},
+      {"green_x", "Green x"}, {"green_y", "Green y"},
+      {"blue_x", "Blue x"}, {"blue_y", "Blue y"},
+      {"white_x", "White x"}, {"white_y", "White y"},
+      {"X-res", "Horizontal resolution"},
+      {"Y-res", "Vertical resolution"},
+      {"V-freq", "Refresh rate"},
+      {"V-refresh", "Refresh rate"},
+      {"asp_ratio", "Aspect ratio"},
+      {"AspRatio", "Aspect ratio"},
+      {"DMT_1", "DMT code"},
+      {"DMT_2", "DMT code"},
+      {"CVT_3", "CVT code"},
+      {"H-Active pix", "Horizontal active"},
+      {"H-Blank pix", "Horizontal blanking"},
+      {"H-Border pix", "Horizontal border"},
+      {"H-Sync offs", "Horizontal sync offset"},
+      {"H-Sync width", "Horizontal sync width"},
+      {"V-Active lines", "Vertical active"},
+      {"V-Active lin", "Vertical active"},
+      {"V-Blank lines", "Vertical blanking"},
+      {"V-Border lines", "Vertical border"},
+      {"V-Sync offs", "Vertical sync offset"},
+      {"V-Sync width", "Vertical sync width"},
+      {"H-Size", "Image width"},
+      {"V-Size", "Image height"},
+      {"sync_type", "Sync type"},
+      {"Hsync_type", "Horizontal sync type"},
+      {"Vsync_type", "Vertical sync type"},
+      {"il2w_stereo", "Interleaved stereo"},
+      {"stereo_mode", "Stereo mode"},
+      {"interlace", "Interlaced"},
+      {"zero_hdr", "Descriptor header"},
+      {"desc_type", "Descriptor type"},
+      {"min_Vfreq", "Minimum vertical rate"},
+      {"max_Vfreq", "Maximum vertical rate"},
+      {"min_Hfreq", "Minimum horizontal rate"},
+      {"max_Hfreq", "Maximum horizontal rate"},
+      {"max_PixClk", "Maximum pixel clock"},
+      {"mrl_ext", "Timing support"},
+      {"sfreq_sec", "Secondary curve start"},
+      {"gtf_c", "GTF C"}, {"gtf_m", "GTF M"}, {"gtf_k", "GTF K"}, {"gtf_j", "GTF J"},
+      {"CVT_majorV", "CVT major version"},
+      {"CVT_minorV", "CVT minor version"},
+      {"maxPixClk_apb", "Pixel clock precision"},
+      {"max_HApix", "Maximum active pixels"},
+      {"aspr_4_3", "4:3"}, {"aspr_16_9", "16:9"}, {"aspr_16_10", "16:10"},
+      {"aspr_5_4", "5:4"}, {"aspr_15_9", "15:9"},
+      {"blank_std", "Standard blanking"},
+      {"blank_rb", "Reduced blanking"},
+      {"pref_ar", "Preferred aspect ratio"},
+      {"H_shrink", "Horizontal shrink"},
+      {"H_stretch", "Horizontal stretch"},
+      {"V_shrink", "Vertical shrink"},
+      {"V_stretch", "Vertical stretch"},
+      {"pref_vref", "Preferred refresh rate"},
+      {"hex_text", "Text bytes"},
+      {"wp1_idx", "White point 1 index"}, {"wp1_x", "White point 1 x"},
+      {"wp1_y", "White point 1 y"}, {"wp1_gamma", "White point 1 gamma"},
+      {"wp2_idx", "White point 2 index"}, {"wp2_x", "White point 2 x"},
+      {"wp2_y", "White point 2 y"}, {"wp2_gamma", "White point 2 gamma"},
+      {"vref_50", "50 Hz"}, {"vref_60", "60 Hz"}, {"vref_60_rb", "60 Hz reduced blanking"},
+      {"vref_75", "75 Hz"}, {"vref_85", "85 Hz"},
+      {"num_dtd", "Native timings"},
+      {"Blk length", "Block length"},
+      {"Blk_rev", "Block revision"},
+      {"blk_rev", "Block revision"},
+      {"Tag Code", "Tag code"},
+      {"Ext Tag Code", "Extended tag code"},
+      {"IEEE-OUI", "IEEE OUI"},
+      {"num_chn", "Channels"},
+      {"AFC", "Audio format"},
+      {"ACE_TC", "Audio coding extension"},
+      {"AFC_dep_val", "Format-dependent value"},
+      {"sf_32kHz", "32 kHz"}, {"sf_44.1kHz", "44.1 kHz"}, {"sf_48kHz", "48 kHz"},
+      {"sf_88.2kHz", "88.2 kHz"}, {"sf_96kHz", "96 kHz"}, {"sf_176.4kHz", "176.4 kHz"},
+      {"sf_192kHz", "192 kHz"},
+      {"sample16b", "16-bit"}, {"sample20b", "20-bit"}, {"sample24b", "24-bit"},
+      {"s16bit", "16-bit"}, {"s20bit", "20-bit"}, {"s24bit", "24-bit"},
+      {"FL_FR", "Front left/right"},
+      {"LFE1", "Low-frequency effects 1"},
+      {"LFE2", "Low-frequency effects 2"},
+      {"FC", "Front center"},
+      {"BL_BR", "Back left/right"},
+      {"BC", "Back center"},
+      {"FLC_FRC", "Front left/right of center"},
+      {"FLW_FRW", "Front left/right wide"},
+      {"TpFL_TpFR", "Top front left/right"},
+      {"TpC", "Top center"},
+      {"TpFC", "Top front center"},
+      {"LS_RS", "Left/right surround"},
+      {"TpBC", "Top back center"},
+      {"SiL_SiR", "Side left/right"},
+      {"TpSiL_TpSiR", "Top side left/right"},
+      {"TpBL_TpBR", "Top back left/right"},
+      {"BtFC", "Bottom front center"},
+      {"BtFL_BtFR", "Bottom front left/right"},
+      {"src phy", "Physical address"},
+      {"Supports_AI", "Supports AI"},
+      {"DC_48bit", "Deep color 48-bit"},
+      {"DC_36bit", "Deep color 36-bit"},
+      {"DC_30bit", "Deep color 30-bit"},
+      {"DC_Y444", "Deep color in YCbCr 4:4:4"},
+      {"DC_48bit_420", "Deep color 48-bit 4:2:0"},
+      {"DC_36bit_420", "Deep color 36-bit 4:2:0"},
+      {"DC_30bit_420", "Deep color 30-bit 4:2:0"},
+      {"DVI_dual", "DVI dual link"},
+      {"Max_TMDS", "Maximum TMDS clock"},
+      {"latency_f", "Latency present"},
+      {"i_latency", "Interlaced latency present"},
+      {"Video iLatency", "Interlaced video latency"},
+      {"Audio iLatency", "Interlaced audio latency"},
+      {"SCDC_Present", "SCDC present"},
+      {"RR_Capable", "Read request capable"},
+      {"LTE_340Mcsc_Scramble", "Scrambling at 340 Mcsc or less"},
+      {"Max_FRL_Rate", "Maximum FRL rate"},
+      {"ALLM", "Auto low latency mode"},
+      {"FVA", "Fast vactive"},
+      {"CNMVRR", "Negative MVRR"},
+      {"CinemaVRR", "Cinema VRR"},
+      {"M_delta", "M delta"},
+      {"VRRmin", "Minimum VRR"},
+      {"VRRmax", "Maximum VRR"},
+      {"QMS_TFRmin", "QMS minimum TFR"},
+      {"QMS_TFRmax", "QMS maximum TFR"},
+      {"DSC_1p2", "DSC 1.2"},
+      {"DSC_Native_420", "DSC native 4:2:0"},
+      {"DSC_All_bpp", "DSC all bit depths"},
+      {"DSC_10bpc", "DSC 10 bpc"},
+      {"DSC_12bpc", "DSC 12 bpc"},
+      {"DSC_16bpc", "DSC 16 bpc"},
+      {"DSC_MaxSlices", "DSC maximum slices"},
+      {"DSC_Max_FRL_Rate", "DSC maximum FRL rate"},
+      {"DSC_TotalChunkKBytes", "DSC total chunk size"},
+      {"UHD_VIC", "UHD VIC"},
+      {"EEODB_count", "Block count"},
+      {"Feature_Caps", "Feature capabilities"},
+      {"Min_Refresh", "Minimum refresh rate"},
+      {"Max_Refresh", "Maximum refresh rate"},
+      {"Max_Refresh_8bit", "Maximum refresh rate (8-bit)"},
+      {"Flags_1x", "FreeSync 1 flags"},
+      {"Flags_2x", "FreeSync 2 flags"},
+      {"Max_Luminance", "Maximum luminance"},
+      {"Min_Luminance", "Minimum luminance"},
+      {"Max_Luminance_2", "Maximum luminance 2"},
+      {"Min_Luminance_2", "Minimum luminance 2"},
+      {"SMPTE", "SMPTE ST 2084"},
+      {"HLG", "Hybrid log-gamma"},
+      {"SDR", "SDR gamma"},
+      {"HDR", "HDR gamma"},
+      {"SM_0", "Static metadata type 1"},
+      {"max_lum", "Maximum luminance"},
+      {"avg_lum", "Average luminance"},
+      {"min_lum", "Minimum luminance"},
+      {"QY", "YCC quantization selectable"},
+      {"QS", "RGB quantization selectable"},
+      {"S_PT01", "Preferred timing scan"},
+      {"S_IT01", "IT scan"},
+      {"S_CE01", "CE scan"},
    };
 
    for (const field_name& item : names) {
       if (0 == strcmp(name, item.raw)) return item.display;
+   }
+
+   //established timings: 800x600x60 -> 800×600 @ 60 Hz
+   unsigned width = 0;
+   unsigned height = 0;
+   unsigned rate = 0;
+   char mode = 0;
+   int fields = sscanf(name, "%ux%ux%u%c", &width, &height, &rate, &mode);
+   if ((fields >= 3) && (width > 0) && ((fields == 3) || (mode == 'i'))) {
+      char timing[48];
+      snprintf(timing, sizeof(timing), "%u×%u%s @ %u Hz", width, height,
+               (fields == 4) ? "i" : "", rate);
+      return timing;
    }
 
    std::string display = name;
@@ -614,6 +854,7 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
                         wxedid_wnd* wnd) {
    //drop old rows
    wnd->invalid_fields = 0;
+   if (wnd->reserved_note != NULL) gtk_widget_set_visible(wnd->reserved_note, FALSE);
    GtkWidget* child = gtk_widget_get_first_child(GTK_WIDGET(list));
    while (child != NULL) {
       GtkWidget* next = gtk_widget_get_next_sibling(child);
@@ -627,6 +868,7 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
    wxc_String vdesc;
    u32_t      ival = 0;
    u32_t      cnt  = pgrp->FieldsAr.GetCount();
+   u32_t      hidden = 0;
 
    for (u32_t idx=0; idx<cnt; idx++) {
       edi_dynfld_t* pfld = pgrp->FieldsAr.Item(idx);
@@ -634,6 +876,13 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       sval.Empty();
       ival = 0;
       rcode retU = ( pEDID->*pfld->field.handlerfn )(OP_READ, sval, ival, pfld);
+
+      //reserved fields holding zero say nothing; a set bit is worth seeing
+      if (! wnd->show_reserved && field_is_reserved(pfld->field) &&
+          RCD_IS_OK(retU) && (ival == 0)) {
+         hidden++;
+         continue;
+      }
 
       GtkWidget* card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
       gtk_widget_set_size_request(card, 240, -1);
@@ -738,6 +987,24 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
          }
       }
 
+      if ((widget == NULL) && ((pfld->field.flags & F_BIT) != 0) && RCD_IS_OK(retU)) {
+         //single bit: on/off switch
+         GtkWidget* toggle = gtk_switch_new();
+         gtk_switch_set_active(GTK_SWITCH(toggle), ival != 0);
+         gtk_widget_set_halign(toggle, GTK_ALIGN_START);
+         gtk_widget_set_sensitive(toggle,
+                                  field_writable(pfld->field) || pEDID->b_RD_Ignore);
+         wxedid_row* r = new wxedid_row{
+            pfld, pgrp, pEDID, wnd, ROW_SWITCH, toggle,
+            GTK_LABEL(validation), 0, true,
+            false, static_cast<size_t>(-1), {}, 0
+         };
+         g_object_set_data_full(G_OBJECT(toggle), "row", r,
+                                [](gpointer data){ delete (wxedid_row*) data; });
+         g_signal_connect(toggle, "notify::active", G_CALLBACK(row_on_switch_notify), r);
+         widget = toggle;
+      }
+
       if (widget == NULL) {
          if (field_writable(pfld->field) || pEDID->b_RD_Ignore) {
             //text entry
@@ -795,6 +1062,14 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       gtk_widget_add_css_class(gtk_widget_get_parent(card), "card");
    }
 
+   if (wnd->reserved_note != NULL) {
+      char note[96];
+      snprintf(note, sizeof(note),
+               (hidden == 1) ? "%u reserved field is hidden" : "%u reserved fields are hidden",
+               hidden);
+      gtk_label_set_text(wnd->reserved_label, note);
+      gtk_widget_set_visible(wnd->reserved_note, hidden > 0);
+   }
    wnd_update_document_ui(wnd);
 }
 
@@ -3251,6 +3526,15 @@ static void wnd_on_ignore_read_only_state(GSimpleAction* action, GVariant* value
    if (group != NULL) rows_reload(wnd->fields, group, &wnd->doc->EDID, wnd);
 }
 
+static void wnd_on_show_reserved_state(GSimpleAction* action, GVariant* value,
+                                       gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   g_simple_action_set_state(action, value);
+   wnd->show_reserved = g_variant_get_boolean(value);
+   edi_grp_cl* group = wnd_selected_group(wnd);
+   if (group != NULL) rows_reload(wnd->fields, group, &wnd->doc->EDID, wnd);
+}
+
 static void wnd_on_shortcuts_action(GSimpleAction*, GVariant*, gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
    struct shortcut {
@@ -3452,6 +3736,13 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                            G_ACTION(wnd->ignore_read_only_action));
    g_object_unref(wnd->ignore_read_only_action);
 
+   GSimpleAction* show_reserved_action = g_simple_action_new_stateful(
+      "show-reserved", NULL, g_variant_new_boolean(FALSE));
+   g_signal_connect(show_reserved_action, "change-state",
+                    G_CALLBACK(wnd_on_show_reserved_state), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(show_reserved_action));
+   g_object_unref(show_reserved_action);
+
    GSimpleAction* shortcuts_action = g_simple_action_new("shortcuts", NULL);
    g_signal_connect(shortcuts_action, "activate",
                     G_CALLBACK(wnd_on_shortcuts_action), wnd);
@@ -3527,6 +3818,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    GMenu* option_section = g_menu_new();
    g_menu_append(option_section, "Ignore EDID Errors", "win.ignore-errors");
    g_menu_append(option_section, "Edit Read-Only Fields", "win.ignore-read-only");
+   g_menu_append(option_section, "Show Reserved Fields", "win.show-reserved");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(option_section));
    g_object_unref(option_section);
    GMenu* help_section = g_menu_new();
@@ -3702,7 +3994,22 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_margin_start(fields_clamp, 18);
    gtk_widget_set_margin_end(fields_clamp, 18);
    gtk_widget_set_margin_bottom(fields_clamp, 18);
-   adw_clamp_set_child(ADW_CLAMP(fields_clamp), GTK_WIDGET(wnd->fields));
+   GtkWidget* fields_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
+   gtk_box_append(GTK_BOX(fields_box), GTK_WIDGET(wnd->fields));
+   wnd->reserved_note = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+   gtk_widget_set_halign(wnd->reserved_note, GTK_ALIGN_CENTER);
+   wnd->reserved_label = GTK_LABEL(gtk_label_new(NULL));
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->reserved_label), "caption");
+   gtk_widget_add_css_class(GTK_WIDGET(wnd->reserved_label), "dim-label");
+   gtk_box_append(GTK_BOX(wnd->reserved_note), GTK_WIDGET(wnd->reserved_label));
+   GtkWidget* show_reserved = gtk_button_new_with_label("Show Reserved Fields");
+   gtk_widget_add_css_class(show_reserved, "flat");
+   gtk_widget_add_css_class(show_reserved, "caption");
+   gtk_actionable_set_action_name(GTK_ACTIONABLE(show_reserved), "win.show-reserved");
+   gtk_box_append(GTK_BOX(wnd->reserved_note), show_reserved);
+   gtk_widget_set_visible(wnd->reserved_note, FALSE);
+   gtk_box_append(GTK_BOX(fields_box), wnd->reserved_note);
+   adw_clamp_set_child(ADW_CLAMP(fields_clamp), fields_box);
 
    GtkWidget* fields_scroll = gtk_scrolled_window_new();
    gtk_scrolled_window_set_child(GTK_SCROLLED_WINDOW(fields_scroll), fields_clamp);
