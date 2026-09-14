@@ -2,6 +2,7 @@ edid_core_sources = [
   'EDID_base.cpp',
   'EDID_dsc.cpp',
   'EDID_main.cpp',
+  'EDID_text.cpp',
   'CEA.cpp',
   'CEA_ET.cpp',
   'DisplayID.cpp',
@@ -69,6 +70,14 @@ test_structure_edit = executable(
   install : false,
 )
 
+test_text = executable(
+  'test-text',
+  'tests/test_text.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
 test_corpus = executable(
   'test-corpus',
   'tests/test_corpus.cpp',
@@ -100,3 +109,4 @@ test('structure-edit', test_structure_edit,
 test('corpus-roundtrip', test_corpus,
      args : [sample_data[0], sample_data[1], sample_data[2], sample_data[3],
              sample_data[4], sample_data[5], sample_data[6]])
+test('hex-text-report', test_text, args : [sample_data[2]])
