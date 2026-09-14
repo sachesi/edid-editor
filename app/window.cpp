@@ -612,7 +612,14 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       gtk_box_append(GTK_BOX(card), card_content);
 
       std::string title = field_display_name(pfld->field.name);
-      GtkWidget* label = gtk_label_new(title.c_str());
+      wxc_String unit;
+      pEDID->getValUnitName(unit, pfld->field.flags);
+      //many field names already end with their unit, e.g. "H-Active pix"
+      bool unit_named = (unit.Len() < title.size()) &&
+         g_str_has_suffix(title.c_str(), (" " + unit.std_str()).c_str());
+      std::string caption = (unit.IsEmpty() || unit_named)
+         ? title : title + " (" + unit.std_str() + ")";
+      GtkWidget* label = gtk_label_new(caption.c_str());
       gtk_label_set_xalign(GTK_LABEL(label), 0.0);
       gtk_label_set_ellipsize(GTK_LABEL(label), PANGO_ELLIPSIZE_END);
       gtk_widget_add_css_class(label, "caption");
@@ -733,18 +740,7 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
          }
       }
 
-      wxc_String unit;
-      pEDID->getValUnitName(unit, pfld->field.flags);
-      if (unit.IsEmpty()) {
-         gtk_box_append(GTK_BOX(card_content), widget);
-      } else {
-         GtkWidget* value_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-         gtk_box_append(GTK_BOX(value_row), widget);
-         GtkWidget* unit_label = gtk_label_new(unit.c_str());
-         gtk_widget_add_css_class(unit_label, "dim-label");
-         gtk_box_append(GTK_BOX(value_row), unit_label);
-         gtk_box_append(GTK_BOX(card_content), value_row);
-      }
+      gtk_box_append(GTK_BOX(card_content), widget);
       gtk_box_append(GTK_BOX(card_content), validation);
       gtk_accessible_update_property(GTK_ACCESSIBLE(widget),
                                      GTK_ACCESSIBLE_PROPERTY_LABEL,

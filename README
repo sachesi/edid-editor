@@ -12,10 +12,22 @@ Run it with an EDID binary:
 
     builddir/app/edid-editor path/to/edid.bin
 
+Files ending in .hex or .txt are read as hexadecimal text, as printed by
+edid-decode, xrandr --verbose, or the export below. Import Hex in the main menu
+reads any file this way. Export Hex writes the current EDID as text, and Save
+Report writes every group, field, value, and unit followed by the raw data.
+
 The sidebar supports adding, duplicating, deleting, and reordering compatible
 CTA-861 and DisplayID groups. Right-click a group for the same actions, or use
 Ctrl+D, Delete, and Alt+Up/Alt+Down while the group list has focus. Audio group
 templates initialize valid LPCM or extended-audio descriptor layouts together.
+Undo and Redo cover these changes as well as field edits.
+
+EDID data that breaks the standard is refused by default. Choose Open Anyway
+when an EDID fails to open, or turn on Ignore EDID Errors in the main menu, to
+edit it regardless. Saving keeps unknown data, but writes a correct CTA-861
+DTD offset and clears non-zero CTA-861 padding. Edit Read-Only Fields unlocks
+fields that are normally derived from other data.
 
 Install to the configured prefix with:
 
