@@ -36,7 +36,8 @@ Report writes every group, field, value, and unit followed by the raw data.
 
 The sidebar supports adding, duplicating, deleting, and reordering compatible
 CTA-861 and DisplayID groups. Right-click a group for the same actions, or use
-Ctrl+D, Delete, and Alt+Up/Alt+Down while the group list has focus. Audio group
+Ctrl+D, Delete, and Alt+Up/Alt+Down while the group list has focus. Ctrl+F
+searches the groups. Audio group
 templates initialize valid LPCM or extended-audio descriptor layouts together.
 Undo and Redo cover these changes as well as field edits.
 
