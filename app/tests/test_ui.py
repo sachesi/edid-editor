@@ -711,6 +711,24 @@ def recent(Atspi, app, fixture):
         stop_app(process)
 
 
+def narrow(Atspi, app, fixture):
+    # every page must fit: a wider page makes the window report its width
+    process = launch_app(Atspi, app, fixture)
+    try:
+        if actionable(Atspi, "Show groups"):
+            press(Atspi, "Show groups")
+        select_group(Atspi, 15)
+        wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
+                 "the timing page did not open")
+        time.sleep(0.5)
+        press(Atspi, "Fields")
+        time.sleep(0.5)
+        press(Atspi, "Bytes")
+        time.sleep(0.5)
+    finally:
+        stop_app(process)
+
+
 def inside(app, fixture, scenario):
     import gi
     gi.require_version("Atspi", "2.0")
@@ -736,6 +754,8 @@ def inside(app, fixture, scenario):
         display(Atspi, app, fixture)
     elif scenario == "recent":
         recent(Atspi, app, fixture)
+    elif scenario == "narrow":
+        narrow(Atspi, app, fixture)
     else:
         process = launch_app(Atspi, app, fixture)
         time.sleep(1)
@@ -759,6 +779,8 @@ def main():
     run_session(script, app, fixture, 900, "display")
     run_session(script, app, fixture, 900, "recent")
     run_session(script, app, fixture, 360, "compact")
+    run_session(script, app, fixture, 360, "narrow")
+    run_session(script, app, fixture, 620, "narrow")
 
 
 if __name__ == "__main__":

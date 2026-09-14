@@ -185,6 +185,7 @@ struct wxedid_timing {
    GtkLabel*     modeline;
    GtkWidget*    drawing;
    GtkWidget*    sections;
+   GtkWidget*    summary;
    GtkWidget*    page;
    double        pixel_hz_factor;
    bool          updating;
@@ -1484,6 +1485,7 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    GtkWidget* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
 
    GtkWidget* summary = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 18);
+   timing->summary = summary;
    gtk_widget_add_css_class(summary, "card");
    gtk_widget_set_margin_top(summary, 2);
    gtk_widget_set_margin_start(summary, 0);
@@ -1516,6 +1518,8 @@ static GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_box_append(GTK_BOX(summary), clock_box);
 
    GtkWidget* refresh_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
+   gtk_widget_set_margin_start(refresh_box, 12);
+   gtk_widget_set_margin_end(refresh_box, 12);
    gtk_widget_set_margin_top(refresh_box, 12);
    gtk_widget_set_margin_bottom(refresh_box, 12);
    GtkWidget* refresh_title = gtk_label_new("Vertical refresh");
@@ -4747,40 +4751,54 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_signal_connect(wnd->split_view, "notify::collapsed",
                     G_CALLBACK(wnd_on_split_collapsed), wnd);
 
-   AdwBreakpointCondition* condition = adw_breakpoint_condition_new_length(
-      ADW_BREAKPOINT_CONDITION_MAX_WIDTH, 700.0, ADW_LENGTH_UNIT_SP);
-   AdwBreakpoint* breakpoint = adw_breakpoint_new(condition);
-   adw_breakpoint_add_setters(
-      breakpoint,
-      G_OBJECT(split_view), "collapsed", TRUE,
-      G_OBJECT(split_view), "show-sidebar", FALSE,
-      G_OBJECT(wnd->timing->drawing), "height-request", 220,
-      NULL);
-   adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), breakpoint);
-
-   AdwBreakpointCondition* medium_min = adw_breakpoint_condition_new_length(
-      ADW_BREAKPOINT_CONDITION_MIN_WIDTH, 560.0, ADW_LENGTH_UNIT_SP);
-   AdwBreakpointCondition* medium_max = adw_breakpoint_condition_new_length(
-      ADW_BREAKPOINT_CONDITION_MAX_WIDTH, 1180.0, ADW_LENGTH_UNIT_SP);
-   AdwBreakpoint* medium_grid = adw_breakpoint_new(
-      adw_breakpoint_condition_new_and(medium_min, medium_max));
-   adw_breakpoint_add_setters(
-      medium_grid,
-      G_OBJECT(wnd->fields), "min-children-per-line", 2U,
-      G_OBJECT(wnd->fields), "max-children-per-line", 2U,
-      NULL);
-   adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), medium_grid);
-
-   AdwBreakpointCondition* wide_grid_condition =
-      adw_breakpoint_condition_new_length(
-         ADW_BREAKPOINT_CONDITION_MIN_WIDTH, 1181.0, ADW_LENGTH_UNIT_SP);
-   AdwBreakpoint* wide_grid = adw_breakpoint_new(wide_grid_condition);
-   adw_breakpoint_add_setters(
-      wide_grid,
-      G_OBJECT(wnd->fields), "min-children-per-line", 3U,
-      G_OBJECT(wnd->fields), "max-children-per-line", 3U,
-      NULL);
-   adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), wide_grid);
+   //Width ranges do not overlap: when several breakpoints match, the last
+   //added wins. A field card is at least 240 px wide, the content has 18 px
+   //margins, and the sidebar takes 28% of the width (280-340 px).
+   struct width_range {
+      double min;  //0: no lower bound
+      double max;  //0: no upper bound
+   };
+   auto add_breakpoint = [&](width_range range, bool collapsed, bool narrow,
+                             guint columns) {
+      AdwBreakpointCondition* condition = NULL;
+      if (range.min > 0) {
+         condition = adw_breakpoint_condition_new_length(
+            ADW_BREAKPOINT_CONDITION_MIN_WIDTH, range.min, ADW_LENGTH_UNIT_SP);
+      }
+      if (range.max > 0) {
+         AdwBreakpointCondition* upper = adw_breakpoint_condition_new_length(
+            ADW_BREAKPOINT_CONDITION_MAX_WIDTH, range.max, ADW_LENGTH_UNIT_SP);
+         condition = (condition != NULL)
+            ? adw_breakpoint_condition_new_and(condition, upper) : upper;
+      }
+      AdwBreakpoint* breakpoint = adw_breakpoint_new(condition);
+      if (collapsed) {
+         adw_breakpoint_add_setters(
+            breakpoint,
+            G_OBJECT(split_view), "collapsed", TRUE,
+            G_OBJECT(split_view), "show-sidebar", FALSE,
+            G_OBJECT(wnd->timing->drawing), "height-request", 220,
+            NULL);
+      }
+      if (narrow) {
+         adw_breakpoint_add_setters(
+            breakpoint,
+            G_OBJECT(editor_heading), "orientation", GTK_ORIENTATION_VERTICAL,
+            G_OBJECT(wnd->timing->summary), "orientation", GTK_ORIENTATION_VERTICAL,
+            NULL);
+      }
+      adw_breakpoint_add_setters(
+         breakpoint,
+         G_OBJECT(wnd->fields), "min-children-per-line", columns,
+         G_OBJECT(wnd->fields), "max-children-per-line", columns,
+         NULL);
+      adw_application_window_add_breakpoint(ADW_APPLICATION_WINDOW(window), breakpoint);
+   };
+   add_breakpoint({0, 539}, true, true, 1U);      //phone: one column, stacked headings
+   add_breakpoint({540, 700}, true, false, 2U);   //collapsed sidebar, two columns
+   //701-809: sidebar shown, one column (no breakpoint)
+   add_breakpoint({810, 1180}, false, false, 2U);
+   add_breakpoint({1181, 0}, false, false, 3U);
 
    GtkWidget* empty_page = adw_status_page_new();
    adw_status_page_set_icon_name(ADW_STATUS_PAGE(empty_page), "video-display-symbolic");
