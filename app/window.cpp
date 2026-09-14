@@ -4631,6 +4631,11 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    wnd->group_menu = GTK_POPOVER_MENU(
       gtk_popover_menu_new_from_model(G_MENU_MODEL(group_menu_model)));
    gtk_widget_set_parent(GTK_WIDGET(wnd->group_menu), GTK_WIDGET(wnd->tree));
+   //a list view doesn't unparent children it didn't add itself
+   g_signal_connect(wnd->tree, "destroy",
+                    G_CALLBACK(+[](GtkWidget*, gpointer menu) {
+                       gtk_widget_unparent(GTK_WIDGET(menu));
+                    }), wnd->group_menu);
    gtk_popover_set_has_arrow(GTK_POPOVER(wnd->group_menu), FALSE);
    g_object_unref(group_menu_model);
 

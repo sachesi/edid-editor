@@ -48,7 +48,7 @@ def run_session(script, app, fixture, width, scenario):
         sys.stderr.write(diagnostics)
         raise SystemExit(result.returncode or 1)
     rejected = ("Gtk-CRITICAL", "Adwaita-CRITICAL", "GLib-GObject-CRITICAL",
-                "exceeds AdwApplicationWindow width")
+                "exceeds AdwApplicationWindow width", "still has children left")
     for marker in rejected:
         if marker in diagnostics:
             sys.stderr.write(diagnostics)
