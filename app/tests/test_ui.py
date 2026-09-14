@@ -495,6 +495,15 @@ def readonly(Atspi, app, fixture):
         original = target.read_bytes()
         process = launch_app(Atspi, app, str(target))
         try:
+            wait_for(lambda: named(Atspi,
+                                   "This file is read-only. Save a copy to keep your changes."),
+                     "a read-only file was not explained")
+            press(Atspi, "Save As…", Atspi.Role.PUSH_BUTTON)
+            wait_for(lambda: window_exists("Save EDID binary"),
+                     "the read-only notice did not offer Save As")
+            press(Atspi, "Cancel", Atspi.Role.PUSH_BUTTON)
+            wait_for(lambda: not window_exists("Save EDID binary"),
+                     "Save As dialog did not close")
             select_group(Atspi, 21)
             spin = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
                             "timing editor did not open")

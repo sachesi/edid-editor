@@ -88,6 +88,7 @@ struct wxedid_wnd {
    GtkLabel*           group_title;
    GtkStack*           content_stack;
    AdwBanner*          banner;
+   AdwBanner*          source_banner;  //read-only source: save a copy
    AdwToastOverlay*    toast_overlay;
    GtkRevealer*        log_revealer;
    GtkWidget*          details_button;
@@ -2713,6 +2714,19 @@ static void wnd_update_document_ui(wxedid_wnd* wnd) {
       gtk_window_set_title(wnd->window, "EDID Editor");
    }
 
+   const char* source_note = NULL;
+   if (wnd->loaded && ! wnd->source_writable) {
+      if (g_str_has_prefix(wnd->doc->path, DRM_ROOT)) {
+         source_note = "Read from a connected display. Save a copy to keep your changes.";
+      } else if (wnd->document_hex) {
+         if (wnd->dirty) source_note = "Imported from hex text. Save it as an EDID binary.";
+      } else {
+         source_note = "This file is read-only. Save a copy to keep your changes.";
+      }
+   }
+   if (source_note != NULL) adw_banner_set_title(wnd->source_banner, source_note);
+   adw_banner_set_revealed(wnd->source_banner, source_note != NULL);
+
    if (wnd->invalid_fields > 0) {
       adw_banner_set_title(wnd->banner, "Enter a valid value before saving");
       adw_banner_set_button_label(wnd->banner, NULL);
@@ -2783,6 +2797,11 @@ static void wnd_on_banner_details(AdwBanner* /*banner*/, gpointer user_data) {
    bool visible = g_variant_get_boolean(state);
    g_variant_unref(state);
    if (! visible) g_action_activate(G_ACTION(wnd->details_action), NULL);
+}
+
+static void wnd_on_source_banner(AdwBanner*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   g_action_activate(G_ACTION(wnd->save_as_action), NULL);
 }
 
 static void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group = NULL) {
@@ -3252,14 +3271,27 @@ static void wnd_on_discard_open_response(GObject* source, GAsyncResult* result,
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
    const char* response = adw_alert_dialog_choose_finish(
       ADW_ALERT_DIALOG(source), result);
+   if (0 != strcmp(response, "discard")) return;
+   const char* path = static_cast<const char*>(g_object_get_data(source, "wxedid-open-path"));
+   if (path != NULL) {
+      std::string target = path;
+      wnd_load_file(wnd, target.c_str(), path_is_hex_text(target.c_str()));
+      return;
+   }
    open_mode mode = static_cast<open_mode>(
       GPOINTER_TO_INT(g_object_get_data(source, "wxedid-open-mode")));
-   if (0 == strcmp(response, "discard")) wnd_present_open_dialog(wnd, mode);
+   wnd_present_open_dialog(wnd, mode);
 }
 
-static void wnd_request_open(wxedid_wnd* wnd, open_mode mode) {
+//open a known file, or a dialog when path is NULL; unsaved changes are
+//confirmed first
+static void wnd_request_open_source(wxedid_wnd* wnd, open_mode mode, const char* path) {
    if (! wnd->dirty) {
-      wnd_present_open_dialog(wnd, mode);
+      if (path != NULL) {
+         wnd_load_file(wnd, path, path_is_hex_text(path));
+      } else {
+         wnd_present_open_dialog(wnd, mode);
+      }
       return;
    }
 
@@ -3275,8 +3307,33 @@ static void wnd_request_open(wxedid_wnd* wnd, open_mode mode) {
    adw_alert_dialog_set_response_appearance(dialog, "discard",
                                             ADW_RESPONSE_DESTRUCTIVE);
    g_object_set_data(G_OBJECT(dialog), "wxedid-open-mode", GINT_TO_POINTER(mode));
+   if (path != NULL) {
+      g_object_set_data_full(G_OBJECT(dialog), "wxedid-open-path", g_strdup(path), g_free);
+   }
    adw_alert_dialog_choose(dialog, GTK_WIDGET(wnd->window), NULL,
                            wnd_on_discard_open_response, wnd);
+}
+
+static void wnd_request_open(wxedid_wnd* wnd, open_mode mode) {
+   wnd_request_open_source(wnd, mode, NULL);
+}
+
+//a file dropped on the window opens like one chosen in the open dialog
+static gboolean wnd_on_drop(GtkDropTarget*, const GValue* value, double, double,
+                            gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   if (! G_VALUE_HOLDS(value, GDK_TYPE_FILE_LIST)) return FALSE;
+   GSList* files = static_cast<GSList*>(g_value_get_boxed(value));
+   if (files == NULL) return FALSE;
+   char* path = g_file_get_path(G_FILE(files->data));
+   if (path == NULL) {
+      wnd->doc->GLog.DoLog(
+         "[E!] Couldn’t open the dropped item: only local EDID files are supported.");
+      return FALSE;
+   }
+   wnd_request_open_source(wnd, OPEN_FILE, path);
+   g_free(path);
+   return TRUE;
 }
 
 static void wnd_on_open_action(GSimpleAction* /*action*/, GVariant* /*parameter*/,
@@ -4316,8 +4373,15 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_signal_connect(wnd->banner, "button-clicked",
                     G_CALLBACK(wnd_on_banner_details), wnd);
 
+   wnd->source_banner = ADW_BANNER(adw_banner_new(""));
+   adw_banner_set_button_label(wnd->source_banner, "Save As…");
+   adw_banner_set_use_markup(wnd->source_banner, FALSE);
+   g_signal_connect(wnd->source_banner, "button-clicked",
+                    G_CALLBACK(wnd_on_source_banner), wnd);
+
    GtkWidget* body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
    gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->banner));
+   gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->source_banner));
    gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->content_stack));
    gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->log_revealer));
 
@@ -4331,6 +4395,10 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_box_append(GTK_BOX(content), header);
    gtk_box_append(GTK_BOX(content), GTK_WIDGET(wnd->toast_overlay));
    gtk_widget_set_vexpand(GTK_WIDGET(wnd->toast_overlay), TRUE);
+
+   GtkDropTarget* drop = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
+   g_signal_connect(drop, "drop", G_CALLBACK(wnd_on_drop), wnd);
+   gtk_widget_add_controller(content, GTK_EVENT_CONTROLLER(drop));
 
    adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), content);
    wnd_update_history_state(wnd);
