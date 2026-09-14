@@ -4192,13 +4192,16 @@ static void wnd_on_about_action(GSimpleAction*, GVariant*, gpointer user_data) {
    adw_about_dialog_set_application_icon(dialog, "io.github.sachesi.EdidEditor");
    adw_about_dialog_set_developer_name(dialog, "sachesi");
    adw_about_dialog_set_version(dialog, WXEDID_VERSION);
+   adw_about_dialog_set_website(dialog, "https://github.com/sachesi/edid-editor");
+   adw_about_dialog_set_issue_url(dialog, "https://github.com/sachesi/edid-editor/issues");
    adw_about_dialog_set_comments(dialog,
       "Inspect and edit Extended Display Identification Data.\n\n"
       "Based on wxEDID by Tomasz Pawlak.");
    adw_about_dialog_add_link(dialog, "wxEDID, the original project",
                              "https://sourceforge.net/projects/wxedid/");
    adw_about_dialog_set_developers(dialog, developers);
-   adw_about_dialog_set_copyright(dialog, "Copyright © 2014–2025 Tomasz Pawlak");
+   adw_about_dialog_set_copyright(dialog, "Copyright © 2014–2025 Tomasz Pawlak\n"
+                                          "Copyright © 2026 sachesi");
    adw_about_dialog_set_license_type(dialog, GTK_LICENSE_GPL_3_0);
    adw_dialog_present(ADW_DIALOG(dialog), GTK_WIDGET(wnd->window));
 }
