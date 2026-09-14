@@ -36,6 +36,12 @@
           of a connected display. Shows HDR luminance in cd/m², range limits
           above 255 Hz, native video formats, and standard timing names.
         </p>
+        <p>
+          Adds an overview of the whole EDID, comparison with a file or a
+          connected display, recent files, file drag and drop, on/off switches
+          for single bits, plain field names with full descriptions, hidden
+          reserved fields, and marking of a field’s bytes.
+        </p>
       </description>
     </release>
     <release version="0.1.0" date="2026-09-11">

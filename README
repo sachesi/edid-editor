@@ -17,7 +17,17 @@ Run it with an EDID binary:
 
 Open from Display in the main menu reads the EDID of a connected display from
 /sys/class/drm. The display itself is never written to; save the data to a file
-to keep changes.
+to keep changes. Files can also be dropped on the window, and recent files are
+listed on the start page and under Open Recent.
+
+An opened EDID starts on the Overview, which lists the monitor name, input,
+screen size, timings, refresh ranges, HDR and color support, audio formats,
+and extension blocks. Compare with File and Compare with Display list the
+fields that differ between the current EDID and another one.
+
+Reserved fields holding zero are hidden; Show Reserved Fields lists them. The
+help button of a field shows its full description, and the Bytes view marks
+the bytes of the last field focused or edited.
 
 Files ending in .hex or .txt are read as hexadecimal text, as printed by
 edid-decode, xrandr --verbose, or the export below. Import Hex in the main menu
