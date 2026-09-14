@@ -505,6 +505,38 @@ def broken(Atspi, app, fixture):
             stop_app(process)
 
 
+def display(Atspi, app, fixture):
+    process = launch_app(Atspi, app, fixture)
+    try:
+        activate_menu_item(Atspi, "Open from Display…")
+
+        def outcome():
+            if named(Atspi, "No display data found"):
+                return "none"
+            dialog = named(Atspi, "Open from Display", Atspi.Role.DIALOG)
+            if dialog is None:
+                return None
+            for row in walk(dialog):
+                if role_of(row) != Atspi.Role.LIST_ITEM:
+                    continue
+                for node in walk(row):
+                    if role_of(node) == Atspi.Role.PUSH_BUTTON:
+                        return node
+            return None
+        found = wait_for(outcome, "Open from Display showed neither displays nor a notice")
+        if found == "none":
+            press(Atspi, "Close", Atspi.Role.PUSH_BUTTON)
+            return
+        assert found.get_action_iface().do_action(0)
+        wait_for(lambda: any(role_of(node) == Atspi.Role.FRAME and
+                             name_of(node).startswith("card") for node in nodes(Atspi)),
+                 "opening a display did not name the window after its connector")
+        wait_for(lambda: group_count(Atspi, "BED") == 1,
+                 "the display EDID was not parsed")
+    finally:
+        stop_app(process)
+
+
 def two_cta(Atspi, app, fixture):
     target = str(Path(fixture).with_name("sample_cea_eeodb.bin"))
     process = launch_app(Atspi, app, target)
@@ -530,6 +562,8 @@ def inside(app, fixture, scenario):
         broken(Atspi, app, fixture)
     elif scenario == "two-cta":
         two_cta(Atspi, app, fixture)
+    elif scenario == "display":
+        display(Atspi, app, fixture)
     else:
         process = launch_app(Atspi, app, fixture)
         time.sleep(1)
@@ -550,6 +584,7 @@ def main():
     run_session(script, app, fixture, 900, "hex")
     run_session(script, app, fixture, 900, "broken")
     run_session(script, app, fixture, 900, "two-cta")
+    run_session(script, app, fixture, 900, "display")
     run_session(script, app, fixture, 360, "compact")
 
 

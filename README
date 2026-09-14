@@ -15,6 +15,10 @@ Run it with an EDID binary:
 
     builddir/app/edid-editor path/to/edid.bin
 
+Open from Display in the main menu reads the EDID of a connected display from
+/sys/class/drm. The display itself is never written to; save the data to a file
+to keep changes.
+
 Files ending in .hex or .txt are read as hexadecimal text, as printed by
 edid-decode, xrandr --verbose, or the export below. Import Hex in the main menu
 reads any file this way. Export Hex writes the current EDID as text, and Save

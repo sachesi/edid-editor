@@ -14,6 +14,7 @@
 #include "CEA_class.h"
 #include "CEA_ET_class.h"
 #include "EDID_text.h"
+#include "EDID_display.h"
 #include "wxedid-config.h"
 
 #include <cstdio>
@@ -196,6 +197,21 @@ static void wnd_request_refresh(wxedid_wnd* wnd, edi_grp_cl* group,
                                 edi_dynfld_t* field, bool type_changed, bool now);
 static void wnd_schedule_refresh(wxedid_wnd* wnd);
 static void wnd_flush_refresh(wxedid_wnd* wnd);
+
+static const char DRM_ROOT[] = "/sys/class/drm";
+
+//file name to show for a document: display data is named by its connector
+static char* document_basename(const char* path) {
+   size_t root = strlen(DRM_ROOT);
+   if ((0 == strncmp(path, DRM_ROOT, root)) && (path[root] == '/') &&
+       g_str_has_suffix(path, "/edid")) {
+      char* directory = g_path_get_dirname(path);
+      char* connector = g_path_get_basename(directory);
+      g_free(directory);
+      return connector;
+   }
+   return g_path_get_basename(path);
+}
 
 static void wnd_refresh_group_title(wxedid_wnd* wnd, edi_grp_cl* pgrp) {
    if (pgrp == NULL) return;
@@ -2231,7 +2247,7 @@ static void wnd_update_document_ui(wxedid_wnd* wnd) {
                              "Save a writable copy (Ctrl+S)");
 
    if (wnd->loaded) {
-      char* basename = g_path_get_basename(wnd->doc->path);
+      char* basename = document_basename(wnd->doc->path);
       char* display_path = g_filename_display_name(wnd->doc->path);
       char* window_name = g_strdup_printf("%s — EDID Editor", basename);
       const char* state = wnd->dirty ? "Modified" : NULL;
@@ -2689,7 +2705,70 @@ static void wnd_on_open_response(GObject* source, GAsyncResult* result,
    g_object_unref(window);
 }
 
-static void wnd_present_open_dialog(wxedid_wnd* wnd, bool import_hex) {
+enum open_mode {
+   OPEN_FILE,
+   OPEN_HEX,
+   OPEN_DISPLAY,
+};
+
+static void wnd_on_display_open(GtkButton* button, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   const char* path = static_cast<const char*>(g_object_get_data(G_OBJECT(button), "path"));
+   AdwDialog* dialog = ADW_DIALOG(gtk_widget_get_ancestor(GTK_WIDGET(button), ADW_TYPE_DIALOG));
+   std::string source = (path != NULL) ? path : "";
+   if (dialog != NULL) adw_dialog_close(dialog);
+   if (! source.empty()) wnd_load_file(wnd, source.c_str(), false);
+}
+
+static void wnd_present_display_dialog(wxedid_wnd* wnd) {
+   std::vector<edid_display> displays = edid_connected_displays(DRM_ROOT);
+   if (displays.empty()) {
+      AdwAlertDialog* alert = ADW_ALERT_DIALOG(adw_alert_dialog_new(
+         "No display data found",
+         "No connected display reports EDID data in /sys/class/drm."));
+      adw_alert_dialog_add_response(alert, "close", "Close");
+      adw_dialog_present(ADW_DIALOG(alert), GTK_WIDGET(wnd->window));
+      return;
+   }
+
+   GtkWidget* group = adw_preferences_group_new();
+   adw_preferences_group_set_description(ADW_PREFERENCES_GROUP(group),
+      "The EDID is read from the display connection; the display itself is not changed.");
+   for (const edid_display& display : displays) {
+      GtkWidget* row = adw_action_row_new();
+      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), display.name.c_str());
+      adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+      adw_action_row_set_subtitle(ADW_ACTION_ROW(row), display.connector.c_str());
+      GtkWidget* open = gtk_button_new_from_icon_name("go-next-symbolic");
+      gtk_widget_add_css_class(open, "flat");
+      gtk_widget_set_valign(open, GTK_ALIGN_CENTER);
+      gtk_widget_set_tooltip_text(open, "Open");
+      g_object_set_data_full(G_OBJECT(open), "path", g_strdup(display.path.c_str()), g_free);
+      g_signal_connect(open, "clicked", G_CALLBACK(wnd_on_display_open), wnd);
+      adw_action_row_add_suffix(ADW_ACTION_ROW(row), open);
+      adw_action_row_set_activatable_widget(ADW_ACTION_ROW(row), open);
+      adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), row);
+   }
+   GtkWidget* page = adw_preferences_page_new();
+   adw_preferences_page_add(ADW_PREFERENCES_PAGE(page), ADW_PREFERENCES_GROUP(group));
+
+   GtkWidget* view = adw_toolbar_view_new();
+   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(view), adw_header_bar_new());
+   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(view), page);
+
+   AdwDialog* dialog = adw_dialog_new();
+   adw_dialog_set_title(dialog, "Open from Display");
+   adw_dialog_set_content_width(dialog, 420);
+   adw_dialog_set_child(dialog, view);
+   adw_dialog_present(dialog, GTK_WIDGET(wnd->window));
+}
+
+static void wnd_present_open_dialog(wxedid_wnd* wnd, open_mode mode) {
+   if (mode == OPEN_DISPLAY) {
+      wnd_present_display_dialog(wnd);
+      return;
+   }
+   bool import_hex = (mode == OPEN_HEX);
    GtkFileDialog* dialog = gtk_file_dialog_new();
    gtk_file_dialog_set_title(dialog, import_hex ? "Import EDID from hex"
                                                 : "Open EDID file");
@@ -2713,19 +2792,20 @@ static void wnd_on_discard_open_response(GObject* source, GAsyncResult* result,
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
    const char* response = adw_alert_dialog_choose_finish(
       ADW_ALERT_DIALOG(source), result);
-   bool import_hex = g_object_get_data(source, "wxedid-import-hex") != NULL;
-   if (0 == strcmp(response, "discard")) wnd_present_open_dialog(wnd, import_hex);
+   open_mode mode = static_cast<open_mode>(
+      GPOINTER_TO_INT(g_object_get_data(source, "wxedid-open-mode")));
+   if (0 == strcmp(response, "discard")) wnd_present_open_dialog(wnd, mode);
 }
 
-static void wnd_request_open(wxedid_wnd* wnd, bool import_hex) {
+static void wnd_request_open(wxedid_wnd* wnd, open_mode mode) {
    if (! wnd->dirty) {
-      wnd_present_open_dialog(wnd, import_hex);
+      wnd_present_open_dialog(wnd, mode);
       return;
    }
 
    AdwAlertDialog* dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
       "Discard unsaved changes?",
-      "Opening another file will discard changes to the current EDID."));
+      "Opening another EDID will discard changes to the current EDID."));
    adw_alert_dialog_add_responses(dialog,
                                   "cancel", "Cancel",
                                   "discard", "Discard",
@@ -2734,20 +2814,22 @@ static void wnd_request_open(wxedid_wnd* wnd, bool import_hex) {
    adw_alert_dialog_set_default_response(dialog, "cancel");
    adw_alert_dialog_set_response_appearance(dialog, "discard",
                                             ADW_RESPONSE_DESTRUCTIVE);
-   if (import_hex) {
-      g_object_set_data(G_OBJECT(dialog), "wxedid-import-hex", GINT_TO_POINTER(1));
-   }
+   g_object_set_data(G_OBJECT(dialog), "wxedid-open-mode", GINT_TO_POINTER(mode));
    adw_alert_dialog_choose(dialog, GTK_WIDGET(wnd->window), NULL,
                            wnd_on_discard_open_response, wnd);
 }
 
 static void wnd_on_open_action(GSimpleAction* /*action*/, GVariant* /*parameter*/,
                                gpointer user_data) {
-   wnd_request_open((wxedid_wnd*) user_data, false);
+   wnd_request_open((wxedid_wnd*) user_data, OPEN_FILE);
 }
 
 static void wnd_on_import_hex_action(GSimpleAction*, GVariant*, gpointer user_data) {
-   wnd_request_open(static_cast<wxedid_wnd*>(user_data), true);
+   wnd_request_open(static_cast<wxedid_wnd*>(user_data), OPEN_HEX);
+}
+
+static void wnd_on_open_display_action(GSimpleAction*, GVariant*, gpointer user_data) {
+   wnd_request_open(static_cast<wxedid_wnd*>(user_data), OPEN_DISPLAY);
 }
 
 //------------
@@ -2878,9 +2960,11 @@ static void wnd_present_save_dialog(wxedid_wnd* wnd) {
    GtkFileDialog* dialog = gtk_file_dialog_new();
    gtk_file_dialog_set_title(dialog, "Save EDID binary");
    gtk_file_dialog_set_accept_label(dialog, "Save");
-   char* basename = g_path_get_basename(wnd->doc->path);
+   char* basename = document_basename(wnd->doc->path);
    char* initial_name = NULL;
-   if (wnd->document_hex && (basename != NULL)) {
+   if (g_str_has_prefix(wnd->doc->path, DRM_ROOT)) {
+      initial_name = g_strdup_printf("%s.bin", basename);
+   } else if (wnd->document_hex && (basename != NULL)) {
       char* extension = strrchr(basename, '.');
       char* stem = (extension != NULL) && (extension != basename)
          ? g_strndup(basename, extension - basename) : g_strdup(basename);
@@ -2903,7 +2987,8 @@ static void wnd_present_save_dialog(wxedid_wnd* wnd) {
    g_free(basename);
 
    char* directory = g_path_get_dirname(wnd->doc->path);
-   if ((directory != NULL) && (directory[0] != 0)) {
+   if ((directory != NULL) && (directory[0] != 0) &&
+       ! g_str_has_prefix(wnd->doc->path, DRM_ROOT)) {
       GFile* folder = g_file_new_for_path(directory);
       gtk_file_dialog_set_initial_folder(dialog, folder);
       g_object_unref(folder);
@@ -3003,7 +3088,7 @@ static void wnd_present_text_save_dialog(wxedid_wnd* wnd, const char* title,
    gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
    g_object_unref(filters);
 
-   char* basename = g_path_get_basename(wnd->doc->path);
+   char* basename = document_basename(wnd->doc->path);
    char* dot = strrchr(basename, '.');
    if ((dot != NULL) && (dot != basename)) *dot = 0;
    char* initial_name = g_strdup_printf("%s.%s", basename, extension);
@@ -3012,7 +3097,8 @@ static void wnd_present_text_save_dialog(wxedid_wnd* wnd, const char* title,
    g_free(basename);
 
    char* directory = g_path_get_dirname(wnd->doc->path);
-   if ((directory != NULL) && (directory[0] != 0)) {
+   if ((directory != NULL) && (directory[0] != 0) &&
+       ! g_str_has_prefix(wnd->doc->path, DRM_ROOT)) {
       GFile* folder = g_file_new_for_path(directory);
       gtk_file_dialog_set_initial_folder(dialog, folder);
       g_object_unref(folder);
@@ -3039,7 +3125,7 @@ static void wnd_on_export_hex_action(GSimpleAction*, GVariant*, gpointer user_da
 static void wnd_on_save_report_action(GSimpleAction*, GVariant*, gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
    if (! wnd_prepare_output(wnd)) return;
-   char* source = g_path_get_basename(wnd->doc->path);
+   char* source = document_basename(wnd->doc->path);
    std::string report = edid_text_report(wnd->doc->EDID, source, WXEDID_VERSION);
    g_free(source);
    wnd_present_text_save_dialog(wnd, "Save EDID report", "txt", "Text",
@@ -3301,6 +3387,12 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->add_displayid_action));
    g_object_unref(wnd->add_displayid_action);
 
+   GSimpleAction* display_action = g_simple_action_new("open-display", NULL);
+   g_signal_connect(display_action, "activate",
+                    G_CALLBACK(wnd_on_open_display_action), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(display_action));
+   g_object_unref(display_action);
+
    GSimpleAction* import_action = g_simple_action_new("import-hex", NULL);
    g_signal_connect(import_action, "activate", G_CALLBACK(wnd_on_import_hex_action), wnd);
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(import_action));
@@ -3390,6 +3482,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    GMenu* primary_menu = g_menu_new();
    GMenu* open_section = g_menu_new();
    g_menu_append(open_section, "Open…", "win.open");
+   g_menu_append(open_section, "Open from Display…", "win.open-display");
    g_menu_append(open_section, "Import Hex…", "win.import-hex");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(open_section));
    g_object_unref(open_section);

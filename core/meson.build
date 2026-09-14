@@ -3,6 +3,7 @@ edid_core_sources = [
   'EDID_dsc.cpp',
   'EDID_main.cpp',
   'EDID_text.cpp',
+  'EDID_display.cpp',
   'CEA.cpp',
   'CEA_ET.cpp',
   'DisplayID.cpp',
@@ -102,6 +103,14 @@ test_displayid2 = executable(
   install : false,
 )
 
+test_display = executable(
+  'test-display',
+  'tests/test_display.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
 test_corpus = executable(
   'test-corpus',
   'tests/test_corpus.cpp',
@@ -165,3 +174,4 @@ test('hdmi-forum', test_hdmi_forum,
      args : [files('tests/corpus/samsung-sam756f.hex', 'tests/corpus/xiaomi-xmd0076.hex'),
              sample_data[7]])
 test('displayid2', test_displayid2, args : files('tests/corpus/au-optronics-auofcb7.hex'))
+test('connected-displays', test_display, args : [sample_data[1]])
