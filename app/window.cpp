@@ -1852,36 +1852,40 @@ static void wnd_flush_refresh(wxedid_wnd* wnd) {
    wnd->refresh_type_changed = false;
    if (group == NULL) return;
 
-   edi_grp_cl* target = NULL;
-   rcode result;
-   edi_grp_cl* rebuilt = wnd->doc->EDID.RebuildGroup(group, field, type_changed,
-                                                     &target, result);
-   if (rebuilt == NULL) {
-      if (! RCD_IS_OK(result)) wnd->doc->GLog.PrintRcode(result);
-      return;
-   }
-   GroupAr_cl* array = target->getParentAr();
-   u32_t index = target->getParentArIdx();
-   edi_grp_cl* parent = target->getParentGrp();
    const wxedid_history_entry* last = (wnd->history_position == 0) ? NULL :
       &wnd->history[wnd->history_position - 1];
    bool joined = (last != NULL) && (wnd->history_position == wnd->history.size()) &&
                  (last->kind == HISTORY_FIELD) && (last->group == group) &&
                  (last->field == field);
-   edi_grp_cl* selected = wnd_selected_group(wnd);
-   bool follow = (selected == target) || (selected == group);
 
-   if (! EDID_cl::ReplaceGroup(target, rebuilt)) {
+   edi_grp_cl* target = NULL;
+   rcode result;
+   edi_grp_cl* rebuilt = wnd->doc->EDID.RebuildGroup(group, field, type_changed,
+                                                     &target, result);
+   const char* refused = NULL;
+   if ((rebuilt == NULL) && ! RCD_IS_OK(result)) {
+      refused = "This change is not possible here. The previous value was restored.";
+   } else if ((rebuilt != NULL) && ! EDID_cl::ReplaceGroup(target, rebuilt)) {
       delete rebuilt;
+      refused = "This change does not fit in the block. The previous value was restored.";
+   }
+   if (refused != NULL) {
       if (joined) {
          wnd_apply_history_step(wnd, false);
          wnd_drop_history(wnd, wnd->history_position);
          wnd_update_history_state(wnd);
       }
-      wnd_show_error(wnd, "This change does not fit in the block. The previous value "
-                          "was restored.");
+      wnd_show_error(wnd, refused);
       return;
    }
+   if (rebuilt == NULL) return;
+
+   //the replacement now sits where target was
+   GroupAr_cl* array = rebuilt->getParentAr();
+   u32_t index = rebuilt->getParentArIdx();
+   edi_grp_cl* parent = rebuilt->getParentGrp();
+   edi_grp_cl* selected = wnd_selected_group(wnd);
+   bool follow = (selected == target) || (selected == group);
 
    wxedid_history_entry entry = {};
    entry.kind = HISTORY_REPLACE;

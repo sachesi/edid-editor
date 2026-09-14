@@ -395,7 +395,7 @@ class EDID_cl {
       rcode ParseEDID_CEA ();
       rcode ParseEDID_DisplayID(u32_t block);
       rcode ParseCEA_DBC  (u8_t *pinst);
-      rcode ParseDBC_TAG  (u8_t *pinst, edi_grp_cl** pp_grp);
+      static rcode ParseDBC_TAG(u8_t *pinst, edi_grp_cl** pp_grp);
       rcode CreateGroup   (group_template which, u8_t displayid_version,
                            edi_grp_cl** pp_grp);
       //After a successful write to field, build a new group from the current

@@ -147,6 +147,50 @@ int main(int argc, char* argv[]) {
          (value_of(EDID, range, "Maximum pixel clock") == 169344),
          "edited values survive reassembly");
 
+   //CTA-861 data blocks inside DisplayID: the AMD FreeSync range
+   check(load_hex(EDID, argv[1]), "reload DisplayID 2.0 panel");
+   edi_grp_cl* amd = find_subgroup(EDID, "VSD");
+   check((amd != NULL) && (amd->GroupName == wxc_String("AMD Vendor Specific Data Block")) &&
+         (value_of(EDID, amd, "Version") == 3) && (value_of(EDID, amd, "Min_Refresh") == 40) &&
+         (value_of(EDID, amd, "Max_Refresh") == 60),
+         "AMD block inside DisplayID decodes its refresh range");
+   edi_buf_t before;
+   std::memcpy(&before, EDID.getEDID(), sizeof(before));
+   edi_dynfld_t* version = find_field(amd, "Version");
+   wxc_String text;
+   u32_t two = 2;
+   rcode written = (version != NULL)
+      ? (EDID.*version->field.handlerfn)(OP_WRINT, text, two, version) : rcode();
+   edi_grp_cl* target = NULL;
+   rcode result;
+   edi_grp_cl* rebuilt = RCD_IS_OK(written)
+      ? EDID.RebuildGroup(amd, version, RCD_IS_TRUE(written), &target, result) : NULL;
+   edi_grp_cl* wrapper = (amd != NULL) ? amd->getParentGrp() : NULL;
+   check((rebuilt != NULL) && (find_field(rebuilt, "Max_Refresh_8bit") == NULL) &&
+         EDID.ReplaceGroup(target, rebuilt) && (wrapper != NULL) &&
+         (wrapper->getTotalSize() == 3 + 21),
+         "version change rebuilds the AMD block inside DisplayID");
+   delete target;
+   check(RCD_IS_OK(EDID.AssembleEDID()), "rebuilt DisplayID data assembles");
+   bool only_version = true;
+   for (u32_t idx=128; idx<256; idx++) {
+      if ((idx == 175) || (idx >= 254)) continue; //version, checksums
+      if (EDID.getEDID()->buff[idx] != before.buff[idx]) only_version = false;
+   }
+   check(only_version && (EDID.getEDID()->buff[175] == 2),
+         "only the version byte changes inside DisplayID");
+
+   check(load_hex(EDID, argv[1]), "reload DisplayID 2.0 panel");
+   amd = find_subgroup(EDID, "VSD");
+   edi_dynfld_t* length = find_field(amd, "Blk length");
+   u32_t shorter = 18;
+   written = (length != NULL)
+      ? (EDID.*length->field.handlerfn)(OP_WRINT, text, shorter, length) : rcode();
+   rebuilt = RCD_IS_OK(written)
+      ? EDID.RebuildGroup(amd, length, RCD_IS_TRUE(written), &target, result) : NULL;
+   check((rebuilt == NULL) && ! RCD_IS_OK(result),
+         "a size change inside DisplayID is refused");
+
    //a descriptor size above 20 keeps its extra byte
    check(load_hex(EDID, argv[1]), "reload DisplayID 2.0 panel");
    edi_buf_t original;

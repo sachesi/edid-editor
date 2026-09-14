@@ -696,6 +696,12 @@ void SubGrpAr_cl::CalcDataSZ(edi_grp_cl *pgrp) {
    hdr_sz += ahf_sz;
    tid     = pgrp->getTypeID();
 
+   //DisplayID data block: 3-byte header, up to 121 payload bytes
+   if ((tid.t32 & ID_PARENT_MASK) == ID_DISPLAYID_DB) {
+      base_CalcDataSZ(3 + 121, pgrp->getHeaderSize());
+      return;
+   }
+
    if ((tid.t32 & ID_CEA_ET_MASK) != 0) hdr_sz ++ ; //+1 for ETag code
 
    base_CalcDataSZ(32, hdr_sz);

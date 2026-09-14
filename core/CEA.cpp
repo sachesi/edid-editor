@@ -1349,7 +1349,7 @@ const char  cea_vsd_cl::Desc[] =
 "- C4-5D-D8 \"HDMI Forum\" -> provides HDMI 2.0 payload\n"
 "- 00-D0-46 \"DOLBY LABORATORIES, INC.\" -> provides Dolby Vision payload\n"
 "- 90-84-8b \"HDR10+ Technologies, LLC\" -> provides HDR10+ payload as part of HDMI 2.1 Amendment A1 standard\n\n"
-"wxEDID decodes the 00-0C-03 and C4-5D-D8 payloads; the payload of other\n"
+"wxEDID decodes the 00-0C-03, C4-5D-D8, and 00-00-1A (AMD) payloads; the payload of other\n"
 "vendors is shown as data bytes.\n";
 
 const edi_field_t cea_vsd_cl::hdr_fld_dsc[] = {
@@ -1455,6 +1455,101 @@ const gpfld_dsc_t cea_vsd_cl::hf_fld_grp[] = {
    { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 2, .fields = HF_dsc_chunk_fld }
 };
 
+//AMD (OUI 00-00-1A): FreeSync range and HDR data; the field meanings follow
+//edid-decode, several flag bits are undocumented
+static const edi_field_t AMD_head_fld[] = {
+   {&EDID_cl::ByteVal, 0, 4, 0, 1, F_BTE|F_INT|F_FR, 0, 0xFF, "Version",
+   "AMD block version; version 3 moves the maximum refresh rate to 10 bits." },
+   {&EDID_cl::ByteVal, 0, 5, 0, 1, F_BTE|F_HEX, 0, 0xFF, "Feature_Caps",
+   "Feature capabilities:\nbit1= HDR fields valid\nbit2= global backlight control\n"
+   "bit3= local dimming\nbit6= FreeSync Panel Replay\nother bits are undocumented" },
+   {&EDID_cl::ByteVal, 0, 6, 0, 1, F_BTE|F_INT|F_HZ, 0, 0xFF, "Min_Refresh",
+   "Minimum FreeSync refresh rate." }
+};
+
+static const edi_field_t AMD_max_fld[] = {
+   {&EDID_cl::ByteVal, 0, 7, 0, 1, F_BTE|F_INT|F_HZ, 0, 0xFF, "Max_Refresh",
+   "Maximum FreeSync refresh rate." }
+};
+
+static const edi_field_t AMD_max_legacy_fld[] = {
+   {&EDID_cl::ByteVal, 0, 7, 0, 1, F_BTE|F_INT|F_HZ, 0, 0xFF, "Max_Refresh_8bit",
+   "Maximum refresh rate used before version 3." }
+};
+
+static const edi_field_t AMD_flags_fld[] = {
+   {&EDID_cl::ByteVal, 0, 8, 0, 1, F_BTE|F_HEX, 0, 0xFF, "Flags_1x",
+   "FreeSync 1.x flags; any of bits 1, 2, 5, 6, 7 means the range is switched via MCCS." }
+};
+
+static const edi_field_t AMD_hdr_fld[] = {
+   {&EDID_cl::ByteVal, 0, 9, 0, 1, F_BTE|F_HEX, 0, 0xFF, "Flags_2x",
+   "FreeSync 2.x flags:\nbit2= PQ EOTF\nbits6-7: 1= Mini LED, 2= OLED\n"
+   "other bits are undocumented" },
+   {&EDID_cl::ByteVal, 0, 10, 0, 1, F_BTE|F_INT, 0, 0xFF, "Max_Luminance",
+   "Maximum luminance code: 50 * 2^(value/32) cd/m^2." },
+   {&EDID_cl::ByteVal, 0, 11, 0, 1, F_BTE|F_INT, 0, 0xFF, "Min_Luminance",
+   "Minimum luminance code, relative to the maximum luminance." },
+   {&EDID_cl::ByteVal, 0, 12, 0, 1, F_BTE|F_INT, 0, 0xFF, "Max_Luminance_2",
+   "Maximum luminance without local dimming, or at minimum backlight." },
+   {&EDID_cl::ByteVal, 0, 13, 0, 1, F_BTE|F_INT, 0, 0xFF, "Min_Luminance_2",
+   "Minimum luminance without local dimming, or at minimum backlight." }
+};
+
+static const edi_field_t AMD_max3_fld[] = {
+   {&EDID_cl::DisplayID_MaxRefresh, 0, 14, 0, 2, F_INT|F_HZ, 0, 1023, "Max_Refresh",
+   "Maximum FreeSync refresh rate: low byte, then bits 0-1 of the next byte." }
+};
+
+const gpfld_dsc_t cea_vsd_cl::amd_fld_grp[] = {
+   { .flags = T_FLEX_LAYOUT, .dat_sz = 3, .inst_cnt = 1, .fcount = 1,
+     .fields = cea_vsd_cl::hdr_fld_dsc },
+   { .flags = 0, .dat_sz = 3, .inst_cnt = 1, .fcount = 3, .fields = AMD_head_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 1, .fields = AMD_max_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 1, .fields = AMD_flags_fld },
+   { .flags = 0, .dat_sz = 5, .inst_cnt = 1, .fcount = 5, .fields = AMD_hdr_fld }
+};
+
+const gpfld_dsc_t cea_vsd_cl::amd3_fld_grp[] = {
+   { .flags = T_FLEX_LAYOUT, .dat_sz = 3, .inst_cnt = 1, .fcount = 1,
+     .fields = cea_vsd_cl::hdr_fld_dsc },
+   { .flags = 0, .dat_sz = 3, .inst_cnt = 1, .fcount = 3, .fields = AMD_head_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 1, .fields = AMD_max_legacy_fld },
+   { .flags = 0, .dat_sz = 1, .inst_cnt = 1, .fcount = 1, .fields = AMD_flags_fld },
+   { .flags = 0, .dat_sz = 5, .inst_cnt = 1, .fcount = 5, .fields = AMD_hdr_fld },
+   { .flags = 0, .dat_sz = 2, .inst_cnt = 1, .fcount = 1, .fields = AMD_max3_fld }
+};
+
+const dbc_flatgp_dsc_t cea_vsd_cl::AMD_VSD_grp = {
+   .CodN     = "VSD",
+   .Name     = "AMD Vendor Specific Data Block",
+   .Desc     = Desc,
+   .type_id  = ID_VSD,
+   .flags    = T_FLEX_LAYOUT,
+   .min_len  = 3,
+   .max_len  = 31,
+   .max_fld  = CEA_DBCHDR_FCNT + 11 + 31,
+   .hdr_fcnt = CEA_DBCHDR_FCNT,
+   .hdr_sz   = sizeof(bhdr_t),
+   .fld_arsz = 5,
+   .fld_ar   = cea_vsd_cl::amd_fld_grp
+};
+
+const dbc_flatgp_dsc_t cea_vsd_cl::AMD3_VSD_grp = {
+   .CodN     = "VSD",
+   .Name     = "AMD Vendor Specific Data Block",
+   .Desc     = Desc,
+   .type_id  = ID_VSD,
+   .flags    = T_FLEX_LAYOUT,
+   .min_len  = 3,
+   .max_len  = 31,
+   .max_fld  = CEA_DBCHDR_FCNT + 12 + 31,
+   .hdr_fcnt = CEA_DBCHDR_FCNT,
+   .hdr_sz   = sizeof(bhdr_t),
+   .fld_arsz = 6,
+   .fld_ar   = cea_vsd_cl::amd3_fld_grp
+};
+
 const gpfld_dsc_t cea_vsd_cl::vendor_fld_grp[] = {
    { .flags = T_FLEX_LAYOUT, .dat_sz = 3, .inst_cnt = 1, .fcount = 1,
      .fields = cea_vsd_cl::hdr_fld_dsc }
@@ -1514,6 +1609,10 @@ rcode cea_vsd_cl::init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent) {
       u32_t oui = inst[1] | (inst[2] << 8) | (inst[3] << 16);
       if (oui == 0xC45DD8) {
          layout = &HF_VSD_grp;
+      } else if (oui == 0x00001A) {
+         bool version3 = (reinterpret_cast <const bhdr_t*> (inst)->tag.blk_len >= 4) &&
+                         (inst[4] >= 3);
+         layout = version3 ? &AMD3_VSD_grp : &AMD_VSD_grp;
       } else if (oui != 0x000C03) {
          layout = &Vendor_VSD_grp;
       }

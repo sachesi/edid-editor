@@ -146,10 +146,14 @@ class cea_vsd_cl : public edi_grp_cl {
       static const gpfld_dsc_t  sub_fld_grp       [];
       static const gpfld_dsc_t  hf_fld_grp        [];
       static const gpfld_dsc_t  vendor_fld_grp    [];
+      static const gpfld_dsc_t  amd_fld_grp       [];
+      static const gpfld_dsc_t  amd3_fld_grp      [];
 
       static const dbc_flatgp_dsc_t VSD_grp;
       static const dbc_flatgp_dsc_t HF_VSD_grp;
       static const dbc_flatgp_dsc_t Vendor_VSD_grp;
+      static const dbc_flatgp_dsc_t AMD_VSD_grp;
+      static const dbc_flatgp_dsc_t AMD3_VSD_grp;
 
    public:
       rcode       init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent);

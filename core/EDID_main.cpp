@@ -353,9 +353,11 @@ rcode EDID_cl::CreateGroup(group_template which, u8_t displayid_version,
 
 //same fields and sub-groups: a rebuild would change nothing visible
 static bool same_layout(edi_grp_cl* first, edi_grp_cl* second) {
+   const u32_t type_mask = ID_PARENT_MASK | ID_SUBGRP_MASK;
    if ((first->FieldsAr.GetCount() != second->FieldsAr.GetCount()) ||
        (first->getSubGrpCount() != second->getSubGrpCount()) ||
-       (first->getTypeID().t32 != second->getTypeID().t32)) return false;
+       ((first->getTypeID().t32 & type_mask) != (second->getTypeID().t32 & type_mask)))
+      return false;
    for (u32_t idx=0; idx<first->FieldsAr.GetCount(); idx++) {
       const edi_field_t& a = first->FieldsAr.Item(idx)->field;
       const edi_field_t& b = second->FieldsAr.Item(idx)->field;
@@ -421,6 +423,22 @@ edi_grp_cl* EDID_cl::RebuildGroup(edi_grp_cl* group, edi_dynfld_t* field,
       }
    }
    if (! RCD_IS_OK(result)) pGLog->PrintRcode(result);
+
+   //placement flags belong to the position, not the data
+   gtid_t type = rebuilt->getTypeID();
+   type.t32 |= source->getTypeID().t32 & (T_SUB_GRP | T_NO_MOVE | T_GRP_FIXED);
+   rebuilt->setTypeID(type);
+
+   //DisplayID payload lengths are not adjusted for resized data blocks
+   edi_grp_cl* parent = source->getParentGrp();
+   if ((parent != NULL) &&
+       ((parent->getTypeID().t32 & ID_PARENT_MASK) == ID_DISPLAYID_DB) &&
+       (rebuilt->getTotalSize() != source->getTotalSize())) {
+      delete rebuilt;
+      wxedid_RCD_SET_FAULT_VMSG(result,
+         "[E!] A data block inside DisplayID can't change its size");
+      return NULL;
+   }
    RCD_SET_OK(result);
    *target = source;
    return rebuilt;

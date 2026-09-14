@@ -157,6 +157,43 @@ rcode displayid_data_block_cl::init(const u8_t* inst, u32_t orflags,
       payload += 9;
       offset += 9;
       remaining = 0;
+   } else if (inst[0] == 0x81) {
+      //CTA-861 data blocks; blocks with sub-groups of their own stay raw
+      while (remaining > 0) {
+         u32_t size = 1 + (payload[0] & 0x1f);
+         if (size > remaining) break;
+         edi_grp_cl* cta = NULL;
+         EDID_cl::ParseDBC_TAG(const_cast<u8_t*>(payload), &cta);
+         if (cta != NULL) {
+            rcode result = cta->init(payload, orflags & T_MODE_EDIT, this);
+            if ((! RCD_IS_OK(result) && (result.detail.rcode > RCD_FVMSG)) ||
+                (cta->getSubGrpCount() != 0) || (cta->getTotalSize() != size)) {
+               delete cta;
+               cta = NULL;
+            }
+         }
+         edi_grp_cl* part = cta;
+         if (part != NULL) {
+            gtid_t type = part->getTypeID();
+            type.t32 |= T_SUB_GRP | T_NO_MOVE | T_GRP_FIXED;
+            part->setTypeID(type);
+         } else {
+            displayid_raw_payload_cl* raw = new displayid_raw_payload_cl;
+            raw->setDataSize(size);
+            retU = raw->init(payload, T_SUB_GRP|T_NO_MOVE, this);
+            if (! RCD_IS_OK(retU)) {
+               delete raw;
+               return retU;
+            }
+            part = raw;
+         }
+         part->setRelOffs(offset);
+         part->setAbsOffs(abs_offs + offset);
+         subgroups.Append(part);
+         payload += size;
+         offset += size;
+         remaining -= size;
+      }
    } else if ((version < 0x20) && (inst[0] == 0x03)) {
       while (remaining >= 20) {
          displayid_type1_timing_cl* timing = new displayid_type1_timing_cl;
