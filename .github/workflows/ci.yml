@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Build and test
+    runs-on: ubuntu-latest
+    # The compiler and the libraries the application is developed against.
+    container: registry.fedoraproject.org/fedora:44
+    steps:
+      - name: Install the build dependencies
+        run: >
+          dnf install -y --setopt=install_weak_deps=False
+          git-core meson ninja-build gcc-c++ gtk4-devel libadwaita-devel
+          desktop-file-utils appstream python3
+      - uses: actions/checkout@v5
+      - name: Build
+        run: |
+          meson setup builddir --werror
+          meson compile -C builddir
+      - name: Test
+        run: meson test -C builddir --no-suite ui --print-errorlogs
