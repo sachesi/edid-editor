@@ -1240,7 +1240,8 @@ static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
       field_indices = dtd_fields;
       timing->pixel_hz_factor = 10000.0;
       gtk_label_set_text(timing->clock_unit, "×10 kHz");
-   } else if (0 == strcmp(code, "DID-T1")) {
+   } else if ((0 == strcmp(code, "DID-T1")) || (0 == strcmp(code, "DID-T7"))) {
+      //Type VII shares the Type I layout
       field_indices = displayid_type1_fields;
       timing->pixel_hz_factor = 1000.0;
       gtk_label_set_text(timing->clock_unit, "kHz");
@@ -1295,6 +1296,8 @@ static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
       if ((idx == TIMING_PIXCLK) && (0 == strcmp(code, "DID-T1"))) {
          maximum = 167772160;
          step = 10;
+      } else if ((idx == TIMING_PIXCLK) && (0 == strcmp(code, "DID-T7"))) {
+         maximum = 16777216;
       }
       GtkAdjustment* adjustment = gtk_spin_button_get_adjustment(timing->spins[idx]);
       gtk_adjustment_set_lower(adjustment, minimum);

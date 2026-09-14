@@ -46,6 +46,29 @@ class displayid_type1_timing_cl : public edi_grp_cl {
       void getGrpName(EDID_cl& EDID, wxc_String& gp_name);
 };
 
+//DisplayID 2.x Type VII timing: the Type I layout with a 1 kHz pixel clock.
+//Descriptors longer than 20 bytes keep their extra bytes unchanged.
+class displayid_type7_timing_cl : public edi_grp_cl {
+   private:
+      static const edi_field_t fields[];
+      edi_field_t dyn_fields[15];
+
+   public:
+      rcode init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent);
+      void setDataSize(u32_t dsz) {dat_sz = dsz;};
+      void getGrpName(EDID_cl& EDID, wxc_String& gp_name);
+};
+
+//DisplayID 2.x Dynamic Video Timing Range Limits payload
+class displayid_range_cl : public edi_grp_cl {
+   private:
+      static const edi_field_t fields[];
+      edi_field_t dyn_fields[5];
+
+   public:
+      rcode init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent);
+};
+
 class displayid_raw_payload_cl : public edi_grp_cl {
    private:
       char field_names[121][24];

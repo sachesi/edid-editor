@@ -94,6 +94,14 @@ test_hdmi_forum = executable(
   install : false,
 )
 
+test_displayid2 = executable(
+  'test-displayid2',
+  'tests/test_displayid2.cpp',
+  link_with : edid_core_lib,
+  include_directories : [inc_core, include_directories('.')],
+  install : false,
+)
+
 test_corpus = executable(
   'test-corpus',
   'tests/test_corpus.cpp',
@@ -155,3 +163,4 @@ test('hex-text-report', test_text, args : [sample_data[2]])
 test('group-rebuild', test_rebuild, args : [sample_data[1]])
 test('hdmi-forum', test_hdmi_forum,
      args : files('tests/corpus/samsung-sam756f.hex', 'tests/corpus/xiaomi-xmd0076.hex'))
+test('displayid2', test_displayid2, args : files('tests/corpus/au-optronics-auofcb7.hex'))

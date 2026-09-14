@@ -126,7 +126,38 @@ rcode displayid_data_block_cl::init(const u8_t* inst, u32_t orflags,
    u32_t offset = 3;
    u32_t remaining = payload_len;
 
-   if (((orflags & 0xff) < 0x20) && (inst[0] == 0x03)) {
+   u32_t version = orflags & 0xff;
+   if ((version >= 0x20) && (inst[0] == 0x22)) {
+      u32_t size = 20 + ((inst[1] & 0x70) >> 4);
+      while (remaining >= size) {
+         displayid_type7_timing_cl* timing = new displayid_type7_timing_cl;
+         timing->setDataSize(size);
+         retU = timing->init(payload, T_SUB_GRP|T_NO_MOVE, this);
+         if (! RCD_IS_OK(retU)) {
+            delete timing;
+            return retU;
+         }
+         timing->setRelOffs(offset);
+         timing->setAbsOffs(abs_offs + offset);
+         subgroups.Append(timing);
+         payload += size;
+         offset += size;
+         remaining -= size;
+      }
+   } else if ((version >= 0x20) && (inst[0] == 0x25) && (remaining == 9)) {
+      displayid_range_cl* range = new displayid_range_cl;
+      retU = range->init(payload, T_SUB_GRP|T_NO_MOVE, this);
+      if (! RCD_IS_OK(retU)) {
+         delete range;
+         return retU;
+      }
+      range->setRelOffs(offset);
+      range->setAbsOffs(abs_offs + offset);
+      subgroups.Append(range);
+      payload += 9;
+      offset += 9;
+      remaining = 0;
+   } else if ((version < 0x20) && (inst[0] == 0x03)) {
       while (remaining >= 20) {
          displayid_type1_timing_cl* timing = new displayid_type1_timing_cl;
          if (timing == NULL) RCD_RETURN_FAULT(retU);
@@ -231,6 +262,104 @@ void displayid_type1_timing_cl::getGrpName(EDID_cl& /*EDID*/, wxc_String& gp_nam
    gp_name.Printf("%ux%u @ %.2f Hz", hactive, vactive, refresh);
 }
 
+const edi_field_t displayid_type7_timing_cl::fields[] = {
+   {&EDID_cl::DisplayID_PixelClockKHz, 0, 0, 0, 3, F_FLT|F_MHZ|F_DN, 0, 0xffffff,
+    "Pixel clock", "Pixel clock in 1 kHz units"},
+   {&EDID_cl::BitF8Val, 0, 3, 0, 4, F_BFD|F_INT, 0, 15,
+    "Aspect ratio", "Aspect-ratio code"},
+   {&EDID_cl::BitVal, 0, 3, 4, 1, F_BIT|F_INT, 0, 1,
+    "Interlaced", "Interlaced timing"},
+   {&EDID_cl::BitF8Val, 0, 3, 5, 2, F_BFD|F_INT, 0, 3,
+    "Stereo support", "Stereo viewing support"},
+   {&EDID_cl::BitVal, 0, 3, 7, 1, F_BIT|F_INT, 0, 1,
+    "Preferred", "Preferred timing"},
+   {&EDID_cl::DisplayID_ValuePlusOne16, 0, 4, 0, 2, F_INT|F_PIX|F_DN, 1, 65536,
+    "Horizontal active", "Horizontal active pixels"},
+   {&EDID_cl::DisplayID_ValuePlusOne16, 0, 6, 0, 2, F_INT|F_PIX, 1, 65536,
+    "Horizontal blanking", "Horizontal blanking pixels"},
+   {&EDID_cl::DisplayID_ValuePlusOne15, 0, 8, 0, 2, F_INT|F_PIX, 1, 32768,
+    "Horizontal front porch", "Horizontal sync offset"},
+   {&EDID_cl::DisplayID_ValuePlusOne16, 0, 10, 0, 2, F_INT|F_PIX, 1, 65536,
+    "Horizontal sync width", "Horizontal sync width"},
+   {&EDID_cl::BitVal, 0, 9, 7, 1, F_BIT|F_INT, 0, 1,
+    "Horizontal sync positive", "Horizontal sync polarity"},
+   {&EDID_cl::DisplayID_ValuePlusOne16, 0, 12, 0, 2, F_INT|F_PIX|F_DN, 1, 65536,
+    "Vertical active", "Vertical active lines"},
+   {&EDID_cl::DisplayID_ValuePlusOne16, 0, 14, 0, 2, F_INT|F_PIX, 1, 65536,
+    "Vertical blanking", "Vertical blanking lines"},
+   {&EDID_cl::DisplayID_ValuePlusOne15, 0, 16, 0, 2, F_INT|F_PIX, 1, 32768,
+    "Vertical front porch", "Vertical sync offset"},
+   {&EDID_cl::DisplayID_ValuePlusOne16, 0, 18, 0, 2, F_INT|F_PIX, 1, 65536,
+    "Vertical sync width", "Vertical sync width"},
+   {&EDID_cl::BitVal, 0, 17, 7, 1, F_BIT|F_INT, 0, 1,
+    "Vertical sync positive", "Vertical sync polarity"}
+};
+
+rcode displayid_type7_timing_cl::init(const u8_t* inst, u32_t orflags,
+                                      edi_grp_cl* parent) {
+   rcode retU;
+   if ((dat_sz < 20) || (dat_sz > 27)) RCD_RETURN_FAULT(retU);
+   parent_grp = parent;
+   type_id.t32 = ID_DISPLAYID_TYPE7 | T_SUB_GRP | T_NO_MOVE |
+                 (orflags & T_MODE_EDIT);
+   CopyInstData(inst, dat_sz);
+
+   //from data block revision 2, bit 7 flags YCbCr 4:2:0 instead
+   memcpy(dyn_fields, fields, sizeof(dyn_fields));
+   u32_t block_revision = (parent != NULL) ? (parent->getInstPtr()[1] & 7) : 0;
+   if (block_revision >= 2) {
+      dyn_fields[4].name = "YCbCr 4:2:0";
+      dyn_fields[4].desc = "Timing supports YCbCr 4:2:0";
+   }
+   return init_fields(dyn_fields, inst_data, sizeof(fields) / sizeof(fields[0]),
+                      false, "Type VII Detailed Timing", "DisplayID Type VII timing",
+                      "DID-T7");
+}
+
+void displayid_type7_timing_cl::getGrpName(EDID_cl& /*EDID*/, wxc_String& gp_name) {
+   u32_t pixel_clock_khz = 1 + inst_data[0] + (inst_data[1] << 8) + (inst_data[2] << 16);
+   u32_t hactive = 1 + inst_data[4] + (inst_data[5] << 8);
+   u32_t hblank = 1 + inst_data[6] + (inst_data[7] << 8);
+   u32_t vactive = 1 + inst_data[12] + (inst_data[13] << 8);
+   u32_t vblank = 1 + inst_data[14] + (inst_data[15] << 8);
+   double refresh = (pixel_clock_khz * 1000.0) /
+                    ((double) (hactive + hblank) * (vactive + vblank));
+   gp_name.Printf("%ux%u @ %.2f Hz", hactive, vactive, refresh);
+}
+
+const edi_field_t displayid_range_cl::fields[] = {
+   {&EDID_cl::DisplayID_PixelClockKHz, 0, 0, 0, 3, F_FLT|F_MHZ, 0, 0xffffff,
+    "Minimum pixel clock", "Minimum pixel clock in 1 kHz units"},
+   {&EDID_cl::DisplayID_PixelClockKHz, 0, 3, 0, 3, F_FLT|F_MHZ, 0, 0xffffff,
+    "Maximum pixel clock", "Maximum pixel clock in 1 kHz units"},
+   {&EDID_cl::ByteVal, 0, 6, 0, 1, F_BTE|F_INT|F_HZ, 0, 255,
+    "Minimum refresh", "Minimum vertical refresh rate"},
+   {&EDID_cl::DisplayID_MaxRefresh, 0, 7, 0, 2, F_INT|F_HZ, 0, 1023,
+    "Maximum refresh", "Maximum vertical refresh rate"},
+   {&EDID_cl::BitVal, 0, 8, 7, 1, F_BIT|F_INT, 0, 1,
+    "Seamless timing change", "Supports seamless dynamic video timing changes"}
+};
+
+rcode displayid_range_cl::init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent) {
+   parent_grp = parent;
+   type_id.t32 = ID_DISPLAYID_RANGE | T_SUB_GRP | T_NO_MOVE | (orflags & T_MODE_EDIT);
+   CopyInstData(inst, 9);
+   dat_sz = 9;
+
+   //revision 0 has an 8-bit maximum refresh rate
+   memcpy(dyn_fields, fields, sizeof(dyn_fields));
+   u32_t block_revision = (parent != NULL) ? (parent->getInstPtr()[1] & 7) : 0;
+   if (block_revision == 0) {
+      dyn_fields[3].handlerfn = &EDID_cl::ByteVal;
+      dyn_fields[3].fld_sz = 1;
+      dyn_fields[3].flags = F_BTE|F_INT|F_HZ;
+      dyn_fields[3].maxv = 255;
+   }
+   return init_fields(dyn_fields, inst_data, sizeof(fields) / sizeof(fields[0]),
+                      false, "Dynamic Video Timing Range", "DisplayID timing range limits",
+                      "DID-RANGE");
+}
+
 rcode displayid_raw_payload_cl::init(const u8_t* inst, u32_t orflags,
                                      edi_grp_cl* parent) {
    rcode retU;
@@ -282,6 +411,56 @@ rcode EDID_cl::DisplayID_PixelClock(u32_t op, wxc_String& sval, u32_t& ival,
       RCD_RETURN_FAULT(retU);
    }
    wrWord24_LE(inst, raw);
+   RCD_RETURN_OK(retU);
+}
+
+rcode EDID_cl::DisplayID_PixelClockKHz(u32_t op, wxc_String& sval, u32_t& ival,
+                                       edi_dynfld_t* p_field) {
+   rcode retU;
+   u8_t* inst = getValPtr(p_field);
+   if (op == OP_READ) {
+      ival = rdWord24_LE(inst) + 1;
+      sval.Printf("%.03f", ival / 1000.0);
+      RCD_RETURN_OK(retU);
+   }
+
+   u32_t khz;
+   if (op == OP_WRSTR) {
+      float mhz;
+      retU = getStrFloat(sval, 0.001, 16777.216, mhz);
+      if (! RCD_IS_OK(retU)) return retU;
+      khz = (u32_t) std::lround(mhz * 1000.0);
+   } else if (op == OP_WRINT) {
+      khz = ival;
+   } else {
+      RCD_RETURN_FAULT(retU);
+   }
+   if ((khz < 1) || (khz > 16777216)) RCD_RETURN_FAULT(retU);
+   wrWord24_LE(inst, khz - 1);
+   RCD_RETURN_OK(retU);
+}
+
+//10-bit rate: low byte, then bits 0-1 of the next byte
+rcode EDID_cl::DisplayID_MaxRefresh(u32_t op, wxc_String& sval, u32_t& ival,
+                                    edi_dynfld_t* p_field) {
+   rcode retU;
+   u8_t* inst = getValPtr(p_field);
+   if (op == OP_READ) {
+      ival = inst[0] | ((inst[1] & 0x03) << 8);
+      sval.Empty();
+      sval << ival;
+      RCD_RETURN_OK(retU);
+   }
+
+   ulong value = ival;
+   if (op == OP_WRSTR) {
+      retU = getStrUint(sval, 10, 0, 1023, value);
+      if (! RCD_IS_OK(retU)) return retU;
+   } else if ((op != OP_WRINT) || (ival > 1023)) {
+      RCD_RETURN_FAULT(retU);
+   }
+   inst[0] = value & 0xff;
+   inst[1] = (inst[1] & 0xfc) | ((value >> 8) & 0x03);
    RCD_RETURN_OK(retU);
 }
 
