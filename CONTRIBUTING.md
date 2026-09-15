@@ -8,7 +8,7 @@ Before a change goes in:
 
 - `just check`, `just test` and `just test-ui` pass. The debug build treats compiler
   warnings as errors. CI runs `just check` and `just test` on Fedora 44 for every push
-  and pull request.
+  and pull request, and `just gui=disabled test` without the GTK packages.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
   `fix:`, `feat:`, `docs:`, `test:` and so on, with a subject that says what changed for
   someone using EDID Editor.
@@ -20,6 +20,7 @@ Before a change goes in:
 
     justfile                 build, run, check, test, install
     meson.build              project, GTK and libadwaita dependencies
+    meson_options.txt        gui: build the application or only the command line
     core/                    the EDID model, from wxEDID, built as a static library
       EDID_main.cpp          parsing and assembling of the whole EDID, value names
       EDID_base.cpp          base block groups: header, basic parameters, timings
@@ -33,6 +34,8 @@ Before a change goes in:
       EDID_compare.cpp       field by field comparison of two EDIDs
       EDID_display.cpp       connected displays under /sys/class/drm
       EDID_document.cpp      opening and writing whole EDIDs, placing new groups
+      EDID_names.cpp         plain names of fields and groups
+      EDID_timing.cpp        the fields of detailed timings, the clock for a rate
       wxcompat.h             the small part of wxString and wxArray the core uses
       rcode/                 result codes and the generator of their scope table
       tests/                 core tests, sample EDID generator, real EDID corpus

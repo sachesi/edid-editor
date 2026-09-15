@@ -6,12 +6,16 @@
 #   just build
 #   sudo just install              (prefix /usr/local)
 #   just prefix=$HOME/.local install
+#   just gui=disabled build        (edid-editor-cli only, without GTK)
+#
+# Installing into DESTDIR leaves the icon and desktop caches to the package manager.
 
 set shell := ["bash", "-euo", "pipefail", "-c"]
 
 app_id := "io.github.sachesi.EdidEditor"
 prefix := env("PREFIX", "/usr/local")
 destdir := env("DESTDIR", "")
+gui := env("GUI", "auto")
 release := "build"
 debug := "builddir"
 bindir := destdir + prefix + "/bin"
@@ -20,14 +24,14 @@ datadir := destdir + prefix + "/share"
 default:
     @just --list
 
-# Release build.
+# Release build; the application is left out with gui=disabled, or when GTK is missing.
 build:
-    [ -f {{release}}/build.ninja ] || meson setup {{release}} --buildtype=release
+    if [ -f {{release}}/build.ninja ]; then meson configure {{release}} -Dgui={{gui}}; else meson setup {{release}} --buildtype=release -Dgui={{gui}}; fi
     meson compile -C {{release}}
 
 # Debug build, with warnings treated as errors.
 build-debug:
-    [ -f {{debug}}/build.ninja ] || meson setup {{debug}} --werror
+    if [ -f {{debug}}/build.ninja ]; then meson configure {{debug}} -Dgui={{gui}}; else meson setup {{debug}} --werror -Dgui={{gui}}; fi
     meson compile -C {{debug}}
 
 # Run the debug build uninstalled: just run [FILE]
@@ -47,17 +51,20 @@ test: build-debug
 test-ui: build-debug
     meson test -C {{debug}} --suite ui --print-errorlogs
 
-# Install the release build. Does not build: run `just build` first.
+# Install the release build, with the application when it was built. Does not build.
 install:
-    @test -x {{release}}/app/edid-editor || { echo "error: {{release}}/app/edid-editor missing; run 'just build' first" >&2; exit 1; }
-    install -Dm755 {{release}}/app/edid-editor {{bindir}}/edid-editor
+    @test -x {{release}}/cli/edid-editor-cli || { echo "error: {{release}}/cli/edid-editor-cli missing; run 'just build' first" >&2; exit 1; }
     install -Dm755 {{release}}/cli/edid-editor-cli {{bindir}}/edid-editor-cli
-    install -Dm644 app/{{app_id}}.desktop {{datadir}}/applications/{{app_id}}.desktop
-    install -Dm644 app/{{app_id}}.metainfo.xml {{datadir}}/metainfo/{{app_id}}.metainfo.xml
-    install -Dm644 app/icons/{{app_id}}.svg {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg
-    # Caches are left to the package manager when installing into DESTDIR.
-    [ -n "{{destdir}}" ] || update-desktop-database -q {{datadir}}/applications || true
-    [ -n "{{destdir}}" ] || gtk4-update-icon-cache -qtf {{datadir}}/icons/hicolor || gtk-update-icon-cache -qtf {{datadir}}/icons/hicolor || true
+    if [ -x {{release}}/app/edid-editor ]; then \
+        install -Dm755 {{release}}/app/edid-editor {{bindir}}/edid-editor; \
+        install -Dm644 app/{{app_id}}.desktop {{datadir}}/applications/{{app_id}}.desktop; \
+        install -Dm644 app/{{app_id}}.metainfo.xml {{datadir}}/metainfo/{{app_id}}.metainfo.xml; \
+        install -Dm644 app/icons/{{app_id}}.svg {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg; \
+        if [ -z "{{destdir}}" ]; then \
+            update-desktop-database -q {{datadir}}/applications || true; \
+            gtk4-update-icon-cache -qtf {{datadir}}/icons/hicolor || gtk-update-icon-cache -qtf {{datadir}}/icons/hicolor || true; \
+        fi; \
+    fi
     @echo "installed to {{prefix}}"
 
 uninstall:

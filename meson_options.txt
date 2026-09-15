@@ -1,0 +1,2 @@
+option('gui', type : 'feature', value : 'auto',
+       description : 'Build the GTK application; edid-editor-cli is always built')

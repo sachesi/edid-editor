@@ -21,14 +21,17 @@ converts EDIDs.
 
     just build
     sudo just install        # or: just prefix=$HOME/.local install
+    just gui=disabled build  # only edid-editor-cli, without GTK
     just uninstall           # with sudo if it was installed with sudo
 
     just run [FILE]          # a debug build, uninstalled
     builddir/cli/edid-editor-cli --help
 
 `just` runs Meson; `meson setup`, `meson compile` and `meson install` work as well.
-Building needs Meson, a C++17 compiler, and the development packages for GTK 4 and
-libadwaita 1.8 or newer; it is developed against GTK 4.22 and libadwaita 1.9. The tests
+Building needs Meson and a C++17 compiler, and for the application the development
+packages for GTK 4 and libadwaita 1.8 or newer; it is developed against GTK 4.22 and
+libadwaita 1.9. Without them, or with `gui=disabled` (`-Dgui=disabled` for Meson), only
+`edid-editor-cli` is built. The tests
 of the interface also need Weston, Xwayland, xdotool, the session bus and the Python
 bindings for AT-SPI, and are skipped when those are missing.
 

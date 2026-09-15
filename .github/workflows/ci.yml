@@ -30,3 +30,16 @@ jobs:
         run: just check
       - name: Test
         run: just test
+
+  cli:
+    name: Command line without GTK
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:44
+    steps:
+      - name: Install the build dependencies
+        run: >
+          dnf install -y --setopt=install_weak_deps=False
+          git-core just meson ninja-build gcc-c++ python3
+      - uses: actions/checkout@v5
+      - name: Test
+        run: just gui=disabled test
