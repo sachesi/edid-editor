@@ -1,3 +1,4 @@
 /build/
 /builddir/
 __pycache__/
+/po/edid-editor.pot

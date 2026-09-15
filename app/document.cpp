@@ -81,7 +81,7 @@ void wnd_refresh_recent(wxedid_wnd* wnd) {
          GtkWidget* open = gtk_button_new_from_icon_name("go-next-symbolic");
          gtk_widget_add_css_class(open, "flat");
          gtk_widget_set_valign(open, GTK_ALIGN_CENTER);
-         gtk_widget_set_tooltip_text(open, "Open");
+         gtk_widget_set_tooltip_text(open, _("Open"));
          g_object_set_data_full(G_OBJECT(open), "path", g_strdup(path.c_str()), g_free);
          g_signal_connect(open, "clicked", G_CALLBACK(wnd_on_recent_open), wnd);
          adw_action_row_add_suffix(ADW_ACTION_ROW(row), open);
@@ -104,7 +104,7 @@ void wnd_refresh_recent(wxedid_wnd* wnd) {
          g_object_unref(item);
          g_free(name);
       }
-      if (paths.empty()) g_menu_append(wnd->recent_menu, "No Recent Files", "win.no-recent");
+      if (paths.empty()) g_menu_append(wnd->recent_menu, _("No Recent Files"), "win.no-recent");
    }
 }
 
@@ -163,7 +163,7 @@ void wnd_save_state(wxedid_wnd* wnd) {
 
 static void wnd_offer_retry(wxedid_wnd* wnd) {
    if (wnd->doc->EDID.b_ERR_Ignore || wnd->source_path.empty()) return;
-   adw_banner_set_button_label(wnd->banner, "Open Anyway");
+   adw_banner_set_button_label(wnd->banner, _("Open Anyway"));
    adw_banner_set_revealed(wnd->banner, TRUE);
    wnd->banner_offers_retry = true;
 }
@@ -224,22 +224,16 @@ static void wnd_read_file(wxedid_wnd* wnd, const char* path, bool hex) {
    if (hex) {
       GStatBuf info;
       if ((g_stat(path, &info) == 0) && (info.st_size > 65536)) {
-         char msg[1400];
-         snprintf(msg, sizeof(msg),
-                  "[E!] Couldn’t import %s: it is too large to be EDID hex text. "
-                  "Choose another file.", path);
-         wnd->doc->GLog.DoLog(msg);
+         wnd_log_error(wnd, _("Couldn’t import %s: it is too large to be EDID hex text. "
+                              "Choose another file."), path);
          return;
       }
       char* contents = NULL;
       gsize length = 0;
       GError* error = NULL;
       if (! g_file_get_contents(path, &contents, &length, &error)) {
-         char msg[1400];
-         snprintf(msg, sizeof(msg),
-                  "[E!] Couldn’t read %s: %s. Check the file, then try again.",
-                  path, error->message);
-         wnd->doc->GLog.DoLog(msg);
+         wnd_log_error(wnd, _("Couldn’t read %s: %s. Check the file, then try again."),
+                       path, error->message);
          g_error_free(error);
          return;
       }
@@ -248,11 +242,8 @@ static void wnd_read_file(wxedid_wnd* wnd, const char* path, bool hex) {
       bool decoded = edid_hex_decode(contents, length, bytes, problem);
       g_free(contents);
       if (! decoded) {
-         char msg[1400];
-         snprintf(msg, sizeof(msg),
-                  "[E!] Couldn’t import %s: %s. Choose a file with EDID hex data.",
-                  path, problem.c_str());
-         wnd->doc->GLog.DoLog(msg);
+         wnd_log_error(wnd, _("Couldn’t import %s: %s. Choose a file with EDID hex data."),
+                       path, problem.c_str());
          return;
       }
       wnd_load_bytes(wnd, path, bytes.data(), bytes.size(), true);
@@ -261,11 +252,8 @@ static void wnd_read_file(wxedid_wnd* wnd, const char* path, bool hex) {
 
    FILE* in = fopen(path, "rb");
    if (in == NULL) {
-      char msg[1400];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t open %s: %s. Check its permissions, then try again.",
-               path, strerror(errno));
-      wnd->doc->GLog.DoLog(msg);
+      wnd_log_error(wnd, _("Couldn’t open %s: %s. Check its permissions, then try again."),
+                    path, strerror(errno));
       return;
    }
 
@@ -276,11 +264,8 @@ static void wnd_read_file(wxedid_wnd* wnd, const char* path, bool hex) {
    fclose(in);
 
    if (read_failed) {
-      char msg[1400];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t read %s: %s. Check the file, then try again.",
-               path, strerror(read_errno));
-      wnd->doc->GLog.DoLog(msg);
+      wnd_log_error(wnd, _("Couldn’t read %s: %s. Check the file, then try again."),
+                    path, strerror(read_errno));
       return;
    }
    wnd_load_bytes(wnd, path, file_data, rd, false);
@@ -309,7 +294,7 @@ GListStore* file_filters(const char* name, const char* const* patterns) {
    g_list_store_append(filters, filter);
    g_object_unref(filter);
    GtkFileFilter* all = gtk_file_filter_new();
-   gtk_file_filter_set_name(all, "All files");
+   gtk_file_filter_set_name(all, _("All files"));
    gtk_file_filter_add_pattern(all, "*");
    g_list_store_append(filters, all);
    g_object_unref(all);
@@ -332,20 +317,16 @@ static void wnd_on_open_response(GObject* source, GAsyncResult* result,
             wnd_load_file(wnd, path, import_hex || path_is_hex_text(path));
             g_free(path);
          } else {
-            wnd->doc->GLog.DoLog(
-               "[E!] Couldn’t open the selected location: only local EDID files "
-               "are supported. Choose a local file.");
+            wnd_log_error(wnd, _("Couldn’t open the selected location: only local EDID files "
+                                 "are supported. Choose a local file."));
          }
       }
       g_object_unref(file);
    } else if ((wnd != NULL) && (error != NULL) &&
               ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
               ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
-      char msg[1200];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t open an EDID file: %s. Try again or choose another file.",
-               error->message);
-      wnd->doc->GLog.DoLog(msg);
+      wnd_log_error(wnd, _("Couldn’t open an EDID file: %s. Try again or choose another file."),
+                    error->message);
    }
 
    g_clear_error(&error);
@@ -371,16 +352,16 @@ static void wnd_present_display_dialog(wxedid_wnd* wnd, bool compare = false) {
    std::vector<edid_display> displays = edid_connected_displays(DRM_ROOT);
    if (displays.empty()) {
       AdwAlertDialog* alert = ADW_ALERT_DIALOG(adw_alert_dialog_new(
-         "No display data found",
-         "No connected display reports EDID data in /sys/class/drm."));
-      adw_alert_dialog_add_response(alert, "close", "Close");
+         _("No display data found"),
+         _("No connected display reports EDID data in /sys/class/drm.")));
+      adw_alert_dialog_add_response(alert, "close", _("Close"));
       adw_dialog_present(ADW_DIALOG(alert), GTK_WIDGET(wnd->window));
       return;
    }
 
    GtkWidget* group = adw_preferences_group_new();
    adw_preferences_group_set_description(ADW_PREFERENCES_GROUP(group),
-      "The EDID is read from the display connection; the display itself is not changed.");
+      _("The EDID is read from the display connection; the display itself is not changed."));
    for (const edid_display& display : displays) {
       GtkWidget* row = adw_action_row_new();
       adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), display.name.c_str());
@@ -389,7 +370,7 @@ static void wnd_present_display_dialog(wxedid_wnd* wnd, bool compare = false) {
       GtkWidget* open = gtk_button_new_from_icon_name("go-next-symbolic");
       gtk_widget_add_css_class(open, "flat");
       gtk_widget_set_valign(open, GTK_ALIGN_CENTER);
-      gtk_widget_set_tooltip_text(open, compare ? "Compare" : "Open");
+      gtk_widget_set_tooltip_text(open, compare ? _("Compare") : _("Open"));
       g_object_set_data_full(G_OBJECT(open), "path", g_strdup(display.path.c_str()), g_free);
       if (compare) g_object_set_data(G_OBJECT(open), "compare", GINT_TO_POINTER(1));
       g_signal_connect(open, "clicked", G_CALLBACK(wnd_on_display_open), wnd);
@@ -405,7 +386,7 @@ static void wnd_present_display_dialog(wxedid_wnd* wnd, bool compare = false) {
    adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(view), page);
 
    AdwDialog* dialog = adw_dialog_new();
-   adw_dialog_set_title(dialog, compare ? "Compare with Display" : "Open from Display");
+   adw_dialog_set_title(dialog, compare ? _("Compare with Display") : _("Open from Display"));
    adw_dialog_set_content_width(dialog, 420);
    adw_dialog_set_child(dialog, view);
    adw_dialog_present(dialog, GTK_WIDGET(wnd->window));
@@ -418,12 +399,12 @@ static void wnd_present_open_dialog(wxedid_wnd* wnd, open_mode mode) {
    }
    bool import_hex = (mode == OPEN_HEX);
    GtkFileDialog* dialog = gtk_file_dialog_new();
-   gtk_file_dialog_set_title(dialog, import_hex ? "Import EDID from hex"
-                                                : "Open EDID file");
-   gtk_file_dialog_set_accept_label(dialog, import_hex ? "Import" : "Open");
+   gtk_file_dialog_set_title(dialog, import_hex ? _("Import EDID from hex")
+                                                : _("Open EDID file"));
+   gtk_file_dialog_set_accept_label(dialog, import_hex ? _("Import") : _("Open"));
    static const char* const binary_patterns[] = {"bin", "hex", "txt", NULL};
    static const char* const hex_patterns[] = {"hex", "txt", NULL};
-   GListStore* filters = file_filters(import_hex ? "Hex text" : "EDID files",
+   GListStore* filters = file_filters(import_hex ? _("Hex text") : _("EDID files"),
                                       import_hex ? hex_patterns : binary_patterns);
    gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
    g_object_unref(filters);
@@ -466,11 +447,11 @@ void wnd_request_open_source(wxedid_wnd* wnd, int requested, const char* path) {
    }
 
    AdwAlertDialog* dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
-      "Discard unsaved changes?",
-      "Opening another EDID will discard changes to the current EDID."));
+      _("Discard unsaved changes?"),
+      _("Opening another EDID will discard changes to the current EDID.")));
    adw_alert_dialog_add_responses(dialog,
-                                  "cancel", "Cancel",
-                                  "discard", "Discard",
+                                  "cancel", _("Cancel"),
+                                  "discard", _("Discard"),
                                   NULL);
    adw_alert_dialog_set_close_response(dialog, "cancel");
    adw_alert_dialog_set_default_response(dialog, "cancel");
@@ -497,8 +478,7 @@ gboolean wnd_on_drop(GtkDropTarget*, const GValue* value, double, double,
    if (files == NULL) return FALSE;
    char* path = g_file_get_path(G_FILE(files->data));
    if (path == NULL) {
-      wnd->doc->GLog.DoLog(
-         "[E!] Couldn’t open the dropped item: only local EDID files are supported.");
+      wnd_log_error(wnd, _("Couldn’t open the dropped item: only local EDID files are supported."));
       return FALSE;
    }
    wnd_request_open_source(wnd, OPEN_FILE, path);
@@ -540,11 +520,8 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
 
    FILE* out = fopen(path, "wb");
    if (out == NULL) {
-      char msg[1400];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t save %s: %s. Check its permissions, then save again.",
-               path, strerror(errno));
-      wnd->doc->GLog.DoLog(msg);
+      wnd_log_error(wnd, _("Couldn’t save %s: %s. Check its permissions, then save again."),
+                    path, strerror(errno));
       return false;
    }
 
@@ -552,11 +529,8 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
    size_t wr = fwrite(pbuf->buff, 1, expected, out);
    int close_rc = fclose(out);
    if ((wr != expected) || (close_rc != 0)) {
-      char msg[1400];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t save %s completely. Check free space and permissions, "
-               "then save again.", path);
-      wnd->doc->GLog.DoLog(msg);
+      wnd_log_error(wnd, _("Couldn’t save %s completely. Check free space and permissions, "
+                           "then save again."), path);
       return false;
    }
 
@@ -574,7 +548,7 @@ static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
    wnd_update_document_ui(wnd);
 
    char* basename = g_path_get_basename(wnd->doc->path);
-   char* toast_title = g_strdup_printf("Saved %s", basename);
+   char* toast_title = g_strdup_printf(_("Saved %s"), basename);
    adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(toast_title));
    g_free(toast_title);
    g_free(basename);
@@ -596,20 +570,16 @@ static void wnd_on_save_response(GObject* source, GAsyncResult* result,
             wnd_save_to_file(wnd, path);
             g_free(path);
          } else {
-            wnd->doc->GLog.DoLog(
-               "[E!] Couldn’t save to the selected location: only local files are "
-               "supported. Choose a local file.");
+            wnd_log_error(wnd, _("Couldn’t save to the selected location: only local files are "
+                                 "supported. Choose a local file."));
          }
       }
       g_object_unref(file);
    } else if ((wnd != NULL) && (error != NULL) &&
               ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
               ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
-      char msg[1200];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t choose where to save: %s. Try again or choose another location.",
-               error->message);
-      wnd->doc->GLog.DoLog(msg);
+      wnd_log_error(wnd, _("Couldn’t choose where to save: %s. Try again or choose another location."),
+                    error->message);
    }
 
    g_clear_error(&error);
@@ -618,8 +588,8 @@ static void wnd_on_save_response(GObject* source, GAsyncResult* result,
 
 static void wnd_present_save_dialog(wxedid_wnd* wnd) {
    GtkFileDialog* dialog = gtk_file_dialog_new();
-   gtk_file_dialog_set_title(dialog, "Save EDID binary");
-   gtk_file_dialog_set_accept_label(dialog, "Save");
+   gtk_file_dialog_set_title(dialog, _("Save EDID binary"));
+   gtk_file_dialog_set_accept_label(dialog, _("Save"));
    char* basename = document_basename(wnd->doc->path);
    char* initial_name = NULL;
    if (g_str_has_prefix(wnd->doc->path, DRM_ROOT)) {
@@ -681,7 +651,7 @@ void wnd_on_save_as_action(GSimpleAction*, GVariant*, gpointer user_data) {
 struct wxedid_text_output {
    GtkWindow*  window;
    std::string contents;
-   const char* done; //toast title prefix
+   const char* done; //toast title, %s the file name
 };
 
 static void wnd_on_text_save_response(GObject* source, GAsyncResult* result,
@@ -696,16 +666,12 @@ static void wnd_on_text_save_response(GObject* source, GAsyncResult* result,
       char* path = g_file_get_path(file);
       GError* write_error = NULL;
       if (path == NULL) {
-         wnd->doc->GLog.DoLog(
-            "[E!] Couldn’t save to the selected location: only local files are "
-            "supported. Choose a local file.");
+         wnd_log_error(wnd, _("Couldn’t save to the selected location: only local files are "
+                              "supported. Choose a local file."));
       } else if (! g_file_set_contents(path, output->contents.data(),
                                        output->contents.size(), &write_error)) {
-         char msg[1400];
-         snprintf(msg, sizeof(msg),
-                  "[E!] Couldn’t save %s: %s. Check its permissions, then try again.",
-                  path, write_error->message);
-         wnd->doc->GLog.DoLog(msg);
+         wnd_log_error(wnd, _("Couldn’t save %s: %s. Check its permissions, then try again."),
+                       path, write_error->message);
          g_error_free(write_error);
       } else {
          char msg[1152];
@@ -713,7 +679,7 @@ static void wnd_on_text_save_response(GObject* source, GAsyncResult* result,
                   output->contents.size(), path);
          wnd->doc->GLog.DoLog(msg);
          char* basename = g_path_get_basename(path);
-         char* title = g_strdup_printf("%s %s", output->done, basename);
+         char* title = g_strdup_printf(output->done, basename);
          adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(title));
          g_free(title);
          g_free(basename);
@@ -722,11 +688,8 @@ static void wnd_on_text_save_response(GObject* source, GAsyncResult* result,
    } else if ((wnd != NULL) && (error != NULL) &&
               ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_DISMISSED) &&
               ! g_error_matches(error, GTK_DIALOG_ERROR, GTK_DIALOG_ERROR_CANCELLED)) {
-      char msg[1200];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t choose where to save: %s. Try again or choose another location.",
-               error->message);
-      wnd->doc->GLog.DoLog(msg);
+      wnd_log_error(wnd, _("Couldn’t choose where to save: %s. Try again or choose another location."),
+                    error->message);
    }
 
    if (file != NULL) g_object_unref(file);
@@ -742,7 +705,7 @@ static void wnd_present_text_save_dialog(wxedid_wnd* wnd, const char* title,
                                          const char* done) {
    GtkFileDialog* dialog = gtk_file_dialog_new();
    gtk_file_dialog_set_title(dialog, title);
-   gtk_file_dialog_set_accept_label(dialog, "Save");
+   gtk_file_dialog_set_accept_label(dialog, _("Save"));
    const char* patterns[] = {extension, NULL};
    GListStore* filters = file_filters(filter_name, patterns);
    gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
@@ -778,8 +741,8 @@ void wnd_on_export_hex_action(GSimpleAction*, GVariant*, gpointer user_data) {
    edi_buf_t* buffer = wnd->doc->EDID.getEDID();
    std::string hex = edid_hex_encode(
       buffer->buff, wnd->doc->EDID.getNumValidBlocks() * sizeof(ediblk_t));
-   wnd_present_text_save_dialog(wnd, "Export EDID as hex", "hex", "Hex text",
-                                hex, "Exported");
+   wnd_present_text_save_dialog(wnd, _("Export EDID as hex"), "hex", _("Hex text"),
+                                hex, _("Exported %s"));
 }
 
 void wnd_on_save_report_action(GSimpleAction*, GVariant*, gpointer user_data) {
@@ -788,6 +751,6 @@ void wnd_on_save_report_action(GSimpleAction*, GVariant*, gpointer user_data) {
    char* source = document_basename(wnd->doc->path);
    std::string report = edid_text_report(wnd->doc->EDID, source, WXEDID_VERSION);
    g_free(source);
-   wnd_present_text_save_dialog(wnd, "Save EDID report", "txt", "Text",
-                                report, "Saved report");
+   wnd_present_text_save_dialog(wnd, _("Save EDID report"), "txt", _("Text"),
+                                report, _("Saved report %s"));
 }

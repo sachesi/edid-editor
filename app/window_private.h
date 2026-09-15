@@ -26,6 +26,8 @@
 #include "EDID_compare.h"
 #include "wxedid-config.h"
 
+#include <glib/gi18n.h>
+
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
@@ -253,6 +255,7 @@ void wnd_update_document_ui(wxedid_wnd* wnd);
 void wnd_update_header_controls(wxedid_wnd* wnd);
 void wnd_show_error(wxedid_wnd* wnd, const char* message);
 void wnd_clear_feedback(wxedid_wnd* wnd);
+void wnd_log_error(wxedid_wnd* wnd, const char* format, ...) G_GNUC_PRINTF(2, 3);
 
 // fields.cpp
 void wnd_record_edit_history(wxedid_wnd* wnd, edi_grp_cl* group,

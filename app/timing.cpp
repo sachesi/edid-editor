@@ -57,7 +57,7 @@ static void timing_update_outputs(wxedid_timing* timing) {
    gtk_label_set_text(timing->htotal, text);
    snprintf(text, sizeof(text), "%.2f kHz", pixclk / htotal / 1000.0);
    gtk_label_set_text(timing->hfreq, text);
-   snprintf(text, sizeof(text), "%u lines  ·  %.3f ms", vtotal,
+   snprintf(text, sizeof(text), _("%u lines  ·  %.3f ms"), vtotal,
             vtotal * line_ms);
    gtk_label_set_text(timing->vtotal, text);
 
@@ -188,15 +188,15 @@ static void timing_draw(GtkDrawingArea* area, cairo_t* cr, int width, int height
       {active_x + active_w, pad, right - (active_x + active_w), canvas_h,
        right + (pad / 2.0), 0.0, true, {}, {}},
    };
-   snprintf(bands[0].text, sizeof(bands[0].text), "Sync %u + back porch %u lines",
+   snprintf(bands[0].text, sizeof(bands[0].text), _("Sync %u + back porch %u lines"),
             vwidth, vback_porch);
-   snprintf(bands[0].short_text, sizeof(bands[0].short_text), "%u lines", vback);
-   snprintf(bands[1].text, sizeof(bands[1].text), "Sync offset %u lines", voffset);
-   snprintf(bands[1].short_text, sizeof(bands[1].short_text), "%u lines", voffset);
-   snprintf(bands[2].text, sizeof(bands[2].text), "Sync %u + back porch %u px",
+   snprintf(bands[0].short_text, sizeof(bands[0].short_text), _("%u lines"), vback);
+   snprintf(bands[1].text, sizeof(bands[1].text), _("Sync offset %u lines"), voffset);
+   snprintf(bands[1].short_text, sizeof(bands[1].short_text), _("%u lines"), voffset);
+   snprintf(bands[2].text, sizeof(bands[2].text), _("Sync %u + back porch %u px"),
             hwidth, hback_porch);
    snprintf(bands[2].short_text, sizeof(bands[2].short_text), "%u px", hback);
-   snprintf(bands[3].text, sizeof(bands[3].text), "Sync offset %u px", hoffset);
+   snprintf(bands[3].text, sizeof(bands[3].text), _("Sync offset %u px"), hoffset);
    snprintf(bands[3].short_text, sizeof(bands[3].short_text), "%u px", hoffset);
    const u32_t sizes[4] = {vback, voffset, hback, hoffset};
    cairo_set_source_rgba(cr, color.red, color.green, color.blue, color.alpha * 0.7);
@@ -208,7 +208,7 @@ static void timing_draw(GtkDrawingArea* area, cairo_t* cr, int width, int height
    char active_text[48];
    snprintf(active_text, sizeof(active_text), "%u × %u", hactive, vactive);
    char total_text[64];
-   snprintf(total_text, sizeof(total_text), "Total %.0f × %.0f", htotal, vtotal);
+   snprintf(total_text, sizeof(total_text), _("Total %.0f × %.0f"), htotal, vtotal);
    int total_w = 0;
    int total_h = 0;
    pango_layout_set_text(layout, total_text, -1);
@@ -453,7 +453,7 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_widget_set_margin_start(clock_box, 12);
    gtk_widget_set_margin_top(clock_box, 12);
    gtk_widget_set_margin_bottom(clock_box, 12);
-   GtkWidget* clock_title = gtk_label_new("Pixel clock");
+   GtkWidget* clock_title = gtk_label_new(_("Pixel clock"));
    gtk_label_set_xalign(GTK_LABEL(clock_title), 0.0);
    gtk_widget_add_css_class(clock_title, "caption");
    gtk_widget_add_css_class(clock_title, "dim-label");
@@ -467,7 +467,7 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    g_signal_connect(clock_spin, "value-changed", G_CALLBACK(timing_on_changed), timing);
    timing_add_focus_controller(timing, clock_spin);
    gtk_accessible_update_property(GTK_ACCESSIBLE(clock_spin),
-                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Pixel clock", -1);
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, _("Pixel clock"), -1);
    gtk_box_append(GTK_BOX(clock_row), clock_spin);
    timing->clock_unit = GTK_LABEL(gtk_label_new("×10 kHz"));
    gtk_widget_add_css_class(GTK_WIDGET(timing->clock_unit), "dim-label");
@@ -486,7 +486,7 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_widget_set_margin_end(refresh_box, 12);
    gtk_widget_set_margin_top(refresh_box, 12);
    gtk_widget_set_margin_bottom(refresh_box, 12);
-   GtkWidget* refresh_title = gtk_label_new("Vertical refresh");
+   GtkWidget* refresh_title = gtk_label_new(_("Vertical refresh"));
    gtk_label_set_xalign(GTK_LABEL(refresh_title), 0.0);
    gtk_widget_add_css_class(refresh_title, "caption");
    gtk_widget_add_css_class(refresh_title, "dim-label");
@@ -502,9 +502,9 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
                     G_CALLBACK(timing_on_refresh_changed), timing);
    timing_add_focus_controller(timing, refresh_spin);
    gtk_accessible_update_property(GTK_ACCESSIBLE(refresh_spin),
-                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Vertical refresh", -1);
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, _("Vertical refresh"), -1);
    gtk_widget_set_tooltip_text(refresh_spin,
-      "A new refresh rate changes the pixel clock; the blanking stays as it is");
+      _("A new refresh rate changes the pixel clock; the blanking stays as it is"));
    gtk_box_append(GTK_BOX(refresh_row), refresh_spin);
    GtkWidget* refresh_unit = gtk_label_new("Hz");
    gtk_widget_add_css_class(refresh_unit, "dim-label");
@@ -519,7 +519,7 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_widget_add_css_class(timing->drawing, "card");
    gtk_accessible_update_property(GTK_ACCESSIBLE(timing->drawing),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                  "Active image and blanking diagram", -1);
+                                  _("Active image and blanking diagram"), -1);
    gtk_drawing_area_set_draw_func(GTK_DRAWING_AREA(timing->drawing),
                                   timing_draw, timing, NULL);
    gtk_box_append(GTK_BOX(content), timing->drawing);
@@ -527,30 +527,30 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    //a plain stack: the cards sit directly on the page like the others
    GtkWidget* sections = gtk_box_new(GTK_ORIENTATION_VERTICAL, 12);
    GtkGrid* horizontal = NULL;
-   GtkWidget* horizontal_card = timing_section("Horizontal timing", &horizontal);
-   timing_add_edit_row(timing, horizontal, 0, TIMING_HACTIVE, "Active", "px");
-   timing_add_edit_row(timing, horizontal, 1, TIMING_HBORDER, "Border", "px");
-   timing_add_edit_row(timing, horizontal, 2, TIMING_HBLANK, "Blanking", "px");
-   timing_add_edit_row(timing, horizontal, 3, TIMING_HOFFSET, "Sync offset", "px");
-   timing_add_edit_row(timing, horizontal, 4, TIMING_HWIDTH, "Sync width", "px");
-   timing_add_value_row(horizontal, 5, "Total", &timing->htotal);
-   timing_add_value_row(horizontal, 6, "Frequency", &timing->hfreq);
+   GtkWidget* horizontal_card = timing_section(_("Horizontal timing"), &horizontal);
+   timing_add_edit_row(timing, horizontal, 0, TIMING_HACTIVE, _("Active"), "px");
+   timing_add_edit_row(timing, horizontal, 1, TIMING_HBORDER, _("Border"), "px");
+   timing_add_edit_row(timing, horizontal, 2, TIMING_HBLANK, _("Blanking"), "px");
+   timing_add_edit_row(timing, horizontal, 3, TIMING_HOFFSET, _("Sync offset"), "px");
+   timing_add_edit_row(timing, horizontal, 4, TIMING_HWIDTH, _("Sync width"), "px");
+   timing_add_value_row(horizontal, 5, _("Total"), &timing->htotal);
+   timing_add_value_row(horizontal, 6, _("Frequency"), &timing->hfreq);
    gtk_box_append(GTK_BOX(sections), horizontal_card);
 
    GtkGrid* vertical = NULL;
-   GtkWidget* vertical_card = timing_section("Vertical timing", &vertical);
-   timing_add_edit_row(timing, vertical, 0, TIMING_VACTIVE, "Active", "lines");
-   timing_add_edit_row(timing, vertical, 1, TIMING_VBORDER, "Border", "lines");
-   timing_add_edit_row(timing, vertical, 2, TIMING_VBLANK, "Blanking", "lines");
-   timing_add_edit_row(timing, vertical, 3, TIMING_VOFFSET, "Sync offset", "lines");
-   timing_add_edit_row(timing, vertical, 4, TIMING_VWIDTH, "Sync width", "lines");
-   timing_add_value_row(vertical, 5, "Total", &timing->vtotal);
+   GtkWidget* vertical_card = timing_section(_("Vertical timing"), &vertical);
+   timing_add_edit_row(timing, vertical, 0, TIMING_VACTIVE, _("Active"), _("lines"));
+   timing_add_edit_row(timing, vertical, 1, TIMING_VBORDER, _("Border"), _("lines"));
+   timing_add_edit_row(timing, vertical, 2, TIMING_VBLANK, _("Blanking"), _("lines"));
+   timing_add_edit_row(timing, vertical, 3, TIMING_VOFFSET, _("Sync offset"), _("lines"));
+   timing_add_edit_row(timing, vertical, 4, TIMING_VWIDTH, _("Sync width"), _("lines"));
+   timing_add_value_row(vertical, 5, _("Total"), &timing->vtotal);
    gtk_box_append(GTK_BOX(sections), vertical_card);
    gtk_box_append(GTK_BOX(content), sections);
 
    GtkWidget* modeline_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
    gtk_widget_add_css_class(modeline_card, "card");
-   GtkWidget* modeline_title = gtk_label_new("X11 ModeLine");
+   GtkWidget* modeline_title = gtk_label_new(_("X11 ModeLine"));
    gtk_label_set_xalign(GTK_LABEL(modeline_title), 0.0);
    gtk_widget_add_css_class(modeline_title, "caption");
    gtk_widget_add_css_class(modeline_title, "dim-label");

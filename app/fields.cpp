@@ -44,7 +44,8 @@ static void row_set_valid(wxedid_row* row, bool valid) {
 
 static void row_show_validation(wxedid_row* row, rcode result) {
    //only volatile-message faults carry text; others name a source location
-   char detail[512] = "Enter a valid value";
+   char detail[512];
+   g_strlcpy(detail, _("Enter a valid value"), sizeof(detail));
    if (result.detail.rcode == RCD_FVMSG) {
       wxedid_RCD_GET_MSG(result, detail, sizeof(detail));
    }
@@ -428,7 +429,7 @@ void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       GtkWidget* title_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
       gtk_box_append(GTK_BOX(title_row), label);
       if ((pfld->field.flags & F_NU) != 0) {
-         GtkWidget* unused = gtk_label_new("Not used");
+         GtkWidget* unused = gtk_label_new(_("Not used"));
          gtk_widget_add_css_class(unused, "caption");
          gtk_widget_add_css_class(unused, "dim-label");
          gtk_box_append(GTK_BOX(title_row), unused);
@@ -440,11 +441,12 @@ void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
          gtk_widget_add_css_class(about, "circular");
          gtk_widget_add_css_class(about, "field-help");
          gtk_widget_set_valign(about, GTK_ALIGN_CENTER);
-         std::string about_label = "About " + title;
-         gtk_widget_set_tooltip_text(about, about_label.c_str());
+         char* about_label = g_strdup_printf(_("About %s"), title.c_str());
+         gtk_widget_set_tooltip_text(about, about_label);
          gtk_accessible_update_property(GTK_ACCESSIBLE(about),
                                         GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                        about_label.c_str(), -1);
+                                        about_label, -1);
+         g_free(about_label);
          gtk_menu_button_set_create_popup_func(GTK_MENU_BUTTON(about),
                                                field_help_popup, pfld, NULL);
          gtk_box_append(GTK_BOX(title_row), about);
@@ -609,7 +611,7 @@ void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
    if (wnd->reserved_note != NULL) {
       char note[96];
       snprintf(note, sizeof(note),
-               (hidden == 1) ? "%u reserved field is hidden" : "%u reserved fields are hidden",
+               ngettext("%u reserved field is hidden", "%u reserved fields are hidden", hidden),
                hidden);
       gtk_label_set_text(wnd->reserved_label, note);
       gtk_widget_set_visible(wnd->reserved_note, hidden > 0);

@@ -6,10 +6,18 @@
  **************************************************************/
 
 #include <adwaita.h>
+#include <glib/gi18n.h>
+#include <clocale>
 
 #include "window.h"
+#include "wxedid-config.h"
 
 int main(int argc, char* argv[]) {
+   setlocale(LC_ALL, "");
+   bindtextdomain(GETTEXT_PACKAGE, LOCALEDIR);
+   bind_textdomain_codeset(GETTEXT_PACKAGE, "UTF-8");
+   textdomain(GETTEXT_PACKAGE);
+
    adw_init();
 
    AdwApplication* app = adw_application_new(

@@ -25,6 +25,8 @@ app_deps = [
 
 version_config = configuration_data()
 version_config.set_quoted('WXEDID_VERSION', meson.project_version())
+version_config.set_quoted('GETTEXT_PACKAGE', meson.project_name())
+version_config.set_quoted('LOCALEDIR', get_option('prefix') / get_option('localedir'))
 configure_file(
   output : 'wxedid-config.h',
   configuration : version_config,
@@ -39,13 +41,22 @@ edid_editor = executable(
   install : true,
 )
 
-install_data(
-  'io.github.sachesi.EdidEditor.desktop',
+i18n = import('i18n')
+
+desktop_file = i18n.merge_file(
+  input : 'io.github.sachesi.EdidEditor.desktop.in',
+  output : 'io.github.sachesi.EdidEditor.desktop',
+  type : 'desktop',
+  po_dir : '../po',
+  install : true,
   install_dir : get_option('datadir') / 'applications',
 )
 
-install_data(
-  'io.github.sachesi.EdidEditor.metainfo.xml',
+metainfo_file = i18n.merge_file(
+  input : 'io.github.sachesi.EdidEditor.metainfo.xml.in',
+  output : 'io.github.sachesi.EdidEditor.metainfo.xml',
+  po_dir : '../po',
+  install : true,
   install_dir : get_option('datadir') / 'metainfo',
 )
 
@@ -61,7 +72,7 @@ if desktop_file_validate.found()
   test(
     'desktop metadata',
     desktop_file_validate,
-    args : files('io.github.sachesi.EdidEditor.desktop'),
+    args : desktop_file,
     suite : 'release',
   )
 endif
@@ -71,8 +82,7 @@ if appstreamcli.found()
   test(
     'AppStream metadata',
     appstreamcli,
-    args : ['validate', '--no-net', '--strict',
-            files('io.github.sachesi.EdidEditor.metainfo.xml')],
+    args : ['validate', '--no-net', '--strict', metainfo_file],
     suite : 'release',
   )
 endif

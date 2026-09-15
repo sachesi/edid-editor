@@ -25,6 +25,18 @@ void wnd_refresh_group_title(wxedid_wnd* wnd, edi_grp_cl* pgrp) {
    gtk_label_set_text(wnd->group_title, edid_group_display_name(pgrp, wnd->doc->EDID).c_str());
 }
 
+//a failure of the editor itself, logged and shown in the banner
+void wnd_log_error(wxedid_wnd* wnd, const char* format, ...) {
+   va_list args;
+   va_start(args, format);
+   char* text = g_strdup_vprintf(format, args);
+   va_end(args);
+   char* message = g_strconcat("[E!] ", text, NULL);
+   wnd->doc->GLog.DoLog(message);
+   g_free(message);
+   g_free(text);
+}
+
 static void log_sink(const char* msg, void* user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
    if ((wnd == NULL) || (wnd->log == NULL)) return;
@@ -59,28 +71,28 @@ void wnd_update_document_ui(wxedid_wnd* wnd) {
    g_simple_action_set_enabled(wnd->compare_file_action, wnd->loaded);
    g_simple_action_set_enabled(wnd->compare_display_action, wnd->loaded);
    gtk_widget_set_visible(wnd->save_button, wnd->loaded);
-   gtk_button_set_label(GTK_BUTTON(wnd->save_button), "_Save");
+   gtk_button_set_label(GTK_BUTTON(wnd->save_button), _("_Save"));
    gtk_button_set_use_underline(GTK_BUTTON(wnd->save_button), TRUE);
    gtk_widget_set_tooltip_text(
       wnd->save_button,
-      wnd->document_hex    ? "Save as an EDID binary (Ctrl+S)" :
-      wnd->source_writable ? "Save changes (Ctrl+S)" :
-                             "Save a writable copy (Ctrl+S)");
+      wnd->document_hex    ? _("Save as an EDID binary (Ctrl+S)") :
+      wnd->source_writable ? _("Save changes (Ctrl+S)") :
+                             _("Save a writable copy (Ctrl+S)"));
 
    if (wnd->loaded) {
       char* basename = document_basename(wnd->doc->path);
       char* display_path = g_filename_display_name(wnd->doc->path);
-      char* window_name = g_strdup_printf("%s — EDID Editor", basename);
-      const char* state = wnd->dirty ? "Modified" : NULL;
+      char* window_name = g_strdup_printf(_("%s — EDID Editor"), basename);
+      const char* state = wnd->dirty ? _("Modified") : NULL;
       char* subtitle = NULL;
       if (wnd->document_hex) {
          subtitle = (state != NULL)
-            ? g_strdup_printf("%s · Imported · %s", state, display_path)
-            : g_strdup_printf("Imported · %s", display_path);
+            ? g_strdup_printf(_("%s · Imported · %s"), state, display_path)
+            : g_strdup_printf(_("Imported · %s"), display_path);
       } else if (! wnd->source_writable && (state != NULL)) {
-         subtitle = g_strdup_printf("%s · Read-only · %s", state, display_path);
+         subtitle = g_strdup_printf(_("%s · Read-only · %s"), state, display_path);
       } else if (! wnd->source_writable) {
-         subtitle = g_strdup_printf("Read-only · %s", display_path);
+         subtitle = g_strdup_printf(_("Read-only · %s"), display_path);
       } else if (state != NULL) {
          subtitle = g_strdup_printf("%s · %s", state, display_path);
       } else {
@@ -96,19 +108,19 @@ void wnd_update_document_ui(wxedid_wnd* wnd) {
       g_free(display_path);
       g_free(basename);
    } else {
-      adw_window_title_set_title(wnd->window_title, "EDID Editor");
+      adw_window_title_set_title(wnd->window_title, _("EDID Editor"));
       adw_window_title_set_subtitle(wnd->window_title, NULL);
-      gtk_window_set_title(wnd->window, "EDID Editor");
+      gtk_window_set_title(wnd->window, _("EDID Editor"));
    }
 
    const char* source_note = NULL;
    if (wnd->loaded && ! wnd->source_writable) {
       if (g_str_has_prefix(wnd->doc->path, DRM_ROOT)) {
-         source_note = "Read from a connected display. Save a copy to keep your changes.";
+         source_note = _("Read from a connected display. Save a copy to keep your changes.");
       } else if (wnd->document_hex) {
-         if (wnd->dirty) source_note = "Imported from hex text. Save it as an EDID binary.";
+         if (wnd->dirty) source_note = _("Imported from hex text. Save it as an EDID binary.");
       } else {
-         source_note = "This file is read-only. Save a copy to keep your changes.";
+         source_note = _("This file is read-only. Save a copy to keep your changes.");
       }
    }
    if (source_note != NULL) adw_banner_set_title(wnd->source_banner, source_note);
@@ -117,7 +129,7 @@ void wnd_update_document_ui(wxedid_wnd* wnd) {
    if (wnd->loaded && wnd->overview_shown) wnd_refresh_overview(wnd);
 
    if (wnd->invalid_fields > 0) {
-      adw_banner_set_title(wnd->banner, "Enter a valid value before saving");
+      adw_banner_set_title(wnd->banner, _("Enter a valid value before saving"));
       adw_banner_set_button_label(wnd->banner, NULL);
       adw_banner_set_revealed(wnd->banner, TRUE);
       wnd->banner_is_validation = true;
@@ -138,7 +150,7 @@ void wnd_update_header_controls(wxedid_wnd* wnd) {
 
 void wnd_show_error(wxedid_wnd* wnd, const char* message) {
    adw_banner_set_title(wnd->banner, message);
-   adw_banner_set_button_label(wnd->banner, "Details");
+   adw_banner_set_button_label(wnd->banner, _("Details"));
    adw_banner_set_revealed(wnd->banner, TRUE);
    wnd->banner_is_validation = false;
    wnd->banner_offers_retry = false;
@@ -203,11 +215,11 @@ static gboolean wnd_on_close_request(GtkWindow* /*window*/, gpointer user_data) 
 
    wnd->close_confirmation_open = true;
    AdwAlertDialog* dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
-      "Discard unsaved changes?",
-      "Closing this window will discard changes to the current EDID."));
+      _("Discard unsaved changes?"),
+      _("Closing this window will discard changes to the current EDID.")));
    adw_alert_dialog_add_responses(dialog,
-                                  "cancel", "Cancel",
-                                  "discard", "Discard",
+                                  "cancel", _("Cancel"),
+                                  "discard", _("Discard"),
                                   NULL);
    adw_alert_dialog_set_close_response(dialog, "cancel");
    adw_alert_dialog_set_default_response(dialog, "cancel");
@@ -226,16 +238,16 @@ static void wnd_on_about_action(GSimpleAction*, GVariant*, gpointer user_data) {
       NULL,
    };
    AdwAboutDialog* dialog = ADW_ABOUT_DIALOG(adw_about_dialog_new());
-   adw_about_dialog_set_application_name(dialog, "EDID Editor");
+   adw_about_dialog_set_application_name(dialog, _("EDID Editor"));
    adw_about_dialog_set_application_icon(dialog, "io.github.sachesi.EdidEditor");
    adw_about_dialog_set_developer_name(dialog, "sachesi");
    adw_about_dialog_set_version(dialog, WXEDID_VERSION);
    adw_about_dialog_set_website(dialog, "https://github.com/sachesi/edid-editor");
    adw_about_dialog_set_issue_url(dialog, "https://github.com/sachesi/edid-editor/issues");
    adw_about_dialog_set_comments(dialog,
-      "Inspect and edit Extended Display Identification Data.\n\n"
-      "Based on wxEDID by Tomasz Pawlak.");
-   adw_about_dialog_add_link(dialog, "wxEDID, the original project",
+      _("Inspect and edit Extended Display Identification Data.\n\n"
+        "Based on wxEDID by Tomasz Pawlak."));
+   adw_about_dialog_add_link(dialog, _("wxEDID, the original project"),
                              "https://sourceforge.net/projects/wxedid/");
    adw_about_dialog_set_developers(dialog, developers);
    adw_about_dialog_set_copyright(dialog, "Copyright © 2014–2025 Tomasz Pawlak\n"
@@ -253,7 +265,7 @@ static void wnd_on_ignore_errors_state(GSimpleAction* action, GVariant* value,
    if (! enabled || ! wnd->load_had_errors || wnd->source_path.empty()) return;
    if (wnd->dirty) {
       adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(
-         "Open the file again to read it with errors ignored"));
+         _("Open the file again to read it with errors ignored")));
       return;
    }
    wnd_reload_source(wnd);
@@ -297,34 +309,34 @@ static void wnd_on_shortcuts_action(GSimpleAction*, GVariant*, gpointer user_dat
       shortcut    items[6];
    };
    static const section sections[] = {
-      {"Files", {
-         {"Open a file", "<Control>o"},
-         {"Save changes", "<Control>s"},
-         {"Save as a new file", "<Control><Shift>s"},
+      {N_("Files"), {
+         {N_("Open a file"), "<Control>o"},
+         {N_("Save changes"), "<Control>s"},
+         {N_("Save as a new file"), "<Control><Shift>s"},
       }},
-      {"Editing", {
-         {"Undo", "<Control>z"},
-         {"Redo", "<Control><Shift>z"},
+      {N_("Editing"), {
+         {N_("Undo"), "<Control>z"},
+         {N_("Redo"), "<Control><Shift>z"},
       }},
-      {"Groups", {
-         {"Duplicate group", "<Control>d"},
-         {"Delete group", "Delete"},
-         {"Move group up", "<Alt>Up"},
-         {"Move group down", "<Alt>Down"},
-         {"Show group menu", "<Shift>F10"},
+      {N_("Groups"), {
+         {N_("Duplicate group"), "<Control>d"},
+         {N_("Delete group"), "Delete"},
+         {N_("Move group up"), "<Alt>Up"},
+         {N_("Move group down"), "<Alt>Down"},
+         {N_("Show group menu"), "<Shift>F10"},
       }},
-      {"General", {
-         {"Search groups", "<Control>f"},
-         {"Keyboard shortcuts", "<Control>question"},
+      {N_("General"), {
+         {N_("Search groups"), "<Control>f"},
+         {N_("Keyboard shortcuts"), "<Control>question"},
       }},
    };
    AdwDialog* dialog = adw_shortcuts_dialog_new();
    for (const section& spec : sections) {
-      AdwShortcutsSection* group = adw_shortcuts_section_new(spec.title);
+      AdwShortcutsSection* group = adw_shortcuts_section_new(_(spec.title));
       for (const shortcut& item : spec.items) {
          if (item.title == NULL) break;
          adw_shortcuts_section_add(group,
-                                   adw_shortcuts_item_new(item.title, item.accelerator));
+                                   adw_shortcuts_item_new(_(item.title), item.accelerator));
       }
       adw_shortcuts_dialog_add(ADW_SHORTCUTS_DIALOG(dialog), group);
    }
@@ -364,7 +376,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    GtkWidget* window = adw_application_window_new(GTK_APPLICATION(app));
    wnd->window = GTK_WINDOW(window);
    gtk_window_set_default_size(GTK_WINDOW(window), 900, 640);
-   gtk_window_set_title(GTK_WINDOW(window), "EDID Editor");
+   gtk_window_set_title(GTK_WINDOW(window), _("EDID Editor"));
    g_signal_connect(window, "close-request", G_CALLBACK(wnd_on_close_request), wnd);
 
    g_object_set_data_full(G_OBJECT(window), "wxedid-wnd", wnd,
@@ -553,72 +565,72 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
 
    //header bar
    GtkWidget* header = adw_header_bar_new();
-   wnd->window_title = ADW_WINDOW_TITLE(adw_window_title_new("EDID Editor", "Display identification data"));
+   wnd->window_title = ADW_WINDOW_TITLE(adw_window_title_new(_("EDID Editor"), _("Display identification data")));
    adw_header_bar_set_title_widget(ADW_HEADER_BAR(header), GTK_WIDGET(wnd->window_title));
 
-   GtkWidget* btn_open = gtk_button_new_with_mnemonic("_Open");
+   GtkWidget* btn_open = gtk_button_new_with_mnemonic(_("_Open"));
    wnd->open_button = btn_open;
    gtk_actionable_set_action_name(GTK_ACTIONABLE(btn_open), "win.open");
-   gtk_widget_set_tooltip_text(btn_open, "Open an EDID file (Ctrl+O)");
+   gtk_widget_set_tooltip_text(btn_open, _("Open an EDID file (Ctrl+O)"));
    adw_header_bar_pack_start(ADW_HEADER_BAR(header), btn_open);
 
-   GtkWidget* btn_save = gtk_button_new_with_mnemonic("_Save");
+   GtkWidget* btn_save = gtk_button_new_with_mnemonic(_("_Save"));
    wnd->save_button = btn_save;
    gtk_actionable_set_action_name(GTK_ACTIONABLE(btn_save), "win.save");
-   gtk_widget_set_tooltip_text(btn_save, "Save changes (Ctrl+S)");
+   gtk_widget_set_tooltip_text(btn_save, _("Save changes (Ctrl+S)"));
    gtk_widget_add_css_class(btn_save, "suggested-action");
    adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_save);
 
    GMenu* primary_menu = g_menu_new();
    GMenu* open_section = g_menu_new();
-   g_menu_append(open_section, "Open…", "win.open");
+   g_menu_append(open_section, _("Open…"), "win.open");
    wnd->recent_menu = g_menu_new();
-   g_menu_append_submenu(open_section, "Open Recent", G_MENU_MODEL(wnd->recent_menu));
-   g_menu_append(open_section, "Open from Display…", "win.open-display");
-   g_menu_append(open_section, "Import Hex…", "win.import-hex");
+   g_menu_append_submenu(open_section, _("Open Recent"), G_MENU_MODEL(wnd->recent_menu));
+   g_menu_append(open_section, _("Open from Display…"), "win.open-display");
+   g_menu_append(open_section, _("Import Hex…"), "win.import-hex");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(open_section));
    g_object_unref(open_section);
    GMenu* save_section = g_menu_new();
-   g_menu_append(save_section, "Save As…", "win.save-as");
-   g_menu_append(save_section, "Export Hex…", "win.export-hex");
-   g_menu_append(save_section, "Save Report…", "win.save-report");
+   g_menu_append(save_section, _("Save As…"), "win.save-as");
+   g_menu_append(save_section, _("Export Hex…"), "win.export-hex");
+   g_menu_append(save_section, _("Save Report…"), "win.save-report");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(save_section));
    g_object_unref(save_section);
    GMenu* compare_section = g_menu_new();
-   g_menu_append(compare_section, "Compare with File…", "win.compare-file");
-   g_menu_append(compare_section, "Compare with Display…", "win.compare-display");
+   g_menu_append(compare_section, _("Compare with File…"), "win.compare-file");
+   g_menu_append(compare_section, _("Compare with Display…"), "win.compare-display");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(compare_section));
    g_object_unref(compare_section);
    GMenu* edit_section = g_menu_new();
-   g_menu_append(edit_section, "Undo", "win.undo");
-   g_menu_append(edit_section, "Redo", "win.redo");
+   g_menu_append(edit_section, _("Undo"), "win.undo");
+   g_menu_append(edit_section, _("Redo"), "win.redo");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(edit_section));
    g_object_unref(edit_section);
    GMenu* option_section = g_menu_new();
-   g_menu_append(option_section, "Ignore EDID Errors", "win.ignore-errors");
-   g_menu_append(option_section, "Edit Read-Only Fields", "win.ignore-read-only");
-   g_menu_append(option_section, "Show Reserved Fields", "win.show-reserved");
+   g_menu_append(option_section, _("Ignore EDID Errors"), "win.ignore-errors");
+   g_menu_append(option_section, _("Edit Read-Only Fields"), "win.ignore-read-only");
+   g_menu_append(option_section, _("Show Reserved Fields"), "win.show-reserved");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(option_section));
    g_object_unref(option_section);
    GMenu* help_section = g_menu_new();
-   g_menu_append(help_section, "EDID Log", "win.show-log");
-   g_menu_append(help_section, "Keyboard Shortcuts", "win.shortcuts");
-   g_menu_append(help_section, "About EDID Editor", "win.about");
+   g_menu_append(help_section, _("EDID Log"), "win.show-log");
+   g_menu_append(help_section, _("Keyboard Shortcuts"), "win.shortcuts");
+   g_menu_append(help_section, _("About EDID Editor"), "win.about");
    g_menu_append_section(primary_menu, NULL, G_MENU_MODEL(help_section));
    g_object_unref(help_section);
    GtkWidget* btn_menu = gtk_menu_button_new();
    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(btn_menu), "open-menu-symbolic");
    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(btn_menu), G_MENU_MODEL(primary_menu));
    gtk_menu_button_set_primary(GTK_MENU_BUTTON(btn_menu), TRUE);
-   gtk_widget_set_tooltip_text(btn_menu, "Main menu");
+   gtk_widget_set_tooltip_text(btn_menu, _("Main menu"));
    g_object_unref(primary_menu);
    adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_menu);
 
    GtkWidget* btn_sidebar = gtk_button_new_from_icon_name("sidebar-show-symbolic");
    wnd->sidebar_button = btn_sidebar;
-   gtk_widget_set_tooltip_text(btn_sidebar, "Show groups");
+   gtk_widget_set_tooltip_text(btn_sidebar, _("Show groups"));
    gtk_accessible_update_property(GTK_ACCESSIBLE(btn_sidebar),
-                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Show groups",
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, _("Show groups"),
                                   -1);
    gtk_widget_set_visible(btn_sidebar, FALSE);
    g_signal_connect(btn_sidebar, "clicked", G_CALLBACK(wnd_on_toggle_sidebar), wnd);
@@ -650,25 +662,25 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    //only the groups of the selected block's type are offered
    GMenu* add_menu = g_menu_new();
    static const char* const add_items[][2] = {
-      {"LPCM Audio Block", "win.add-cta-group::audio-lpcm"},
-      {"Extended Audio Block", "win.add-cta-group::audio-extended"},
-      {"Video Block", "win.add-cta-group::video"},
-      {"Detailed Timing", "win.add-cta-group::timing"},
-      {"DisplayID Data Block", "win.add-displayid-group"},
+      {N_("LPCM Audio Block"), "win.add-cta-group::audio-lpcm"},
+      {N_("Extended Audio Block"), "win.add-cta-group::audio-extended"},
+      {N_("Video Block"), "win.add-cta-group::video"},
+      {N_("Detailed Timing"), "win.add-cta-group::timing"},
+      {N_("DisplayID Data Block"), "win.add-displayid-group"},
    };
    for (const auto& spec : add_items) {
-      GMenuItem* item = g_menu_item_new(spec[0], spec[1]);
+      GMenuItem* item = g_menu_item_new(_(spec[0]), spec[1]);
       g_menu_item_set_attribute(item, "hidden-when", "s", "action-disabled");
       g_menu_append_item(add_menu, item);
       g_object_unref(item);
    }
 
    GMenu* group_menu_model = g_menu_new();
-   g_menu_append_submenu(group_menu_model, "Add", G_MENU_MODEL(add_menu));
-   g_menu_append(group_menu_model, "Duplicate", "win.duplicate-group");
-   g_menu_append(group_menu_model, "Move Up", "win.move-group-up");
-   g_menu_append(group_menu_model, "Move Down", "win.move-group-down");
-   g_menu_append(group_menu_model, "Delete", "win.delete-group");
+   g_menu_append_submenu(group_menu_model, _("Add"), G_MENU_MODEL(add_menu));
+   g_menu_append(group_menu_model, _("Duplicate"), "win.duplicate-group");
+   g_menu_append(group_menu_model, _("Move Up"), "win.move-group-up");
+   g_menu_append(group_menu_model, _("Move Down"), "win.move-group-down");
+   g_menu_append(group_menu_model, _("Delete"), "win.delete-group");
    wnd->group_menu = GTK_POPOVER_MENU(
       gtk_popover_menu_new_from_model(G_MENU_MODEL(group_menu_model)));
    gtk_widget_set_parent(GTK_WIDGET(wnd->group_menu), GTK_WIDGET(wnd->tree));
@@ -690,10 +702,10 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_set_vexpand(tree_scroll, TRUE);
 
    wnd->tree_search = GTK_SEARCH_ENTRY(gtk_search_entry_new());
-   gtk_search_entry_set_placeholder_text(wnd->tree_search, "Search groups");
+   gtk_search_entry_set_placeholder_text(wnd->tree_search, _("Search groups"));
    gtk_accessible_update_property(GTK_ACCESSIBLE(wnd->tree_search),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                  "Search groups", -1);
+                                  _("Search groups"), -1);
    gtk_widget_set_margin_start(GTK_WIDGET(wnd->tree_search), 12);
    gtk_widget_set_margin_end(GTK_WIDGET(wnd->tree_search), 12);
    gtk_widget_set_margin_top(GTK_WIDGET(wnd->tree_search), 12);
@@ -707,10 +719,10 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    adw_status_page_set_icon_name(ADW_STATUS_PAGE(search_empty),
                                  "edit-find-symbolic");
    adw_status_page_set_title(ADW_STATUS_PAGE(search_empty),
-                             "No matching groups");
+                             _("No matching groups"));
    adw_status_page_set_description(ADW_STATUS_PAGE(search_empty),
-                                   "Try a different search.");
-   GtkWidget* clear_search = gtk_button_new_with_mnemonic("_Clear Search");
+                                   _("Try a different search."));
+   GtkWidget* clear_search = gtk_button_new_with_mnemonic(_("_Clear Search"));
    gtk_widget_set_halign(clear_search, GTK_ALIGN_CENTER);
    g_signal_connect(clear_search, "clicked", G_CALLBACK(tree_search_clear), wnd);
    adw_status_page_set_child(ADW_STATUS_PAGE(search_empty), clear_search);
@@ -726,7 +738,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_add_css_class(GTK_WIDGET(wnd->overview_list), "navigation-sidebar");
    GtkWidget* overview_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
    gtk_box_append(GTK_BOX(overview_row), gtk_image_new_from_icon_name("view-grid-symbolic"));
-   GtkWidget* overview_label = gtk_label_new("Overview");
+   GtkWidget* overview_label = gtk_label_new(_("Overview"));
    gtk_label_set_xalign(GTK_LABEL(overview_label), 0.0);
    gtk_box_append(GTK_BOX(overview_row), overview_label);
    gtk_list_box_append(wnd->overview_list, overview_row);
@@ -748,9 +760,9 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    wnd->add_button = add_button;
    gtk_menu_button_set_icon_name(GTK_MENU_BUTTON(add_button), "list-add-symbolic");
    gtk_menu_button_set_menu_model(GTK_MENU_BUTTON(add_button), G_MENU_MODEL(add_menu));
-   gtk_widget_set_tooltip_text(add_button, "Add a group");
+   gtk_widget_set_tooltip_text(add_button, _("Add a group"));
    gtk_accessible_update_property(GTK_ACCESSIBLE(add_button),
-                                  GTK_ACCESSIBLE_PROPERTY_LABEL, "Add a group", -1);
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, _("Add a group"), -1);
    gtk_box_append(GTK_BOX(group_toolbar), add_button);
    g_object_unref(add_menu);
 
@@ -760,17 +772,17 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
       const char* action;
    };
    static const group_button group_buttons[] = {
-      {"edit-copy-symbolic", "Duplicate group (Ctrl+D)", "win.duplicate-group"},
-      {"go-up-symbolic", "Move group up (Alt+Up)", "win.move-group-up"},
-      {"go-down-symbolic", "Move group down (Alt+Down)", "win.move-group-down"},
-      {"user-trash-symbolic", "Delete group (Delete)", "win.delete-group"},
+      {"edit-copy-symbolic", N_("Duplicate group (Ctrl+D)"), "win.duplicate-group"},
+      {"go-up-symbolic", N_("Move group up (Alt+Up)"), "win.move-group-up"},
+      {"go-down-symbolic", N_("Move group down (Alt+Down)"), "win.move-group-down"},
+      {"user-trash-symbolic", N_("Delete group (Delete)"), "win.delete-group"},
    };
    for (const group_button& spec : group_buttons) {
       GtkWidget* button = gtk_button_new_from_icon_name(spec.icon);
       gtk_actionable_set_action_name(GTK_ACTIONABLE(button), spec.action);
-      gtk_widget_set_tooltip_text(button, spec.label);
+      gtk_widget_set_tooltip_text(button, _(spec.label));
       gtk_accessible_update_property(GTK_ACCESSIBLE(button),
-                                     GTK_ACCESSIBLE_PROPERTY_LABEL, spec.label, -1);
+                                     GTK_ACCESSIBLE_PROPERTY_LABEL, _(spec.label), -1);
       gtk_box_append(GTK_BOX(group_toolbar), button);
    }
    gtk_box_append(GTK_BOX(sidebar), group_toolbar);
@@ -786,7 +798,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    GtkWidget* heading_titles = gtk_box_new(GTK_ORIENTATION_VERTICAL, 2);
    gtk_widget_set_hexpand(heading_titles, TRUE);
    gtk_widget_set_valign(heading_titles, GTK_ALIGN_CENTER);
-   wnd->group_title = GTK_LABEL(gtk_label_new("Select a group"));
+   wnd->group_title = GTK_LABEL(gtk_label_new(_("Select a group")));
    gtk_label_set_xalign(wnd->group_title, 0.0);
    gtk_label_set_ellipsize(wnd->group_title, PANGO_ELLIPSIZE_END);
    gtk_widget_add_css_class(GTK_WIDGET(wnd->group_title), "title-2");
@@ -825,7 +837,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_widget_add_css_class(GTK_WIDGET(wnd->reserved_label), "caption");
    gtk_widget_add_css_class(GTK_WIDGET(wnd->reserved_label), "dim-label");
    gtk_box_append(GTK_BOX(wnd->reserved_note), GTK_WIDGET(wnd->reserved_label));
-   GtkWidget* show_reserved = gtk_button_new_with_label("Show Reserved Fields");
+   GtkWidget* show_reserved = gtk_button_new_with_label(_("Show Reserved Fields"));
    gtk_widget_add_css_class(show_reserved, "flat");
    gtk_widget_add_css_class(show_reserved, "caption");
    gtk_actionable_set_action_name(GTK_ACTIONABLE(show_reserved), "win.show-reserved");
@@ -856,7 +868,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    gtk_text_view_set_bottom_margin(wnd->raw_view, 12);
    gtk_accessible_update_property(GTK_ACCESSIBLE(wnd->raw_view),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
-                                  "Selected group bytes", -1);
+                                  _("Selected group bytes"), -1);
    gtk_text_buffer_create_tag(gtk_text_view_get_buffer(wnd->raw_view), "field",
                               "background", "rgba(53,132,228,0.3)",
                               "weight", PANGO_WEIGHT_BOLD, NULL);
@@ -892,12 +904,12 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    adw_view_stack_set_hhomogeneous(wnd->editor_stack, FALSE);
    adw_view_stack_set_vhomogeneous(wnd->editor_stack, FALSE);
    adw_view_stack_add_titled_with_icon(wnd->editor_stack, fields_scroll,
-                                       "fields", "Fields", "view-list-symbolic");
+                                       "fields", _("Fields"), "view-list-symbolic");
    wnd->timing_stack_page = adw_view_stack_add_titled_with_icon(
       wnd->editor_stack, wnd->timing->page,
-      "timing", "Timing", "video-display-symbolic");
+      "timing", _("Timing"), "video-display-symbolic");
    adw_view_stack_add_titled_with_icon(wnd->editor_stack, raw_scroll,
-                                       "bytes", "Bytes", "document-properties-symbolic");
+                                       "bytes", _("Bytes"), "document-properties-symbolic");
    wnd->overview_bin = adw_bin_new();
    wnd->overview_page = adw_view_stack_add_named(wnd->editor_stack, wnd->overview_bin,
                                                  "overview");
@@ -977,20 +989,20 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
 
    GtkWidget* empty_page = adw_status_page_new();
    adw_status_page_set_icon_name(ADW_STATUS_PAGE(empty_page), "video-display-symbolic");
-   adw_status_page_set_title(ADW_STATUS_PAGE(empty_page), "Open an EDID file");
+   adw_status_page_set_title(ADW_STATUS_PAGE(empty_page), _("Open an EDID file"));
    adw_status_page_set_description(ADW_STATUS_PAGE(empty_page),
-                                   "Inspect and edit display identification data.");
-   GtkWidget* empty_open = gtk_button_new_with_mnemonic("_Open an EDID File");
+                                   _("Inspect and edit display identification data."));
+   GtkWidget* empty_open = gtk_button_new_with_mnemonic(_("_Open an EDID File"));
    gtk_actionable_set_action_name(GTK_ACTIONABLE(empty_open), "win.open");
    gtk_widget_add_css_class(empty_open, "suggested-action");
    gtk_widget_add_css_class(empty_open, "pill");
    gtk_widget_set_halign(empty_open, GTK_ALIGN_CENTER);
-   GtkWidget* empty_display = gtk_button_new_with_mnemonic("Open from _Display");
+   GtkWidget* empty_display = gtk_button_new_with_mnemonic(_("Open from _Display"));
    gtk_actionable_set_action_name(GTK_ACTIONABLE(empty_display), "win.open-display");
    gtk_widget_add_css_class(empty_display, "pill");
    gtk_widget_set_halign(empty_display, GTK_ALIGN_CENTER);
    wnd->recent_group = adw_preferences_group_new();
-   adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(wnd->recent_group), "Recent Files");
+   adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(wnd->recent_group), _("Recent Files"));
    wnd->recent_list = GTK_LIST_BOX(gtk_list_box_new());
    gtk_list_box_set_selection_mode(wnd->recent_list, GTK_SELECTION_NONE);
    gtk_widget_add_css_class(GTK_WIDGET(wnd->recent_list), "boxed-list");
@@ -1017,7 +1029,7 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                     G_CALLBACK(wnd_on_banner_details), wnd);
 
    wnd->source_banner = ADW_BANNER(adw_banner_new(""));
-   adw_banner_set_button_label(wnd->source_banner, "Save As…");
+   adw_banner_set_button_label(wnd->source_banner, _("Save As…"));
    adw_banner_set_use_markup(wnd->source_banner, FALSE);
    g_signal_connect(wnd->source_banner, "button-clicked",
                     G_CALLBACK(wnd_on_source_banner), wnd);

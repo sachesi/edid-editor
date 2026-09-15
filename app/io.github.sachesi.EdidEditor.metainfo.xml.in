@@ -20,6 +20,7 @@
     <name>sachesi</name>
   </developer>
   <launchable type="desktop-id">io.github.sachesi.EdidEditor.desktop</launchable>
+  <translation type="gettext">edid-editor</translation>
   <url type="homepage">https://github.com/sachesi/edid-editor</url>
   <url type="bugtracker">https://github.com/sachesi/edid-editor/issues</url>
   <url type="vcs-browser">https://github.com/sachesi/edid-editor</url>

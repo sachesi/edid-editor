@@ -41,8 +41,8 @@ run *args: build-debug
 
 # Debug build, desktop entry and AppStream metadata validation.
 check: build-debug
-    desktop-file-validate app/{{app_id}}.desktop
-    appstreamcli validate --no-net --strict app/{{app_id}}.metainfo.xml
+    desktop-file-validate {{debug}}/app/{{app_id}}.desktop
+    appstreamcli validate --no-net --strict {{debug}}/app/{{app_id}}.metainfo.xml
 
 # Tests of the core and the metadata.
 test: build-debug
@@ -63,8 +63,13 @@ install:
     if [ -x {{release}}/app/edid-editor ]; then \
         install -Dm755 {{release}}/app/edid-editor {{bindir}}/edid-editor; \
         install -Dm644 docs/edid-editor.1 {{mandir}}/edid-editor.1; \
-        install -Dm644 app/{{app_id}}.desktop {{datadir}}/applications/{{app_id}}.desktop; \
-        install -Dm644 app/{{app_id}}.metainfo.xml {{datadir}}/metainfo/{{app_id}}.metainfo.xml; \
+        install -Dm644 {{release}}/app/{{app_id}}.desktop {{datadir}}/applications/{{app_id}}.desktop; \
+        install -Dm644 {{release}}/app/{{app_id}}.metainfo.xml {{datadir}}/metainfo/{{app_id}}.metainfo.xml; \
+        for mo in {{release}}/po/*/LC_MESSAGES/edid-editor.mo; do \
+            [ -e "$mo" ] || continue; \
+            lang=${mo#{{release}}/po/}; lang=${lang%%/*}; \
+            install -Dm644 "$mo" {{datadir}}/locale/$lang/LC_MESSAGES/edid-editor.mo; \
+        done; \
         install -Dm644 app/icons/{{app_id}}.svg {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg; \
         if [ -z "{{destdir}}" ]; then \
             update-desktop-database -q {{datadir}}/applications || true; \
@@ -81,4 +86,5 @@ uninstall:
     rm -f {{datadir}}/fish/vendor_completions.d/edid-editor-cli.fish
     rm -f {{datadir}}/applications/{{app_id}}.desktop {{datadir}}/metainfo/{{app_id}}.metainfo.xml
     rm -f {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg
+    rm -f {{datadir}}/locale/*/LC_MESSAGES/edid-editor.mo
     update-desktop-database -q {{datadir}}/applications || true

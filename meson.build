@@ -17,6 +17,7 @@ subdir('cli')
 
 if gtk_dep.found() and adw_dep.found()
   subdir('app')
+  subdir('po')
 
   gnome = import('gnome')
 

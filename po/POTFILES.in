@@ -1,0 +1,9 @@
+app/io.github.sachesi.EdidEditor.desktop.in
+app/io.github.sachesi.EdidEditor.metainfo.xml.in
+app/document.cpp
+app/fields.cpp
+app/history.cpp
+app/overview.cpp
+app/sidebar.cpp
+app/timing.cpp
+app/window.cpp

@@ -34,9 +34,9 @@ static wxedid_item* wxedid_item_new_block(const char* label,
 static wxedid_item* wxedid_item_new_raw_extension(u32_t block, u8_t tag,
                                                    EDID_cl* pEDID) {
    wxedid_item* item = wxedid_item_new(NULL, pEDID);
-   const char* type = (tag == 0x70) ? "DisplayID" : "Unsupported";
+   const char* type = (tag == 0x70) ? "DisplayID" : _("Unsupported");
    snprintf(item->label, sizeof(item->label),
-            "Extension %u: %s (0x%02X), preserved read-only", block, type, tag);
+            _("Extension %u: %s (0x%02X), preserved read-only"), block, type, tag);
    item->selectable = true;
    item->raw_block = static_cast<int>(block);
    return item;
@@ -338,8 +338,8 @@ void wnd_update_group_actions(wxedid_wnd* wnd) {
    //groups can only be added to CTA-861 and DisplayID blocks
    bool can_add = (tag == 0x02) || (tag == 0x70);
    gtk_widget_set_sensitive(wnd->add_button, can_add);
-   gtk_widget_set_tooltip_text(wnd->add_button, can_add ? "Add a group" :
-      "Select a group in a CTA-861 or DisplayID block to add groups");
+   gtk_widget_set_tooltip_text(wnd->add_button, can_add ? _("Add a group") :
+      _("Select a group in a CTA-861 or DisplayID block to add groups"));
 }
 
 void wnd_refresh_raw_view(wxedid_wnd* wnd) {
@@ -387,17 +387,17 @@ void wnd_refresh_raw_view(wxedid_wnd* wnd) {
       char where[160];
       u32_t first = offset + mark_start;
       if ((field->field.flags & F_BIT) != 0) {
-         snprintf(where, sizeof(where), "%s · bit %u of byte 0x%03X",
+         snprintf(where, sizeof(where), _("%s · bit %u of byte 0x%03X"),
                   name.c_str(), field->field.shift, first);
       } else if (mark_count == 1) {
-         snprintf(where, sizeof(where), "%s · byte 0x%03X", name.c_str(), first);
+         snprintf(where, sizeof(where), _("%s · byte 0x%03X"), name.c_str(), first);
       } else {
-         snprintf(where, sizeof(where), "%s · bytes 0x%03X–0x%03X", name.c_str(),
+         snprintf(where, sizeof(where), _("%s · bytes 0x%03X–0x%03X"), name.c_str(),
                   first, first + mark_count - 1);
       }
       gtk_label_set_text(wnd->raw_caption, where);
    } else {
-      gtk_label_set_text(wnd->raw_caption, "Select a field to mark its bytes");
+      gtk_label_set_text(wnd->raw_caption, _("Select a field to mark its bytes"));
    }
 
    GString* text = g_string_new("Offset  Hex bytes                                         Text\n");
@@ -489,7 +489,7 @@ void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
    gtk_label_set_text(wnd->group_title, group_name.c_str());
    if (it->pgrp != NULL) {
       char where[128];
-      snprintf(where, sizeof(where), "%s · offset 0x%03X · block %u",
+      snprintf(where, sizeof(where), _("%s · offset 0x%03X · block %u"),
                it->pgrp->CodeName.c_str(), it->pgrp->getAbsOffs(),
                it->pgrp->getAbsOffs() / static_cast<u32_t>(sizeof(ediblk_t)));
       gtk_label_set_text(wnd->group_subtitle, where);
@@ -537,13 +537,13 @@ void wnd_on_duplicate_group(GSimpleAction*, GVariant*, gpointer user_data) {
    if ((copy == NULL) || ! RCD_IS_OK(result) ||
        ! array->CanInsertDn(group->getParentArIdx(), copy)) {
       delete copy;
-      wnd_show_error(wnd, "This group cannot be duplicated in the available space");
+      wnd_show_error(wnd, _("This group cannot be duplicated in the available space"));
       return;
    }
    array->InsertDn(group->getParentArIdx(), copy);
    wnd_record_structure(wnd, HISTORY_INSERT, copy, array, copy->getParentArIdx(),
                         false, copy->getParentGrp());
-   wnd_finish_structure_change(wnd, copy, "Group duplicated");
+   wnd_finish_structure_change(wnd, copy, _("Group duplicated"));
 }
 
 static void wnd_move_group(wxedid_wnd* wnd, bool up) {
@@ -557,7 +557,7 @@ static void wnd_move_group(wxedid_wnd* wnd, bool up) {
       wnd_record_structure(wnd, HISTORY_MOVE, group, array, index, up,
                            group->getParentGrp());
       wnd_finish_structure_change(wnd, group,
-                                  up ? "Group moved up" : "Group moved down");
+                                  up ? _("Group moved up") : _("Group moved down"));
    }
 }
 
@@ -585,11 +585,11 @@ static void wnd_on_delete_group_response(GObject* source, GAsyncResult* result,
    edi_grp_cl* next = (index + 1 < array->GetCount()) ? array->Item(index + 1) :
                       (index > 0) ? array->Item(index - 1) : parent;
    if (array->Cut(index) != group) {
-      wnd_show_error(wnd, "This group couldn’t be deleted");
+      wnd_show_error(wnd, _("This group couldn’t be deleted"));
       return;
    }
    wnd_record_structure(wnd, HISTORY_REMOVE, group, array, index, false, parent);
-   wnd_finish_structure_change(wnd, next, "Group deleted");
+   wnd_finish_structure_change(wnd, next, _("Group deleted"));
 }
 
 void wnd_on_delete_group(GSimpleAction*, GVariant*, gpointer user_data) {
@@ -604,12 +604,12 @@ void wnd_on_delete_group(GSimpleAction*, GVariant*, gpointer user_data) {
    group->getGrpName(wnd->doc->EDID, name);
    char body[512];
    snprintf(body, sizeof(body),
-            "“%s” and its fields will be removed from this EDID.", name.c_str());
+            _("“%s” and its fields will be removed from this EDID."), name.c_str());
    AdwAlertDialog* dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
-      "Delete this group?", body));
+      _("Delete this group?"), body));
    adw_alert_dialog_add_responses(dialog,
-                                  "cancel", "Cancel",
-                                  "delete", "Delete",
+                                  "cancel", _("Cancel"),
+                                  "delete", _("Delete"),
                                   NULL);
    adw_alert_dialog_set_close_response(dialog, "cancel");
    adw_alert_dialog_set_default_response(dialog, "cancel");
@@ -640,12 +640,12 @@ void wnd_on_add_cta_group(GSimpleAction*, GVariant* parameter,
    GroupAr_cl* array = wnd_selected_root_array(wnd);
    if (! RCD_IS_OK(result) || ! edid_insert_group(array, group)) {
       delete group;
-      wnd_show_error(wnd, "This CTA group does not fit in the selected block");
+      wnd_show_error(wnd, _("This CTA group does not fit in the selected block"));
       return;
    }
    wnd_record_structure(wnd, HISTORY_INSERT, group, array, group->getParentArIdx(),
                         false, NULL);
-   wnd_finish_structure_change(wnd, group, "CTA group added");
+   wnd_finish_structure_change(wnd, group, _("CTA group added"));
 }
 
 void wnd_on_add_displayid_group(GSimpleAction*, GVariant*,
@@ -660,12 +660,12 @@ void wnd_on_add_displayid_group(GSimpleAction*, GVariant*,
       EDID_cl::DISPLAYID_DATA, version, &group);
    if (! RCD_IS_OK(result) || ! edid_insert_group(array, group)) {
       delete group;
-      wnd_show_error(wnd, "A DisplayID block does not fit in the selected section");
+      wnd_show_error(wnd, _("A DisplayID block does not fit in the selected section"));
       return;
    }
    wnd_record_structure(wnd, HISTORY_INSERT, group, array, group->getParentArIdx(),
                         false, NULL);
-   wnd_finish_structure_change(wnd, group, "DisplayID data block added");
+   wnd_finish_structure_change(wnd, group, _("DisplayID data block added"));
 }
 
 void wnd_popup_group_menu(wxedid_wnd* wnd, double x, double y) {
@@ -732,7 +732,7 @@ void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group) {
 
    if (edid.EDI_BaseGrpAr.GetCount() > 0) {
       wxedid_item* base = wxedid_item_new_block(
-         "Block 0: Base EDID", &edid.EDI_BaseGrpAr, &edid);
+         _("Block 0: Base EDID"), &edid.EDI_BaseGrpAr, &edid);
       g_list_store_append(root, base);
       g_object_unref(base);
    }
@@ -742,9 +742,9 @@ void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group) {
       if (groups->GetCount() > 0) {
          const char* type = (buffer->blk[block][0] == 0x02) ? "CTA-861" :
                             (buffer->blk[block][0] == 0x70) ? "DisplayID" :
-                                                             "Extension";
+                                                             _("Extension");
          char label[64];
-         snprintf(label, sizeof(label), "Block %u: %s", block, type);
+         snprintf(label, sizeof(label), _("Block %u: %s"), block, type);
          wxedid_item* section = wxedid_item_new_block(label, groups, &edid);
          g_list_store_append(root, section);
          g_object_unref(section);

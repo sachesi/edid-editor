@@ -24,7 +24,7 @@ jobs:
         run: >
           dnf install -y --setopt=install_weak_deps=False
           git-core just meson ninja-build gcc-c++ gtk4-devel libadwaita-devel
-          desktop-file-utils appstream python3
+          desktop-file-utils appstream gettext python3
       - uses: actions/checkout@v5
       - name: Lint
         run: just check

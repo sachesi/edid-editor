@@ -134,9 +134,8 @@ static bool wnd_apply_history_step(wxedid_wnd* wnd, bool redo) {
       bool ok = false;
       edi_grp_cl* selection = history_apply_structure(entry, redo, &ok);
       if (! ok) {
-         wnd->doc->GLog.DoLog(
-            "[E!] Couldn’t restore the previous structure. Reopen the file before "
-            "editing again.");
+         wnd_log_error(wnd, _("Couldn’t restore the previous structure. Reopen the file before "
+                              "editing again."));
          return false;
       }
       wnd->history_position = redo ? index + 1 : index;
@@ -154,8 +153,7 @@ static bool wnd_apply_history_step(wxedid_wnd* wnd, bool redo) {
       entry.integer ? OP_WRINT : OP_WRSTR, text, value, entry.field);
    wnd->applying_history = false;
    if (! RCD_IS_OK(result)) {
-      wnd->doc->GLog.DoLog(
-         "[E!] Couldn’t restore the previous value. Reopen the file before editing again.");
+      wnd_log_error(wnd, _("Couldn’t restore the previous value. Reopen the file before editing again."));
       return false;
    }
 
@@ -213,10 +211,10 @@ void wnd_flush_refresh(wxedid_wnd* wnd) {
                                                      &target, result);
    const char* refused = NULL;
    if ((rebuilt == NULL) && ! RCD_IS_OK(result)) {
-      refused = "This change is not possible here. The previous value was restored.";
+      refused = _("This change is not possible here. The previous value was restored.");
    } else if ((rebuilt != NULL) && ! EDID_cl::ReplaceGroup(target, rebuilt)) {
       delete rebuilt;
-      refused = "This change does not fit in the block. The previous value was restored.";
+      refused = _("This change does not fit in the block. The previous value was restored.");
    }
    if (refused != NULL) {
       if (joined) {
