@@ -1,7 +1,8 @@
 # The command line
 
 `edid-editor-cli` reads and changes EDID data with the same code as the editor, without
-a display or GTK. `edid-editor-cli --help` lists every command and option.
+a display or GTK, and `just gui=disabled build` builds it alone on a system without GTK.
+`edid-editor-cli --help` lists every command and option.
 
 ## Reading
 
@@ -39,16 +40,25 @@ description, range, bytes and named values:
 
     $ edid-editor-cli fields monitor.bin DTD:1
     DTD@0x036  2560x1440 @ 59.95Hz, block 0
-      #1   Pixel clock     241.50  MHz
-      #2   H-Active pix    2560
+      #1   Pixel clock             241.50  MHz
+      #2   Horizontal active       2560    px
       ...
-    $ edid-editor-cli describe monitor.bin 0x036 "Pixel clock"
+           Refresh                 59.95   Hz       derived: setting it changes the pixel clock
+    $ edid-editor-cli describe monitor.bin 0x036 "Horizontal active"
+    DTD@0x036 Horizontal active (H-Active pix)
+    ...
     $ edid-editor-cli get monitor.bin 0x036 pixelclock
     241.50
 
-A field is named as `fields` lists it, without regard to case, spaces, `-` and `_`, so
-`"Pixel clock"`, `pixel-clock` and `pixelclock` are the same field. `name:N` picks the nth
-field of a name that repeats, and `#N` the nth field.
+Fields carry the plain names the editor shows; `describe` adds the name the core gives
+a field when it differs. Either name works, without regard to case, spaces, `-` and `_`,
+so `"Horizontal active"`, `horizontal-active` and `H-Active pix` are the same field.
+`name:N` picks the nth field of a name that repeats, and `#N` the nth field.
+
+A detailed timing also has a `Refresh` field, in Hz, which follows from the pixel clock
+and the totals. Setting it sets the pixel clock that comes closest to the rate with the
+current blanking, in steps of the clock's unit, as typing a rate in the timing editor
+does; the rate reached is printed.
 
 ## Changing
 
@@ -58,6 +68,7 @@ hexadecimal text when the name ends in `.hex` or `.txt`, or to standard output w
 recomputed, and a connected display is never written to.
 
     edid-editor-cli set monitor.bin DTD:1 pixelclock=241.60 interlace=off -o new.bin
+    edid-editor-cli set new.bin DID-T1:1 refresh=165 --in-place
     edid-editor-cli set new.bin VID "Color depth=10 bits" --in-place
     edid-editor-cli add new.bin 1 audio-lpcm --in-place
     edid-editor-cli duplicate new.bin SVD:3 --in-place
@@ -66,8 +77,9 @@ recomputed, and a connected display is never written to.
     edid-editor-cli diff monitor.bin new.bin
 
 `set` takes a value as the field shows it, a named value from `describe`, or `on` and
-`off` for single bits; a value the field refuses stops the command before anything is
-written. Fields derived from other data need `--edit-read-only`, like Edit Read-Only
+`off` for single bits. Fields are set in the order given, so a `refresh` after a change of
+the blanking uses the new totals. A value the field refuses stops the command before
+anything is written. Fields derived from other data need `--edit-read-only`, like Edit Read-Only
 Fields in the editor, and a change that alters the type or layout of a group rebuilds it,
 as the editor does. `add` takes `audio-lpcm`, `audio-extended`, `video` or `timing` for a
 CTA-861 block and `displayid` for a DisplayID block, and puts the group where the editor

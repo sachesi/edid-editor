@@ -22,8 +22,10 @@
 #include "EDID_compare.h"
 #include "EDID_display.h"
 #include "EDID_document.h"
+#include "EDID_names.h"
 #include "EDID_summary.h"
 #include "EDID_text.h"
+#include "EDID_timing.h"
 
 namespace {
 
@@ -60,7 +62,8 @@ const char* const usage_text =
 "FIELD is a field name as listed by fields, matched without case, spaces, '-'\n"
 "and '_' (pixelclock), name:N for the nth field of that name, or #N for the\n"
 "nth field. VALUE is text as the field shows it, a named value from describe,\n"
-"or on/off for single bits.\n"
+"or on/off for single bits. Detailed timings also have a Refresh field in Hz;\n"
+"setting it sets the pixel clock, keeping the blanking.\n"
 "\n"
 "Options:\n"
 "  -o, --output OUTPUT    where a changed EDID is written\n"
@@ -236,9 +239,7 @@ std::string block_title(EDID_cl& EDID, u32_t block) {
 }
 
 std::string group_name(EDID_cl& EDID, edi_grp_cl* group) {
-   wxc_String name;
-   group->getGrpName(EDID, name);
-   return name.std_str();
+   return edid_group_display_name(group, EDID);
 }
 
 struct listed_group {
@@ -370,7 +371,9 @@ edi_dynfld_t* find_field(edi_grp_cl* group, const std::string& spec) {
    for (u32_t idx=0; idx<count; idx++) {
       edi_dynfld_t* field = group->FieldsAr.Item(idx);
       if ((field->field.name != NULL) &&
-          (name_key(field->field.name) == name_key(name.c_str()))) {
+          ((name_key(field->field.name) == name_key(name.c_str())) ||
+           (name_key(edid_field_display_name(field->field.name).c_str()) ==
+            name_key(name.c_str())))) {
          matches.push_back(field);
       }
    }
@@ -413,11 +416,11 @@ std::string shown(const field_value& value) {
    return value.label.empty() ? value.text : value.text + " (" + value.label + ")";
 }
 
-//the unit, unless the field name already ends with it, as in "H-Active pix"
+//the unit, unless the field name already ends with it, as in "Horizontal active pixels"
 std::string unit_of(EDID_cl& EDID, const edi_field_t& f) {
    wxc_String unit;
    EDID.getValUnitName(unit, f.flags);
-   std::string name = (f.name != NULL) ? f.name : "";
+   std::string name = edid_field_display_name((f.name != NULL) ? f.name : "");
    for (const char* suffix : {" pix", " lines", " px"}) {
       size_t length = strlen(suffix);
       if ((name.size() > length) && (0 == name.compare(name.size() - length, length, suffix))) {
@@ -429,6 +432,55 @@ std::string unit_of(EDID_cl& EDID, const edi_field_t& f) {
       return "";
    }
    return (unit == wxc_String("pix")) ? "px" : unit.std_str();
+}
+
+//The refresh rate of a detailed timing is a field of the command line only:
+//it follows from the pixel clock and the totals, and setting it changes the
+//pixel clock, as the timing editor does.
+bool is_refresh(const std::string& spec) {
+   std::string key = name_key(spec.c_str());
+   return (key == "refresh") || (key == "refreshrate") || (key == "verticalrefresh");
+}
+
+struct timing_state {
+   edid_timing_layout layout;
+   u32_t  values[TIMING_FIELD_COUNT];
+   double htotal;
+   double vtotal;
+   double refresh;
+};
+
+bool read_timing(EDID_cl& EDID, edi_grp_cl* group, timing_state& timing) {
+   if (! edid_timing_layout_of(group, timing.layout)) return false;
+   for (int idx=0; idx<TIMING_FIELD_COUNT; idx++) {
+      timing.values[idx] = 0;
+      if (timing.layout.fields[idx] < 0) continue;
+      field_value value = read_field(EDID, group->FieldsAr.Item(timing.layout.fields[idx]));
+      if (! value.ok) return false;
+      timing.values[idx] = value.value;
+   }
+   timing.htotal = static_cast<double>(timing.values[TIMING_HACTIVE]) +
+                   timing.values[TIMING_HBLANK];
+   timing.vtotal = static_cast<double>(timing.values[TIMING_VACTIVE]) +
+                   timing.values[TIMING_VBLANK];
+   if ((timing.htotal <= 0.0) || (timing.vtotal <= 0.0)) return false;
+   timing.refresh = timing.values[TIMING_PIXCLK] * timing.layout.pixel_hz /
+                    (timing.htotal * timing.vtotal);
+   return true;
+}
+
+std::string hz_text(double hz) {
+   char text[32];
+   snprintf(text, sizeof(text), "%.2f", hz);
+   return text;
+}
+
+timing_state need_timing(EDID_cl& EDID, edi_grp_cl* group) {
+   timing_state timing;
+   if (! read_timing(EDID, group, timing)) {
+      fail(address(group) + " is not a detailed timing; only those have a refresh rate");
+   }
+   return timing;
 }
 
 //-------- commands
@@ -500,7 +552,7 @@ int cmd_fields() {
    for (u32_t idx=0; idx<count; idx++) {
       edi_dynfld_t* field = group->FieldsAr.Item(idx);
       values.push_back(read_field(doc.EDID, field));
-      name_width = std::max(name_width, strlen(field->field.name));
+      name_width = std::max(name_width, edid_field_display_name(field->field.name).size());
       value_width = std::max(value_width, shown(values.back()).size());
    }
    value_width = std::min<size_t>(value_width, 40);
@@ -513,9 +565,15 @@ int cmd_fields() {
       if ((f.flags & F_NU) != 0) notes += " not-used";
       if (field_has_selector(f)) notes += " named-values";
       std::printf("  #%-3u %-*s  %-*s  %-8s%s\n", idx + 1,
-                  static_cast<int>(name_width), f.name,
+                  static_cast<int>(name_width), edid_field_display_name(f.name).c_str(),
                   static_cast<int>(value_width), shown(values[idx]).c_str(),
                   unit.c_str(), notes.c_str());
+   }
+   timing_state timing;
+   if (read_timing(doc.EDID, group, timing)) {
+      std::printf("       %-*s  %-*s  %-8s%s\n", static_cast<int>(name_width), "Refresh",
+                  static_cast<int>(value_width), hz_text(timing.refresh).c_str(), "Hz",
+                  " derived: setting it changes the pixel clock");
    }
    return 0;
 }
@@ -525,9 +583,23 @@ int cmd_describe() {
    document doc;
    open_document(doc, opts.args[1]);
    edi_grp_cl* group = find_group(doc.EDID, opts.args[2]).group;
+   if (is_refresh(opts.args[3])) {
+      timing_state timing = need_timing(doc.EDID, group);
+      std::printf("%s Refresh\n", address(group).c_str());
+      std::printf("  value:  %s\n", hz_text(timing.refresh).c_str());
+      std::printf("  unit:   Hz\n");
+      std::printf("\nThe vertical refresh rate: the pixel clock divided by the horizontal and\n"
+                  "vertical totals. Setting it sets the pixel clock that comes closest to it\n"
+                  "with the current totals, in steps of the pixel clock's unit; the blanking\n"
+                  "stays as it is.\n");
+      return 0;
+   }
    edi_dynfld_t* field = find_field(group, opts.args[3]);
    const edi_field_t& f = field->field;
-   std::printf("%s %s\n", address(group).c_str(), f.name);
+   std::string plain = edid_field_display_name(f.name);
+   std::printf("%s %s", address(group).c_str(), plain.c_str());
+   if (plain != f.name) std::printf(" (%s)", f.name);
+   std::printf("\n");
    std::printf("  value:  %s\n", shown(read_field(doc.EDID, field)).c_str());
    std::string unit = unit_of(doc.EDID, f);
    if (! unit.empty()) std::printf("  unit:   %s\n", unit.c_str());
@@ -568,10 +640,42 @@ int cmd_get() {
    document doc;
    open_document(doc, opts.args[1]);
    edi_grp_cl* group = find_group(doc.EDID, opts.args[2]).group;
+   if (is_refresh(opts.args[3])) {
+      std::printf("%s\n", hz_text(need_timing(doc.EDID, group).refresh).c_str());
+      return 0;
+   }
    field_value value = read_field(doc.EDID, find_field(group, opts.args[3]));
    if (! value.ok) fail(value.text);
    std::printf("%s\n", value.text.c_str());
    return 0;
+}
+
+//the pixel clock that gives a refresh rate with the current totals
+void write_refresh(document& doc, edi_grp_cl* group, const std::string& text) {
+   timing_state timing = need_timing(doc.EDID, group);
+   char* end = NULL;
+   double target = std::strtod(text.c_str(), &end);
+   if (text.empty() || (*end != 0) || !(target > 0.0)) {
+      fail(address(group) + " Refresh: " + text + " is not a rate in Hz");
+   }
+   edi_dynfld_t* field = group->FieldsAr.Item(timing.layout.fields[TIMING_PIXCLK]);
+   double maximum = (timing.layout.clock_max > 0.0) ? timing.layout.clock_max
+                                                    : field->field.maxv;
+   double clock = edid_timing_clock_for(timing.layout, target, timing.htotal, timing.vtotal);
+   if (clock > maximum) {
+      fail(address(group) + " Refresh: " + text + " Hz needs a pixel clock above the "
+           "largest this timing can hold");
+   }
+   field_value before = read_field(doc.EDID, field);
+   u32_t value = static_cast<u32_t>(clock);
+   wxc_String unused;
+   rcode result = (doc.EDID.*field->field.handlerfn)(OP_WRINT, unused, value, field);
+   if (! RCD_IS_OK(result)) fail(address(group) + " Refresh: " + rcode_text(result));
+   timing_state after = need_timing(doc.EDID, group);
+   std::fprintf(report_stream(), "%s Refresh: %s -> %s Hz (Pixel clock: %s -> %s)\n",
+                address(group).c_str(), hz_text(timing.refresh).c_str(),
+                hz_text(after.refresh).c_str(), before.text.c_str(),
+                read_field(doc.EDID, field).text.c_str());
 }
 
 //write one field the way the editor does, rebuilding the group when its
@@ -579,9 +683,13 @@ int cmd_get() {
 void write_field(document& doc, const std::string& group_spec, const std::string& field_spec,
                  const std::string& text) {
    edi_grp_cl* group = find_group(doc.EDID, group_spec).group;
+   if (is_refresh(field_spec)) {
+      write_refresh(doc, group, text);
+      return;
+   }
    edi_dynfld_t* field = find_field(group, field_spec);
    const edi_field_t& f = field->field;
-   std::string where = address(group) + " " + f.name;
+   std::string where = address(group) + " " + edid_field_display_name(f.name);
    if (((f.flags & F_RD) != 0) && ! opts.edit_read_only) {
       fail(where + " is derived from other data; add --edit-read-only to change it");
    }
@@ -651,11 +759,14 @@ int cmd_set() {
    open_document(doc, opts.args[1]);
    output_path(doc.path);
    for (size_t idx=3; idx<opts.args.size(); idx++) {
+      size_t equals = opts.args[idx].find('=');
+      if ((equals == std::string::npos) || (equals == 0)) {
+         usage_error(opts.args[idx] + " is not FIELD=VALUE");
+      }
+   }
+   for (size_t idx=3; idx<opts.args.size(); idx++) {
       const std::string& assignment = opts.args[idx];
       size_t equals = assignment.find('=');
-      if ((equals == std::string::npos) || (equals == 0)) {
-         usage_error(assignment + " is not FIELD=VALUE");
-      }
       write_field(doc, opts.args[2], assignment.substr(0, equals),
                   assignment.substr(equals + 1));
    }

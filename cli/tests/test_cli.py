@@ -50,9 +50,14 @@ def reading():
     out, _ = run("groups", cea)
     assert "0x036  DTD" in out and "Block 1: CTA-861" in out
     out, _ = run("fields", cea, "DTD:1")
-    assert "#1   Pixel clock" in out
+    assert "#1   Pixel clock" in out and "#2   Horizontal active" in out
+    assert "Refresh" in out and "derived: setting it changes the pixel clock" in out
     out, _ = run("get", cea, "0x036", "h-active-pix")
     assert out.strip() == "640"
+    out, _ = run("get", cea, "0x036", "Horizontal active")
+    assert out.strip() == "640"
+    out, _ = run("describe", cea, "0x036", "horizontal-active")
+    assert out.startswith("DTD@0x036 Horizontal active (H-Active pix)")
     out, _ = run("describe", cea, "0x05A", "desc_type")
     assert "Named values:" in out and "MND" in out
     out, _ = run("report", cea)
@@ -64,7 +69,7 @@ def reading():
 def set_and_diff():
     target = work / "set.bin"
     out, _ = run("set", cea, "DTD:1", "pixelclock=25.20", "interlace=on", "-o", str(target))
-    assert "Pixel clock: 25.18 -> 25.20" in out and "interlace: 0 -> 1" in out
+    assert "Pixel clock: 25.18 -> 25.20" in out and "Interlaced: 0 -> 1" in out
     assert run("get", str(target), "DTD:1", "interlace")[0].strip() == "1"
     assert checksums_valid(target)
     out, _ = run("diff", cea, str(target), status=1)
@@ -75,8 +80,28 @@ def set_and_diff():
     assert same.read_bytes() == Path(cea).read_bytes()
 
 
+def refresh():
+    rate = float(run("get", cea, "DTD:1", "refresh")[0])
+    target = work / "refresh.bin"
+    out, _ = run("set", cea, "DTD:1", "refresh=75", "-o", str(target))
+    assert "Refresh: " + f"{rate:.2f}" + " -> 75.00 Hz" in out, out
+    assert abs(float(run("get", str(target), "DTD:1", "refresh")[0]) - 75) < 0.1
+    # the blanking stays; only the pixel clock changes
+    out, _ = run("diff", cea, str(target), status=1)
+    assert "Pixel clock:" in out and out.count(" -> ") == 1, out
+    _, err = run("set", cea, "MND", "refresh=60", "-o", str(target), status=1)
+    assert "not a detailed timing" in err
+    _, err = run("set", cea, "DTD:1", "refresh=fast", "-o", str(target), status=1)
+    assert "is not a rate in Hz" in err
+    before = run("get", displayid, "DID-T1:1", "refresh")[0].strip()
+    out, _ = run("set", displayid, "DID-T1:1", "refresh=144", "-o", str(target))
+    assert f"Refresh: {before} -> 144.00 Hz" in out, out
+
+
 def refused_writes():
     target = work / "refused.bin"
+    _, err = run("set", cea, "DTD:1", "refresh=60", "oops", "-o", str(target), status=2)
+    assert "oops is not FIELD=VALUE" in err and not target.exists()
     _, err = run("set", cea, "CHD", "#2=5", "-o", str(target), status=1)
     assert "--edit-read-only" in err
     _, err = run("set", cea, "DTD:1", "hactivepix=99999", "-o", str(target), status=1)
@@ -142,7 +167,8 @@ def bytes_and_files():
 
 
 for name, test in [("help and usage errors", help_and_usage), ("reading", reading),
-                   ("set and diff", set_and_diff), ("refused writes", refused_writes),
+                   ("set and diff", set_and_diff), ("refresh rate", refresh),
+                   ("refused writes", refused_writes),
                    ("group rebuild", rebuild), ("group structure", structure),
                    ("conversion and files", bytes_and_files)]:
     check(name, test)
