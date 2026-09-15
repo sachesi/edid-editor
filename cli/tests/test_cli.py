@@ -64,6 +64,9 @@ def reading():
     assert "EDID block [1]: CTA-861 extension" in out
     _, err = run("get", cea, "DTD", "#1", status=1)
     assert "matches several groups: DTD@0x036 DTD@0x090" in err
+    # names that look like the refresh rate of a timing, or like name:N
+    assert run("get", cea, "STI:1", "refresh-rate")[0].strip().isdigit()
+    assert run("get", cea, "CHD", "ycbcr-4:2:2")[0].strip() == "0"
 
 
 def set_and_diff():

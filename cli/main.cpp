@@ -361,21 +361,28 @@ edi_dynfld_t* find_field(edi_grp_cl* group, const std::string& spec) {
       }
       return group->FieldsAr.Item(index - 1);
    }
+   auto named = [&](const std::string& name) {
+      std::vector<edi_dynfld_t*> found;
+      for (u32_t idx=0; idx<count; idx++) {
+         edi_dynfld_t* field = group->FieldsAr.Item(idx);
+         if ((field->field.name != NULL) &&
+             ((name_key(field->field.name) == name_key(name.c_str())) ||
+              (name_key(edid_field_display_name(field->field.name).c_str()) ==
+               name_key(name.c_str())))) {
+            found.push_back(field);
+         }
+      }
+      return found;
+   };
+   //a name may itself end in :N, as "YCbCr 4:2:2" does
    std::string name = spec;
    u32_t nth = 0;
+   std::vector<edi_dynfld_t*> matches = named(name);
    size_t colon = spec.rfind(':');
-   if ((colon != std::string::npos) && parse_number(spec.substr(colon + 1), 10, nth)) {
+   if (matches.empty() && (colon != std::string::npos) &&
+       parse_number(spec.substr(colon + 1), 10, nth)) {
       name = spec.substr(0, colon);
-   }
-   std::vector<edi_dynfld_t*> matches;
-   for (u32_t idx=0; idx<count; idx++) {
-      edi_dynfld_t* field = group->FieldsAr.Item(idx);
-      if ((field->field.name != NULL) &&
-          ((name_key(field->field.name) == name_key(name.c_str())) ||
-           (name_key(edid_field_display_name(field->field.name).c_str()) ==
-            name_key(name.c_str())))) {
-         matches.push_back(field);
-      }
+      matches = named(name);
    }
    if (matches.empty()) fail("the group has no field " + name + "; see the fields command");
    if (nth > 0) {
@@ -437,9 +444,18 @@ std::string unit_of(EDID_cl& EDID, const edi_field_t& f) {
 //The refresh rate of a detailed timing is a field of the command line only:
 //it follows from the pixel clock and the totals, and setting it changes the
 //pixel clock, as the timing editor does.
-bool is_refresh(const std::string& spec) {
+bool is_refresh(edi_grp_cl* group, const std::string& spec) {
    std::string key = name_key(spec.c_str());
-   return (key == "refresh") || (key == "refreshrate") || (key == "verticalrefresh");
+   if ((key != "refresh") && (key != "refreshrate") && (key != "verticalrefresh")) return false;
+   //a field of the name, as standard timings have, comes first
+   for (u32_t idx=0; idx<group->FieldsAr.GetCount(); idx++) {
+      const char* name = group->FieldsAr.Item(idx)->field.name;
+      if ((name != NULL) && ((name_key(name) == key) ||
+                             (name_key(edid_field_display_name(name).c_str()) == key))) {
+         return false;
+      }
+   }
+   return true;
 }
 
 struct timing_state {
@@ -583,7 +599,7 @@ int cmd_describe() {
    document doc;
    open_document(doc, opts.args[1]);
    edi_grp_cl* group = find_group(doc.EDID, opts.args[2]).group;
-   if (is_refresh(opts.args[3])) {
+   if (is_refresh(group, opts.args[3])) {
       timing_state timing = need_timing(doc.EDID, group);
       std::printf("%s Refresh\n", address(group).c_str());
       std::printf("  value:  %s\n", hz_text(timing.refresh).c_str());
@@ -640,7 +656,7 @@ int cmd_get() {
    document doc;
    open_document(doc, opts.args[1]);
    edi_grp_cl* group = find_group(doc.EDID, opts.args[2]).group;
-   if (is_refresh(opts.args[3])) {
+   if (is_refresh(group, opts.args[3])) {
       std::printf("%s\n", hz_text(need_timing(doc.EDID, group).refresh).c_str());
       return 0;
    }
@@ -683,7 +699,7 @@ void write_refresh(document& doc, edi_grp_cl* group, const std::string& text) {
 void write_field(document& doc, const std::string& group_spec, const std::string& field_spec,
                  const std::string& text) {
    edi_grp_cl* group = find_group(doc.EDID, group_spec).group;
-   if (is_refresh(field_spec)) {
+   if (is_refresh(group, field_spec)) {
       write_refresh(doc, group, text);
       return;
    }
