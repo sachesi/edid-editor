@@ -29,6 +29,26 @@
     <binary>edid-editor-cli</binary>
   </provides>
   <releases>
+    <release version="0.3.0" date="2026-09-15">
+      <description>
+        <p>
+          Adds edid-editor-cli, which reads, edits, compares and converts EDID
+          data from a terminal with the same code as the editor. It sets
+          fields by their plain names, sets a refresh rate through the pixel
+          clock, adds, duplicates, moves and deletes data blocks, prints JSON,
+          and comes with a manual page and completions for bash, zsh and fish.
+          It builds without GTK.
+        </p>
+        <p>
+          The timing diagram labels its sync, porch and total sizes, and typing
+          a refresh rate sets the pixel clock. An EDID log and notes on the
+          Overview replace the details panel, and every page fits from phone to
+          desktop widths. Decodes DisplayID Adaptive Sync descriptors and names
+          the signal formats of the supported features. The application can now
+          be translated.
+        </p>
+      </description>
+    </release>
     <release version="0.2.0" date="2026-09-14">
       <description>
         <p>
