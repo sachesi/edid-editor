@@ -85,6 +85,21 @@ as the editor does. `add` takes `audio-lpcm`, `audio-extended`, `video` or `timi
 CTA-861 block and `displayid` for a DisplayID block, and puts the group where the editor
 would.
 
+## The preferred timing
+
+Systems take the first detailed timing of the base block as the display's preferred
+mode, and a DisplayID timing can also be flagged preferred. `prefer` makes any detailed
+timing the preferred one without losing another:
+
+    $ edid-editor-cli prefer monitor.bin DTD:4 -o new.bin
+    2560x1440 @ 143.98 Hz is now the first detailed timing, the one every system prefers;
+    2560x1440 @ 59.95 Hz took its place.
+
+The timing and the first one change places, converted between their formats when one is
+a DisplayID timing, and DisplayID timings lose a preferred flag that would compete. The
+first detailed timing holds a pixel clock of up to 655.35 MHz; a faster DisplayID timing
+is flagged preferred there instead, and `prefer` says which mode Linux then lists first.
+
 `fix-checksums` and `convert` work on the bytes alone, so they also serve data the
 editor refuses: the first recomputes every block's checksum, the second writes the same
 bytes as binary or text.

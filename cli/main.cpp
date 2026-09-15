@@ -49,6 +49,8 @@ const char* const usage_text =
 "  duplicate FILE GROUP          copy a group after itself\n"
 "  delete FILE GROUP             remove a group\n"
 "  move FILE GROUP up|down       move a group within its block\n"
+"  prefer FILE GROUP             make a detailed timing the preferred one, keeping\n"
+"                                every other timing\n"
 "  fix-checksums FILE            recompute the checksum of every block\n"
 "  convert FILE                  the same bytes as binary or hexadecimal text\n"
 "\n"
@@ -1030,6 +1032,21 @@ int cmd_move() {
    return 0;
 }
 
+int cmd_prefer() {
+   need_args(3, "prefer FILE GROUP");
+   document doc;
+   open_document(doc, opts.args[1]);
+   output_path(doc.path);
+   edi_grp_cl* group = find_group(doc.EDID, opts.args[2]).group;
+   std::vector<edid_data_change> changes;
+   std::string message;
+   if (! edid_plan_preferred(doc.EDID, group, changes, message)) fail(address(group) + ": " + message);
+   edid_apply_changes(changes, true);
+   std::fprintf(report_stream(), "%s\n", message.c_str());
+   save_document(doc);
+   return 0;
+}
+
 int cmd_diff() {
    need_args(3, "diff FILE1 FILE2");
    document one;
@@ -1145,6 +1162,7 @@ const struct command {
    {"duplicate", cmd_duplicate, "FG", "copy a group after itself"},
    {"delete", cmd_delete, "FG", "remove a group"},
    {"move", cmd_move, "FGM", "move a group within its block"},
+   {"prefer", cmd_prefer, "FG", "make a detailed timing the preferred one"},
    {"fix-checksums", cmd_fix_checksums, "F", "recompute the checksum of every block"},
    {"convert", cmd_convert, "F", "the same bytes as binary or hexadecimal text"},
    {"complete", cmd_complete, "", ""},

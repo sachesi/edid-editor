@@ -115,6 +115,15 @@ Removes a group.
 .BI move " file group " up | down
 Moves a group within its block.
 .TP
+.BI prefer " file group"
+Makes a detailed timing the preferred one.
+It changes places with the first detailed timing of the base block, which every system
+prefers, converted between formats when it is a DisplayID timing, and DisplayID timings
+lose a preferred flag that would compete.
+The first detailed timing holds a pixel clock of up to 655.35 MHz; a faster DisplayID
+timing is flagged preferred instead.
+No other timing is lost.
+.TP
 .BI fix\-checksums " file"
 Recomputes the checksum of every block.
 .TP

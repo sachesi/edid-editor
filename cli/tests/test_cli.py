@@ -170,6 +170,58 @@ def bytes_and_files():
     assert run("get", str(in_place), "DTD:1", "interlace")[0].strip() == "1"
 
 
+def preferred():
+    # a timing the first place can't hold is flagged in DisplayID instead
+    target = work / "prefer.bin"
+    out, _ = run("prefer", displayid, "DID-T1:2", "-o", str(target))
+    assert "above the 655.35 MHz" in out and "flagged preferred in DisplayID" in out, out
+    assert run("get", str(target), "DID-T1:2", "preferred")[0].strip() == "1"
+    assert run("get", str(target), "DID-T1:1", "preferred")[0].strip() == "0"
+    assert "0x036  DTD       640x480" in run("groups", str(target))[0]
+    assert checksums_valid(target)
+
+    # one that fits changes places with the first timing, in its format
+    slower = work / "slower.bin"
+    # with polarities unlike the first timing's, so they must be carried over
+    hsync = int(run("get", displayid, "DTD:1", "horizontal-sync-type")[0])
+    vsync = int(run("get", displayid, "DTD:1", "vertical-sync-type")[0])
+    run("set", displayid, "DID-T1:1", "refresh=60", f"horizontal-sync-positive={1 - hsync}",
+        f"vertical-sync-positive={1 - vsync}", "-o", str(slower))
+    out, _ = run("prefer", str(slower), "DID-T1:1", "-o", str(target))
+    assert "is now the first detailed timing" in out, out
+    groups = run("groups", str(target))[0]
+    assert "0x036  DTD       2560x1440 @ 60.00Hz" in groups, groups
+    assert "0x108    DID-T1    640x480 @ 59.95 Hz" in groups, groups
+    for mine, theirs in (("horizontal-front-porch", "horizontal-sync-offset"),
+                         ("vertical-front-porch", "vertical-sync-offset"),
+                         ("vertical-sync-width", "vertical-sync-width"),
+                         ("horizontal-sync-positive", "horizontal-sync-type"),
+                         ("vertical-sync-positive", "vertical-sync-type")):
+        assert run("get", str(slower), "DID-T1:1", mine)[0] == \
+            run("get", str(target), "DTD:1", theirs)[0], mine
+    # DisplayID keeps a preferred timing that doesn't compete with the choice
+    assert run("get", str(target), "DID-T1:1", "preferred")[0].strip() == "1"
+    assert run("get", str(target), "DID-T1:2", "preferred")[0].strip() == "0"
+
+    # two detailed timings trade their bytes, and trading back restores the file
+    raw = bytearray(Path(cea).read_bytes())
+    raw[0x90 + 12] ^= 0x01                  # tell the CTA-861 timing apart
+    raw[255] = (-sum(raw[128:255])) & 0xFF
+    source = work / "two-dtds.bin"
+    source.write_bytes(bytes(raw))
+    run("prefer", str(source), "DTD@0x090", "-o", str(target))
+    swapped = target.read_bytes()
+    assert swapped[0x36:0x48] == bytes(raw[0x90:0xA2])
+    assert swapped[0x90:0xA2] == bytes(raw[0x36:0x48])
+    back = work / "back.bin"
+    run("prefer", str(target), "DTD@0x090", "-o", str(back))
+    assert back.read_bytes() == bytes(raw)
+    out, _ = run("prefer", cea, "DTD:1", "-o", str(target))
+    assert "is the first detailed timing" in out
+    _, err = run("prefer", cea, "MND", "-o", str(target), status=1)
+    assert "only a detailed timing can be preferred" in err
+
+
 def binary_bits():
     target = work / "bits.bin"
     out, _ = run("set", cea, "DTD:1", "sync-type=2", "-o", str(target))
@@ -235,7 +287,7 @@ for name, test in [("help and usage errors", help_and_usage), ("reading", readin
                    ("set and diff", set_and_diff), ("refresh rate", refresh),
                    ("refused writes", refused_writes),
                    ("group rebuild", rebuild), ("group structure", structure),
-                   ("conversion and files", bytes_and_files),
+                   ("conversion and files", bytes_and_files), ("preferred timing", preferred),
                    ("binary bit fields", binary_bits), ("JSON", json_output),
                    ("shell completion", completion)]:
     check(name, test)

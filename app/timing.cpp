@@ -604,6 +604,10 @@ bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
    timing->updating = true;
    timing->pgrp = pgrp;
    for (int idx = 0; idx < TIMING_FIELD_COUNT; idx++) {
+      if (timing->spins[idx] == NULL) {
+         timing->fields[idx] = NULL;
+         continue;
+      }
       bool available = field_indices[idx] >= 0;
       if ((idx == TIMING_HBORDER) || (idx == TIMING_VBORDER)) {
          for (GtkWidget* widget : timing->row_widgets[idx]) {
