@@ -24,6 +24,10 @@ An opened EDID starts on the Overview: the monitor name, manufacturer and date, 
 input, screen size, timings, refresh ranges, HDR and color support, audio formats and
 extension blocks. It is read from the groups, so it follows unsaved edits.
 
+Under Modes, the Overview lists every detailed timing with its place, starring the
+preferred ones and noting the one Linux uses by default. Selecting a mode opens it, and
+its star makes it the preferred mode.
+
 Compare with File and Compare with Display list the fields whose values differ between
 the current EDID and another one, by block and group, and the groups only one of them
 has. Groups are paired by their code in order; checksums are left out.
@@ -43,12 +47,31 @@ such as a data block tag or length, rebuilds the group from its data; a length t
 longer fits is refused.
 
 Detailed timings open in a visual editor with the pixel clock in MHz, durations in µs,
-and the resulting line and refresh rates. Its diagram draws the whole frame to scale:
-the active image, and around it the blanking, labelled with the size of its sync, back
-porch and sync offset. Timings of the same resolution can look different there because
+and the resulting line and refresh rates, along with the image size, interlacing and
+sync polarities, which the ModeLine includes. Its diagram draws the whole frame to
+scale: the active image, and around it the blanking, labelled with the size of its
+sync, back porch and sync offset. Timings of the same resolution can look different there because
 their blanking differs. Typing a refresh rate sets the pixel clock that gives it with
 the current blanking; the rate shown afterwards is the one the clock reaches in steps
 of its unit.
+
+## The preferred mode
+
+Every system takes the first detailed timing of the base block as the display's
+preferred mode; a DisplayID timing can also be flagged preferred. Make Preferred, in the
+context menu of a timing, or the star on its Timing page or on the Overview, makes a
+timing the preferred one without losing any other: the timing and the first one change
+places, converted between their formats, and competing DisplayID flags are cleared. The
+first detailed timing holds a pixel clock of up to 655.35 MHz, so a faster DisplayID
+timing is flagged preferred instead, and a dialog says which mode Linux then uses. Undo
+takes the whole change back.
+
+To add a mode, such as 150 Hz next to 144 Hz, choose Add → Detailed Timing with a group
+of a CTA-861 block selected. The new timing is a copy of the selected timing, or of the
+first detailed timing when another group is selected, and typing the new rate in
+Vertical refresh sets its pixel clock.
+
+## Changing groups
 
 CTA-861 and DisplayID data blocks can be added, duplicated, moved and deleted from the
 sidebar, its context menu or the keyboard. The audio templates start with a valid LPCM

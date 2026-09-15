@@ -318,8 +318,12 @@ size_t edid_default_mode(const std::vector<edid_mode>& modes) {
 }
 
 bool edid_plan_preferred(EDID_cl& EDID, edi_grp_cl* timing,
-                         std::vector<edid_data_change>& changes, std::string& message) {
+                         std::vector<edid_data_change>& changes, std::string& message,
+                         edid_prefer_way* way) {
    changes.clear();
+   edid_prefer_way unused;
+   if (way == NULL) way = &unused;
+   *way = PREFER_ALREADY_FIRST;
    edid_timing_layout layout;
    if ((timing == NULL) || ! edid_timing_layout_of(timing, layout)) {
       message = "only a detailed timing can be preferred";
@@ -360,6 +364,7 @@ bool edid_plan_preferred(EDID_cl& EDID, edi_grp_cl* timing,
          }
       }
       if (swapped) {
+         *way = PREFER_SWAPPED;
          message = name + " is now the first detailed timing, the one every system prefers; " +
                    first_name + " took its place.";
       } else if (layout.flags[TIMING_PREFERRED] >= 0) {
@@ -372,6 +377,7 @@ bool edid_plan_preferred(EDID_cl& EDID, edi_grp_cl* timing,
          }
          write_field(EDID, timing->FieldsAr.Item(layout.flags[TIMING_PREFERRED]), 1);
          flagged = true;
+         *way = PREFER_FLAGGED;
          message = name + ": " + reason + ", so it is flagged preferred in DisplayID. " +
                    ((first != NULL) ? first_name + " stays the first detailed timing, which "
                                       "systems that read only the base block prefer."

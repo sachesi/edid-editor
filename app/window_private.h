@@ -47,6 +47,7 @@ enum history_kind {
    HISTORY_REMOVE, //group removed from index of array
    HISTORY_MOVE,   //group moved from index one step up or down
    HISTORY_REPLACE,//group rebuilt after a field changed its type or layout
+   HISTORY_DATA,   //a group's data replaced: before_text and after_text hold the bytes
 };
 
 //Structural entries own their group while it is out of the document: an
@@ -124,6 +125,7 @@ struct wxedid_wnd {
    GSimpleAction*      compare_display_action;
    GSimpleAction*      ignore_errors_action;
    GSimpleAction*      ignore_read_only_action;
+   GSimpleAction*      make_preferred_action;
    GtkPopoverMenu*     group_menu;
    edi_grp_cl*         pending_delete;
    edi_grp_cl*         last_selected;  //restored when a search shows it again
@@ -171,8 +173,11 @@ struct wxedid_timing {
    GtkSpinButton* spins[TIMING_FIELD_COUNT];
    GtkWidget*    row_widgets[TIMING_FIELD_COUNT][4];
    GtkLabel*     derived[TIMING_FIELD_COUNT];
-   GtkLabel*     clock_unit;
-   GtkLabel*     clock_mhz;
+   GtkLabel*     clock_stored;   //the pixel clock as the field stores it
+   GtkSwitch*    flag_switches[TIMING_FLAG_COUNT];
+   GtkWidget*    flag_rows[TIMING_FLAG_COUNT][2];
+   GtkWidget*    signal_card;
+   GtkWidget*    star;           //Make Preferred, starred when preferred
    GtkSpinButton* refresh;
    GtkLabel*     htotal;
    GtkLabel*     hfreq;
@@ -311,6 +316,8 @@ gboolean wnd_on_tree_key(GtkEventControllerKey*, guint keyval,
                          guint /*keycode*/, GdkModifierType state,
                          gpointer user_data);
 void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group = NULL);
+void wnd_make_preferred(wxedid_wnd* wnd, edi_grp_cl* timing);
+void wnd_on_make_preferred(GSimpleAction*, GVariant*, gpointer user_data);
 
 // history.cpp
 void wnd_update_history_state(wxedid_wnd* wnd);
@@ -327,6 +334,8 @@ void wnd_request_refresh(wxedid_wnd* wnd, edi_grp_cl* group,
                          edi_dynfld_t* field, bool type_changed,
                          bool now);
 void wnd_schedule_refresh(wxedid_wnd* wnd);
+void wnd_apply_changes(wxedid_wnd* wnd, const std::vector<edid_data_change>& changes,
+                       edi_grp_cl* selection);
 void wnd_on_undo_action(GSimpleAction*, GVariant*, gpointer user_data);
 void wnd_on_redo_action(GSimpleAction*, GVariant*, gpointer user_data);
 

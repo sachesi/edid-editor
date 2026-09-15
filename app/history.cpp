@@ -91,6 +91,11 @@ static edi_grp_cl* history_apply_structure(const wxedid_history_entry& entry,
                                            bool redo, bool* ok) {
    GroupAr_cl* array = entry.array;
    *ok = true;
+   if (entry.kind == HISTORY_DATA) {
+      const std::string& data = redo ? entry.after_text : entry.before_text;
+      memcpy(entry.group->getInstPtr(), data.data(), data.size());
+      return entry.group;
+   }
    if (entry.kind == HISTORY_REPLACE) {
       edi_grp_cl* current = redo ? entry.group : entry.replacement;
       edi_grp_cl* next = redo ? entry.replacement : entry.group;
@@ -174,14 +179,38 @@ static bool wnd_apply_history_step(wxedid_wnd* wnd, bool redo) {
 static void wnd_apply_history(wxedid_wnd* wnd, bool redo) {
    wnd_flush_refresh(wnd);
    if (! wnd_apply_history_step(wnd, redo)) return;
-   //a rebuild is undone and redone together with the field write behind it
+   //joined entries, as a rebuild and the field write behind it, go together
    if (redo) {
-      size_t next = wnd->history_position;
-      if ((next < wnd->history.size()) && wnd->history[next].joined)
-         wnd_apply_history_step(wnd, true);
-   } else if (wnd->history[wnd->history_position].joined) {
-      wnd_apply_history_step(wnd, false);
+      while ((wnd->history_position < wnd->history.size()) &&
+             wnd->history[wnd->history_position].joined &&
+             wnd_apply_history_step(wnd, true)) {}
+   } else {
+      while ((wnd->history_position < wnd->history.size()) &&
+             wnd->history[wnd->history_position].joined &&
+             wnd_apply_history_step(wnd, false)) {}
    }
+}
+
+//changes to the data of several groups, undone and redone as one
+void wnd_apply_changes(wxedid_wnd* wnd, const std::vector<edid_data_change>& changes,
+                       edi_grp_cl* selection) {
+   if (changes.empty()) return;
+   edid_apply_changes(changes, true);
+   for (size_t idx=0; idx<changes.size(); idx++) {
+      wxedid_history_entry entry = {};
+      entry.kind = HISTORY_DATA;
+      entry.group = changes[idx].group;
+      entry.before_text.assign(changes[idx].before.begin(), changes[idx].before.end());
+      entry.after_text.assign(changes[idx].after.begin(), changes[idx].after.end());
+      entry.joined = idx > 0;
+      wnd_push_history(wnd, entry);
+   }
+   bool overview = wnd->overview_shown;
+   wnd->invalid_fields = 0;
+   wnd_rebuild_tree(wnd, selection);
+   if (overview) wnd_show_overview(wnd);
+   wnd_update_history_state(wnd);
+   wnd_update_document_ui(wnd);
 }
 
 //------------

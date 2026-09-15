@@ -132,6 +132,15 @@ def structure():
     _, err = run("add", cea, "1", "displayid", "-o", str(added), status=1)
     assert "goes into a DisplayID block" in err
 
+    # a new timing starts as a copy of the first, or of the timing given
+    run("add", cea, "1", "timing", "-o", str(added))
+    data = added.read_bytes()
+    assert data[0x90:0xA2] == data[0x36:0x48], "the new timing is not the first one"
+    run("add", cea, "1", "timing", "DTD@0x090", "-o", str(added))
+    assert added.read_bytes()[0x90:0xA2] == Path(cea).read_bytes()[0x90:0xA2]
+    _, err = run("add", displayid, "1", "timing", "DID-T1:2", "-o", str(added), status=1)
+    assert "doesn't fit a detailed timing of a CTA-861 block" in err
+
     before = run("groups", displayid)[0].count("DID-DB")
     target = work / "displayid.bin"
     run("add", displayid, "2", "displayid", "-o", str(target))

@@ -9,8 +9,22 @@
 
 //------------
 // visual editor for EDID Detailed Timing Descriptors
+//the pixel clock is edited in MHz; its field holds units of the layout
+static double timing_mhz_per_unit(const wxedid_timing* timing) {
+   return timing->pixel_hz_factor / 1000000.0;
+}
+
 static u32_t timing_value(const wxedid_timing* timing, timing_field field) {
+   if (field == TIMING_PIXCLK) {
+      return static_cast<u32_t>(std::lround(gtk_spin_button_get_value(timing->spins[field]) /
+                                            timing_mhz_per_unit(timing)));
+   }
    return static_cast<u32_t>(gtk_spin_button_get_value_as_int(timing->spins[field]));
+}
+
+static void timing_set_value(wxedid_timing* timing, timing_field field, double value) {
+   gtk_spin_button_set_value(timing->spins[field], (field == TIMING_PIXCLK)
+                             ? value * timing_mhz_per_unit(timing) : value);
 }
 
 static void timing_set_text(GtkLabel* label, const char* format, double value) {
@@ -50,8 +64,10 @@ static void timing_update_outputs(wxedid_timing* timing) {
 
    gtk_spin_button_set_value(timing->refresh, std::round(refresh * 100.0) / 100.0);
    char text[64];
-   snprintf(text, sizeof(text), "%.3f MHz", pixclk / 1000000.0);
-   gtk_label_set_text(timing->clock_mhz, text);
+   snprintf(text, sizeof(text), (timing->pixel_hz_factor == 10000.0) ? _("stored as %u × 10 kHz")
+                                                                   : _("stored as %u kHz"),
+            timing_value(timing, TIMING_PIXCLK));
+   gtk_label_set_text(timing->clock_stored, text);
    snprintf(text, sizeof(text), "%u px  ·  %.3f µs", htotal,
             htotal * pixel_us);
    gtk_label_set_text(timing->htotal, text);
@@ -65,12 +81,22 @@ static void timing_update_outputs(wxedid_timing* timing) {
    const u32_t hsync_end = hsync_start + timing_value(timing, TIMING_HWIDTH);
    const u32_t vsync_start = vactive + timing_value(timing, TIMING_VOFFSET);
    const u32_t vsync_end = vsync_start + timing_value(timing, TIMING_VWIDTH);
+   //the sync polarities and interlacing of the timing follow the X11 names
+   std::string flags;
+   const char* const names[TIMING_FLAG_COUNT][2] = {
+      {"", " Interlace"}, {" -HSync", " +HSync"}, {" -VSync", " +VSync"}, {"", ""},
+   };
+   for (int flag=0; flag<TIMING_FLAG_COUNT; flag++) {
+      if ((timing->flag_switches[flag] == NULL) || (timing->layout.flags[flag] < 0) ||
+          ! gtk_widget_get_visible(timing->flag_rows[flag][1])) continue;
+      flags += names[flag][gtk_switch_get_active(timing->flag_switches[flag]) ? 1 : 0];
+   }
    char modeline[256];
    snprintf(modeline, sizeof(modeline),
-            "\"%ux%u@%.2f\" %.2f  %u %u %u %u  %u %u %u %u",
+            "\"%ux%u@%.2f\" %.2f  %u %u %u %u  %u %u %u %u%s",
             hactive, vactive, refresh, pixclk / 1000000.0,
             hactive, hsync_start, hsync_end, htotal,
-            vactive, vsync_start, vsync_end, vtotal);
+            vactive, vsync_start, vsync_end, vtotal, flags.c_str());
    gtk_label_set_text(timing->modeline, modeline);
    gtk_widget_queue_draw(timing->drawing);
 }
@@ -270,7 +296,7 @@ static void timing_on_changed(GtkSpinButton* spin, gpointer user_data) {
       const u32_t offset = timing_value(timing, TIMING_VOFFSET);
       value = std::min(value, (blank > offset) ? blank - offset : 0U);
    }
-   gtk_spin_button_set_value(spin, value);
+   timing_set_value(timing, changed, value);
 
    edi_dynfld_t* field = timing->fields[changed];
    wxc_String before_text;
@@ -325,12 +351,44 @@ static void timing_on_refresh_changed(GtkSpinButton* spin, gpointer user_data) {
    //the rate is shown rounded, so leaving the field must not move the clock
    if (std::fabs(target - current) < 0.005) return;
 
-   gtk_spin_button_set_value(timing->spins[TIMING_PIXCLK],
-                             edid_timing_clock_for(timing->layout, target, htotal, vtotal));
+   timing_set_value(timing, TIMING_PIXCLK,
+                    edid_timing_clock_for(timing->layout, target, htotal, vtotal));
    //show the rate the clock reaches, also when it did not change
    timing->updating = true;
    timing_update_outputs(timing);
    timing->updating = false;
+}
+
+//a single bit of the timing, written as a field edit
+static void timing_on_flag_changed(GtkSwitch* toggle, GParamSpec*, gpointer user_data) {
+   wxedid_timing* timing = static_cast<wxedid_timing*>(user_data);
+   if (timing->updating || (timing->pgrp == NULL)) return;
+   int flag = GPOINTER_TO_INT(g_object_get_data(G_OBJECT(toggle), "timing-flag"));
+   if (timing->layout.flags[flag] < 0) return;
+   edi_dynfld_t* field = timing->pgrp->FieldsAr.Item(timing->layout.flags[flag]);
+   EDID_cl& EDID = timing->wnd->doc->EDID;
+   wxc_String before_text;
+   u32_t before_value = 0;
+   (EDID.*field->field.handlerfn)(OP_READ, before_text, before_value, field);
+   wxc_String sval;
+   u32_t value = gtk_switch_get_active(toggle) ? 1 : 0;
+   rcode ret = (EDID.*field->field.handlerfn)(OP_WRINT, sval, value, field);
+   if (! RCD_IS_OK(ret)) {
+      timing->wnd->doc->GLog.PrintRcode(ret);
+      return;
+   }
+   wxc_String after_text;
+   u32_t after_value = 0;
+   (EDID.*field->field.handlerfn)(OP_READ, after_text, after_value, field);
+   wnd_record_history(timing->wnd, timing->pgrp, field, true,
+                      before_text, before_value, after_text, after_value);
+   timing->updating = true;
+   timing_update_outputs(timing);
+   timing->updating = false;
+   wnd_refresh_selected_tree_label(timing->wnd);
+   rows_reload(timing->wnd->fields, timing->pgrp, &EDID, timing->wnd);
+   wnd_refresh_raw_view(timing->wnd);
+   wnd_update_document_ui(timing->wnd);
 }
 
 static void timing_on_focus_enter(GtkEventControllerFocus* controller,
@@ -459,8 +517,8 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_widget_add_css_class(clock_title, "dim-label");
    gtk_box_append(GTK_BOX(clock_box), clock_title);
    GtkWidget* clock_row = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
-   GtkAdjustment* clock_adj = gtk_adjustment_new(1, 1, 65535, 1, 100, 0);
-   GtkWidget* clock_spin = gtk_spin_button_new(clock_adj, 1, 0);
+   GtkAdjustment* clock_adj = gtk_adjustment_new(0.01, 0.01, 655.35, 0.01, 1, 0);
+   GtkWidget* clock_spin = gtk_spin_button_new(clock_adj, 1, 2);
    timing->spins[TIMING_PIXCLK] = GTK_SPIN_BUTTON(clock_spin);
    g_object_set_data(G_OBJECT(clock_spin), "timing-field",
                      GINT_TO_POINTER(TIMING_PIXCLK));
@@ -469,16 +527,16 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_accessible_update_property(GTK_ACCESSIBLE(clock_spin),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL, _("Pixel clock"), -1);
    gtk_box_append(GTK_BOX(clock_row), clock_spin);
-   timing->clock_unit = GTK_LABEL(gtk_label_new("×10 kHz"));
-   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_unit), "dim-label");
-   gtk_box_append(GTK_BOX(clock_row), GTK_WIDGET(timing->clock_unit));
+   GtkWidget* clock_unit = gtk_label_new("MHz");
+   gtk_widget_add_css_class(clock_unit, "dim-label");
+   gtk_box_append(GTK_BOX(clock_row), clock_unit);
    gtk_box_append(GTK_BOX(clock_box), clock_row);
-   timing->clock_mhz = GTK_LABEL(gtk_label_new(NULL));
-   gtk_label_set_xalign(timing->clock_mhz, 0.0);
-   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_mhz), "caption");
-   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_mhz), "dim-label");
-   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_mhz), "timing-derived");
-   gtk_box_append(GTK_BOX(clock_box), GTK_WIDGET(timing->clock_mhz));
+   timing->clock_stored = GTK_LABEL(gtk_label_new(NULL));
+   gtk_label_set_xalign(timing->clock_stored, 0.0);
+   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_stored), "caption");
+   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_stored), "dim-label");
+   gtk_widget_add_css_class(GTK_WIDGET(timing->clock_stored), "timing-derived");
+   gtk_box_append(GTK_BOX(clock_box), GTK_WIDGET(timing->clock_stored));
    gtk_box_append(GTK_BOX(summary), clock_box);
 
    GtkWidget* refresh_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
@@ -511,6 +569,16 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_box_append(GTK_BOX(refresh_row), refresh_unit);
    gtk_box_append(GTK_BOX(refresh_box), refresh_row);
    gtk_box_append(GTK_BOX(summary), refresh_box);
+
+   timing->star = gtk_button_new_from_icon_name("non-starred-symbolic");
+   gtk_widget_add_css_class(timing->star, "flat");
+   gtk_widget_add_css_class(timing->star, "circular");
+   gtk_widget_set_valign(timing->star, GTK_ALIGN_CENTER);
+   gtk_widget_set_hexpand(timing->star, TRUE);
+   gtk_widget_set_halign(timing->star, GTK_ALIGN_END);
+   gtk_widget_set_margin_end(timing->star, 12);
+   gtk_actionable_set_action_name(GTK_ACTIONABLE(timing->star), "win.make-preferred");
+   gtk_box_append(GTK_BOX(summary), timing->star);
    gtk_box_append(GTK_BOX(content), summary);
 
    timing->drawing = gtk_drawing_area_new();
@@ -533,8 +601,9 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    timing_add_edit_row(timing, horizontal, 2, TIMING_HBLANK, _("Blanking"), "px");
    timing_add_edit_row(timing, horizontal, 3, TIMING_HOFFSET, _("Sync offset"), "px");
    timing_add_edit_row(timing, horizontal, 4, TIMING_HWIDTH, _("Sync width"), "px");
-   timing_add_value_row(horizontal, 5, _("Total"), &timing->htotal);
-   timing_add_value_row(horizontal, 6, _("Frequency"), &timing->hfreq);
+   timing_add_edit_row(timing, horizontal, 5, TIMING_HSIZE, _("Image width"), "mm");
+   timing_add_value_row(horizontal, 6, _("Total"), &timing->htotal);
+   timing_add_value_row(horizontal, 7, _("Frequency"), &timing->hfreq);
    gtk_box_append(GTK_BOX(sections), horizontal_card);
 
    GtkGrid* vertical = NULL;
@@ -544,8 +613,33 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    timing_add_edit_row(timing, vertical, 2, TIMING_VBLANK, _("Blanking"), _("lines"));
    timing_add_edit_row(timing, vertical, 3, TIMING_VOFFSET, _("Sync offset"), _("lines"));
    timing_add_edit_row(timing, vertical, 4, TIMING_VWIDTH, _("Sync width"), _("lines"));
-   timing_add_value_row(vertical, 5, _("Total"), &timing->vtotal);
+   timing_add_edit_row(timing, vertical, 5, TIMING_VSIZE, _("Image height"), "mm");
+   timing_add_value_row(vertical, 6, _("Total"), &timing->vtotal);
    gtk_box_append(GTK_BOX(sections), vertical_card);
+
+   GtkGrid* signal = NULL;
+   timing->signal_card = timing_section(_("Signal"), &signal);
+   static const char* const flag_titles[TIMING_FLAG_COUNT] = {
+      N_("Interlaced"), N_("Positive horizontal sync"), N_("Positive vertical sync"), NULL,
+   };
+   for (int flag=0; flag<TIMING_FLAG_COUNT; flag++) {
+      if (flag_titles[flag] == NULL) continue;
+      GtkWidget* label = gtk_label_new(_(flag_titles[flag]));
+      gtk_label_set_xalign(GTK_LABEL(label), 0.0);
+      gtk_widget_set_hexpand(label, TRUE);
+      gtk_grid_attach(signal, label, 0, flag, 1, 1);
+      GtkWidget* toggle = gtk_switch_new();
+      gtk_widget_set_valign(toggle, GTK_ALIGN_CENTER);
+      gtk_accessible_update_property(GTK_ACCESSIBLE(toggle), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                     _(flag_titles[flag]), -1);
+      g_object_set_data(G_OBJECT(toggle), "timing-flag", GINT_TO_POINTER(flag));
+      g_signal_connect(toggle, "notify::active", G_CALLBACK(timing_on_flag_changed), timing);
+      gtk_grid_attach(signal, toggle, 1, flag, 1, 1);
+      timing->flag_switches[flag] = GTK_SWITCH(toggle);
+      timing->flag_rows[flag][0] = label;
+      timing->flag_rows[flag][1] = toggle;
+   }
+   gtk_box_append(GTK_BOX(sections), timing->signal_card);
    gtk_box_append(GTK_BOX(content), sections);
 
    GtkWidget* modeline_card = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
@@ -598,18 +692,22 @@ bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
       return false;
    }
    const int* field_indices = layout.fields;
-   timing->pixel_hz_factor = layout.pixel_hz;
-   gtk_label_set_text(timing->clock_unit, (layout.pixel_hz == 10000.0) ? "×10 kHz" : "kHz");
 
+   //nothing the spins do while they are set up is an edit
    timing->updating = true;
    timing->pgrp = pgrp;
+   timing->pixel_hz_factor = layout.pixel_hz;
+   //10 kHz steps show as hundredths of a MHz, 1 kHz steps as thousandths
+   gtk_spin_button_set_digits(timing->spins[TIMING_PIXCLK],
+                              (layout.pixel_hz * layout.clock_step >= 10000.0) ? 2 : 3);
    for (int idx = 0; idx < TIMING_FIELD_COUNT; idx++) {
       if (timing->spins[idx] == NULL) {
          timing->fields[idx] = NULL;
          continue;
       }
       bool available = field_indices[idx] >= 0;
-      if ((idx == TIMING_HBORDER) || (idx == TIMING_VBORDER)) {
+      if ((idx == TIMING_HBORDER) || (idx == TIMING_VBORDER) ||
+          (idx == TIMING_HSIZE) || (idx == TIMING_VSIZE)) {
          for (GtkWidget* widget : timing->row_widgets[idx]) {
             gtk_widget_set_visible(widget, available);
          }
@@ -644,16 +742,54 @@ bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
       double maximum = field->field.maxv;
       double step = 1;
       if (idx == TIMING_PIXCLK) {
-         minimum = 1;
-         step = layout.clock_step;
-         if (layout.clock_max > 0.0) maximum = layout.clock_max;
+         double mhz = timing_mhz_per_unit(timing);
+         step = layout.clock_step * mhz;
+         minimum = step;
+         maximum = ((layout.clock_max > 0.0) ? layout.clock_max : maximum) * mhz;
       }
       GtkAdjustment* adjustment = gtk_spin_button_get_adjustment(timing->spins[idx]);
       gtk_adjustment_set_lower(adjustment, minimum);
       gtk_adjustment_set_upper(adjustment, maximum);
       gtk_adjustment_set_step_increment(adjustment, step);
-      gtk_spin_button_set_value(timing->spins[idx], value);
+      timing_set_value(timing, static_cast<timing_field>(idx), value);
    }
+
+   //polarities apply to a DTD only with digital separate sync
+   edid_timing_values values;
+   bool read = edid_timing_read(*pEDID, pgrp, values);
+   int sync_type = -1;
+   for (u32_t idx=0; idx<pgrp->FieldsAr.GetCount(); idx++) {
+      const char* name = pgrp->FieldsAr.Item(idx)->field.name;
+      if ((name != NULL) && (0 == strcmp(name, "sync_type"))) sync_type = static_cast<int>(idx);
+   }
+   u32_t sync = 3;
+   if (sync_type >= 0) {
+      wxc_String text;
+      edi_dynfld_t* field = pgrp->FieldsAr.Item(sync_type);
+      (pEDID->*field->field.handlerfn)(OP_READ, text, sync, field);
+   }
+   bool any_flag = false;
+   for (int flag=0; flag<TIMING_FLAG_COUNT; flag++) {
+      if (timing->flag_switches[flag] == NULL) continue;
+      bool shown = read && (layout.flags[flag] >= 0) &&
+                   ((flag == TIMING_INTERLACED) || (sync == 3));
+      for (GtkWidget* widget : timing->flag_rows[flag]) gtk_widget_set_visible(widget, shown);
+      if (shown) gtk_switch_set_active(timing->flag_switches[flag], values.flag[flag]);
+      any_flag = any_flag || shown;
+   }
+   gtk_widget_set_visible(timing->signal_card, any_flag);
+
+   bool preferred = false;
+   for (const edid_mode& mode : edid_modes(*pEDID)) {
+      if (mode.group == pgrp) preferred = mode.preferred;
+   }
+   gtk_button_set_icon_name(GTK_BUTTON(timing->star),
+                            preferred ? "starred-symbolic" : "non-starred-symbolic");
+   const char* star_label = preferred ? _("Preferred timing") : _("Make Preferred");
+   gtk_widget_set_tooltip_text(timing->star, star_label);
+   gtk_accessible_update_property(GTK_ACCESSIBLE(timing->star),
+                                  GTK_ACCESSIBLE_PROPERTY_LABEL, star_label, -1);
+
    timing_update_outputs(timing);
    timing->updating = false;
    return true;

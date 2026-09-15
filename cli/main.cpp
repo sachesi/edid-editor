@@ -45,7 +45,8 @@ const char* const usage_text =
 "Changing (the result goes to -o OUTPUT, or back to FILE with --in-place):\n"
 "  set FILE GROUP FIELD=VALUE... write fields, rebuilding groups whose layout changes\n"
 "  add FILE BLOCK KIND           add audio-lpcm, audio-extended, video or timing to a\n"
-"                                CTA-861 block, or displayid to a DisplayID block\n"
+"                                CTA-861 block, or displayid to a DisplayID block; a\n"
+"                                timing copies the first one, or GROUP after timing\n"
 "  duplicate FILE GROUP          copy a group after itself\n"
 "  delete FILE GROUP             remove a group\n"
 "  move FILE GROUP up|down       move a group within its block\n"
@@ -935,7 +936,8 @@ GroupAr_cl* block_array(document& doc, const std::string& spec, u8_t& tag) {
 }
 
 int cmd_add() {
-   need_args(4, "add FILE BLOCK KIND");
+   bool with_source = (opts.args.size() == 5) && (opts.args[3] == "timing");
+   if (! with_source) need_args(4, "add FILE BLOCK KIND, or add FILE BLOCK timing [GROUP]");
    document doc;
    open_document(doc, opts.args[1]);
    output_path(doc.path);
@@ -959,6 +961,15 @@ int cmd_add() {
       result = doc.EDID.CreateGroup(which, 0, &group);
    }
    if (! RCD_IS_OK(result)) fail(rcode_text(result));
+   //a new timing starts as a copy of the one given, or of the first
+   if (kind == "timing") {
+      edi_grp_cl* source = with_source ? find_group(doc.EDID, opts.args[4]).group
+                                       : edid_first_timing(doc.EDID);
+      if ((source != NULL) && ! edid_timing_copy(doc.EDID, source, group)) {
+         delete group;
+         fail(address(source) + " doesn't fit a detailed timing of a CTA-861 block");
+      }
+   }
    if (! edid_insert_group(array, group)) {
       delete group;
       fail("the group does not fit in block " + opts.args[2]);
@@ -1158,7 +1169,7 @@ const struct command {
    {"diff", cmd_diff, "FF", "fields that differ"},
    {"displays", cmd_displays, "", "connected displays"},
    {"set", cmd_set, "FGA", "write fields"},
-   {"add", cmd_add, "FBK", "add a group to a block"},
+   {"add", cmd_add, "FBKG", "add a group to a block"},
    {"duplicate", cmd_duplicate, "FG", "copy a group after itself"},
    {"delete", cmd_delete, "FG", "remove a group"},
    {"move", cmd_move, "FGM", "move a group within its block"},

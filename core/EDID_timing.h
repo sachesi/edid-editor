@@ -106,8 +106,15 @@ struct edid_data_change {
 //the first timing change places, converted between their formats, and DisplayID
 //timings lose their preferred flag. A timing the first place can't hold is
 //flagged preferred in DisplayID instead. The message says what happens.
+enum edid_prefer_way {
+   PREFER_ALREADY_FIRST,
+   PREFER_SWAPPED,
+   PREFER_FLAGGED,
+};
+
 bool edid_plan_preferred(EDID_cl& EDID, edi_grp_cl* timing,
-                         std::vector<edid_data_change>& changes, std::string& message);
+                         std::vector<edid_data_change>& changes, std::string& message,
+                         edid_prefer_way* way = NULL);
 
 void edid_apply_changes(const std::vector<edid_data_change>& changes, bool forward);
 

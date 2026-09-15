@@ -332,6 +332,10 @@ void wnd_update_group_actions(wxedid_wnd* wnd) {
    g_simple_action_set_enabled(wnd->move_down_action,
                                (array != NULL) && array->CanMoveDn(index));
 
+   edid_timing_layout layout;
+   g_simple_action_set_enabled(wnd->make_preferred_action,
+                               (group != NULL) && edid_timing_layout_of(group, layout));
+
    u8_t tag = wnd_selected_extension_tag(wnd);
    g_simple_action_set_enabled(wnd->add_cta_action, tag == 0x02);
    g_simple_action_set_enabled(wnd->add_displayid_action, tag == 0x70);
@@ -637,6 +641,16 @@ void wnd_on_add_cta_group(GSimpleAction*, GVariant* parameter,
 
    edi_grp_cl* group = NULL;
    rcode result = wnd->doc->EDID.CreateGroup(which, 0, &group);
+   //a new timing starts as a copy of the selected one, or of the first
+   if (RCD_IS_OK(result) && (which == EDID_cl::CEA_TIMING)) {
+      edi_grp_cl* source = wnd_selected_group(wnd);
+      edid_timing_layout layout;
+      if ((source == NULL) || ! edid_timing_layout_of(source, layout) ||
+          ! edid_timing_copy(wnd->doc->EDID, source, group)) {
+         source = edid_first_timing(wnd->doc->EDID);
+         if (source != NULL) edid_timing_copy(wnd->doc->EDID, source, group);
+      }
+   }
    GroupAr_cl* array = wnd_selected_root_array(wnd);
    if (! RCD_IS_OK(result) || ! edid_insert_group(array, group)) {
       delete group;
@@ -666,6 +680,43 @@ void wnd_on_add_displayid_group(GSimpleAction*, GVariant*,
    wnd_record_structure(wnd, HISTORY_INSERT, group, array, group->getParentArIdx(),
                         false, NULL);
    wnd_finish_structure_change(wnd, group, _("DisplayID data block added"));
+}
+
+static void wnd_on_prefer_details(GObject* source, GAsyncResult* result, gpointer) {
+   adw_alert_dialog_choose_finish(ADW_ALERT_DIALOG(source), result);
+}
+
+void wnd_make_preferred(wxedid_wnd* wnd, edi_grp_cl* timing) {
+   wnd_flush_refresh(wnd);
+   std::vector<edid_data_change> changes;
+   std::string message;
+   edid_prefer_way way = PREFER_ALREADY_FIRST;
+   if (! edid_plan_preferred(wnd->doc->EDID, timing, changes, message, &way)) {
+      wnd_show_error(wnd, message.c_str());
+      return;
+   }
+   std::string name = edid_group_display_name(timing, wnd->doc->EDID);
+   //after a swap the mode sits in the first timing
+   edi_grp_cl* selection = (way == PREFER_SWAPPED) ? edid_first_timing(wnd->doc->EDID) : timing;
+   wnd_apply_changes(wnd, changes, selection);
+   if (way == PREFER_FLAGGED) {
+      AdwAlertDialog* dialog = ADW_ALERT_DIALOG(adw_alert_dialog_new(
+         _("Flagged as Preferred in DisplayID"), message.c_str()));
+      adw_alert_dialog_add_response(dialog, "close", _("Close"));
+      adw_alert_dialog_choose(dialog, GTK_WIDGET(wnd->window), NULL,
+                              wnd_on_prefer_details, NULL);
+      return;
+   }
+   char* text = g_strdup_printf((way == PREFER_SWAPPED) ? _("%s is now the preferred timing")
+                                                        : _("%s is already the preferred timing"),
+                                name.c_str());
+   adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(text));
+   g_free(text);
+}
+
+void wnd_on_make_preferred(GSimpleAction*, GVariant*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   wnd_make_preferred(wnd, wnd_selected_group(wnd));
 }
 
 void wnd_popup_group_menu(wxedid_wnd* wnd, double x, double y) {
@@ -779,6 +830,21 @@ void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group) {
       g_object_unref(object);
       g_object_unref(row);
       position++;
+   }
+
+   //open the groups that hold the one to select, as for a DisplayID timing
+   for (guint row_at=0; (select_group != NULL) &&
+        (row_at<g_list_model_get_n_items(G_LIST_MODEL(wnd->tree_model))); row_at++) {
+      GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+         g_list_model_get_item(G_LIST_MODEL(wnd->tree_model), row_at));
+      GObject* object = G_OBJECT(gtk_tree_list_row_get_item(row));
+      edi_grp_cl* holder = WXEDID_ITEM(object)->pgrp;
+      for (edi_grp_cl* up = select_group->getParentGrp(); (holder != NULL) && (up != NULL);
+           up = up->getParentGrp()) {
+         if (up == holder) gtk_tree_list_row_set_expanded(row, TRUE);
+      }
+      g_object_unref(object);
+      g_object_unref(row);
    }
 
    //select the requested group, or the first selectable row

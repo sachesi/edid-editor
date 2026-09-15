@@ -9,6 +9,84 @@
 
 //------------
 // overview: key facts of the whole EDID
+struct wnd_mode_choice {
+   wxedid_wnd* wnd;
+   edi_grp_cl* group;
+};
+
+//after the click: the change rebuilds the page that holds the button
+static gboolean wnd_prefer_mode(gpointer data) {
+   wnd_mode_choice* choice = static_cast<wnd_mode_choice*>(data);
+   wnd_make_preferred(choice->wnd, choice->group);
+   delete choice;
+   return G_SOURCE_REMOVE;
+}
+
+static void wnd_on_mode_star(GtkButton* button, gpointer user_data) {
+   g_idle_add(wnd_prefer_mode, new wnd_mode_choice{static_cast<wxedid_wnd*>(user_data),
+      static_cast<edi_grp_cl*>(g_object_get_data(G_OBJECT(button), "group"))});
+}
+
+static void wnd_on_mode_activated(AdwActionRow* row, gpointer user_data) {
+   wnd_rebuild_tree(static_cast<wxedid_wnd*>(user_data), static_cast<edi_grp_cl*>(
+      g_object_get_data(G_OBJECT(row), "group")));
+}
+
+//every detailed timing; a star marks the preferred ones and makes one preferred
+static GtkWidget* wnd_modes_group(wxedid_wnd* wnd) {
+   EDID_cl& EDID = wnd->doc->EDID;
+   std::vector<edid_mode> modes = edid_modes(EDID);
+   if (modes.empty()) return NULL;
+   size_t chosen = edid_default_mode(modes);
+   edi_grp_cl* first = edid_first_timing(EDID);
+   GtkWidget* group = adw_preferences_group_new();
+   adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(group), _("Modes"));
+   adw_preferences_group_set_description(ADW_PREFERENCES_GROUP(group),
+      _("Starred modes are preferred. A star makes a mode the preferred one."));
+   for (size_t idx=0; idx<modes.size(); idx++) {
+      const edid_mode& mode = modes[idx];
+      char title[64];
+      snprintf(title, sizeof(title), "%u × %u%s @ %.2f Hz", mode.width, mode.height,
+               mode.interlaced ? "i" : "", mode.refresh);
+      std::string place;
+      u8_t tag = EDID.getEDID()->blk[mode.block][0];
+      if (mode.group == first) {
+         place = _("First detailed timing");
+      } else if (mode.block == 0) {
+         place = _("Base block");
+      } else {
+         char text[64];
+         snprintf(text, sizeof(text), _("Block %u, %s"), mode.block,
+                  (tag == 0x70) ? "DisplayID" : "CTA-861");
+         place = text;
+      }
+      if (idx == chosen) place += std::string(" · ") + _("Linux uses it by default");
+      GtkWidget* row = adw_action_row_new();
+      adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
+      adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title);
+      adw_action_row_set_subtitle(ADW_ACTION_ROW(row), place.c_str());
+      gtk_list_box_row_set_activatable(GTK_LIST_BOX_ROW(row), TRUE);
+      g_object_set_data(G_OBJECT(row), "group", mode.group);
+      g_signal_connect(row, "activated", G_CALLBACK(wnd_on_mode_activated), wnd);
+
+      GtkWidget* star = gtk_button_new_from_icon_name(mode.preferred ? "starred-symbolic"
+                                                                     : "non-starred-symbolic");
+      gtk_widget_add_css_class(star, "flat");
+      gtk_widget_set_valign(star, GTK_ALIGN_CENTER);
+      char label[128];
+      snprintf(label, sizeof(label), mode.preferred ? _("%s is preferred") : _("Make %s preferred"),
+               title);
+      gtk_widget_set_tooltip_text(star, label);
+      gtk_accessible_update_property(GTK_ACCESSIBLE(star), GTK_ACCESSIBLE_PROPERTY_LABEL,
+                                     label, -1);
+      g_object_set_data(G_OBJECT(star), "group", mode.group);
+      g_signal_connect(star, "clicked", G_CALLBACK(wnd_on_mode_star), wnd);
+      adw_action_row_add_suffix(ADW_ACTION_ROW(row), star);
+      adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), row);
+   }
+   return group;
+}
+
 void wnd_refresh_overview(wxedid_wnd* wnd) {
    GtkWidget* page = adw_preferences_page_new();
    if (! wnd->notes.empty()) {
@@ -29,8 +107,14 @@ void wnd_refresh_overview(wxedid_wnd* wnd) {
    }
    GtkWidget* group = NULL;
    std::string section;
+   GtkWidget* modes = wnd_modes_group(wnd);
    for (const edid_summary_item& item : edid_summary(wnd->doc->EDID)) {
       if ((group == NULL) || (item.section != section)) {
+         //the modes follow the video facts
+         if ((modes != NULL) && (section == "Video")) {
+            adw_preferences_page_add(ADW_PREFERENCES_PAGE(page), ADW_PREFERENCES_GROUP(modes));
+            modes = NULL;
+         }
          section = item.section;
          group = adw_preferences_group_new();
          adw_preferences_group_set_title(ADW_PREFERENCES_GROUP(group), section.c_str());
@@ -44,6 +128,7 @@ void wnd_refresh_overview(wxedid_wnd* wnd) {
       gtk_widget_add_css_class(row, "property");
       adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), row);
    }
+   if (modes != NULL) adw_preferences_page_add(ADW_PREFERENCES_PAGE(page), ADW_PREFERENCES_GROUP(modes));
    adw_bin_set_child(ADW_BIN(wnd->overview_bin), page);
 }
 

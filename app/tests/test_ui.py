@@ -291,6 +291,22 @@ def functional(Atspi, app, fixture):
                 node = named(Atspi, name, Atspi.Role.SWITCH)
                 return node is not None and \
                     node.get_state_set().contains(Atspi.StateType.CHECKED)
+
+            # a star on the overview makes a mode preferred; one Undo takes it back
+            def clock_is(mhz):
+                spin = named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
+                return spin is not None and \
+                    abs(spin.get_value_iface().get_current_value() - mhz) < 0.0005
+            press(Atspi, "Make 2560 × 1440 @ 59.95 Hz preferred")
+            wait_for(lambda: named(Atspi, "2560x1440 @ 59.95Hz is now the preferred timing"),
+                     "the star did not make the mode preferred")
+            wait_for(lambda: named(Atspi, "2560 × 1440 @ 59.95 Hz is preferred"),
+                     "the overview did not star the preferred mode")
+            select_group(Atspi, 15)
+            wait_for(lambda: clock_is(241.5), "the mode did not move to the first timing")
+            assert switch_on("Positive horizontal sync"), "the sync polarity was not carried"
+            activate_menu_item(Atspi, "Undo")
+            wait_for(lambda: clock_is(25.18), "Undo did not restore the first timing")
             select_group(Atspi, 15)
             press(Atspi, "Fields")
             wait_for(lambda: named(Atspi, "DTD · offset 0x036 · block 0", Atspi.Role.LABEL),
@@ -383,7 +399,7 @@ def functional(Atspi, app, fixture):
             select_group(Atspi, 21)
             spin = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
                             "timing editor did not open")
-            assert int(spin.get_value_iface().get_current_value()) == 241500
+            assert abs(spin.get_value_iface().get_current_value() - 241.5) < 0.0005
             press(Atspi, "Fields")
             tag = wait_for(lambda: dropdown(Atspi, "EXT: Extended Tag Code"),
                            "tag code was not shown")
@@ -415,14 +431,14 @@ def functional(Atspi, app, fixture):
             press(Atspi, "Timing")
             spin = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
                             "timing editor did not reopen")
-            assert spin.get_value_iface().set_current_value(241503)
+            assert spin.get_value_iface().set_current_value(241.503)
             activate_menu_item(Atspi, "Undo")
-            wait_for(lambda: int(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
-                                 .get_value_iface().get_current_value()) == 241500,
+            wait_for(lambda: abs(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
+                                 .get_value_iface().get_current_value() - 241.5) < 0.0005,
                      "undo did not restore the pixel clock")
             activate_menu_item(Atspi, "Redo")
-            wait_for(lambda: int(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
-                                 .get_value_iface().get_current_value()) == 241503,
+            wait_for(lambda: abs(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
+                                 .get_value_iface().get_current_value() - 241.503) < 0.0005,
                      "redo did not reapply the pixel clock")
             refresh = named(Atspi, "Vertical refresh", Atspi.Role.SPIN_BUTTON)
             rate = refresh.get_value_iface().get_current_value()
@@ -430,11 +446,11 @@ def functional(Atspi, app, fixture):
             assert refresh.get_value_iface().set_current_value(wanted)
             wait_for(lambda: abs(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
                                  .get_value_iface().get_current_value()
-                                 - 241503 * wanted / rate) <= 241503 * 0.001,
+                                 - 241.503 * wanted / rate) <= 241.503 * 0.001,
                      "a new refresh rate did not recalculate the pixel clock")
             activate_menu_item(Atspi, "Undo")
-            wait_for(lambda: int(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
-                                 .get_value_iface().get_current_value()) == 241503,
+            wait_for(lambda: abs(named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON)
+                                 .get_value_iface().get_current_value() - 241.503) < 0.0005,
                      "undo did not restore the pixel clock after a refresh edit")
             press(Atspi, "Bytes")
             raw = wait_for(lambda: named(Atspi, "Selected group bytes"),
@@ -563,7 +579,7 @@ def readonly(Atspi, app, fixture):
             select_group(Atspi, 21)
             spin = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
                             "timing editor did not open")
-            assert spin.get_value_iface().set_current_value(241501)
+            assert spin.get_value_iface().set_current_value(241.501)
             press(Atspi, "Save", Atspi.Role.PUSH_BUTTON)
             wait_for(lambda: window_exists("Save EDID binary"),
                      "saving a read-only file did not ask for a new file")
@@ -596,7 +612,7 @@ def hex_import(Atspi, app, fixture):
             select_group(Atspi, 21)
             spin = wait_for(lambda: named(Atspi, "Pixel clock", Atspi.Role.SPIN_BUTTON),
                             "timing editor did not open")
-            assert spin.get_value_iface().set_current_value(241501)
+            assert spin.get_value_iface().set_current_value(241.501)
             press(Atspi, "Save", Atspi.Role.PUSH_BUTTON)
             wait_for(lambda: window_exists("Save EDID binary"),
                      "saving imported hex did not ask for a binary file")

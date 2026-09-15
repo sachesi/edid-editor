@@ -83,7 +83,8 @@ anything is written. Fields derived from other data need `--edit-read-only`, lik
 Fields in the editor, and a change that alters the type or layout of a group rebuilds it,
 as the editor does. `add` takes `audio-lpcm`, `audio-extended`, `video` or `timing` for a
 CTA-861 block and `displayid` for a DisplayID block, and puts the group where the editor
-would.
+would. A new timing is a copy of the first detailed timing, or of the timing named after
+`timing` (`add new.bin 1 timing DTD:4`), ready for a new refresh rate.
 
 ## The preferred timing
 
