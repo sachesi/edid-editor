@@ -29,6 +29,23 @@
     <binary>edid-editor-cli</binary>
   </provides>
   <releases>
+    <release version="0.4.0" date="2026-09-15">
+      <description>
+        <p>
+          Any detailed timing can be made the preferred one from a star on the
+          Overview or the timing page, or with edid-editor-cli prefer: it
+          becomes the first detailed timing, converted between DTD and DisplayID
+          formats as needed, and a DisplayID preferred flag can be removed. The
+          Overview lists every mode with the one Linux uses by default.
+        </p>
+        <p>
+          The timing page sets sync polarity, interlace and image size, and
+          shows the pixel clock in MHz. A new timing copies an existing one.
+          edid-editor-cli takes decimal numbers for bit fields, and a typed pixel
+          clock is rounded instead of truncated.
+        </p>
+      </description>
+    </release>
     <release version="0.3.0" date="2026-09-15">
       <description>
         <p>
