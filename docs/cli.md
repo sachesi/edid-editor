@@ -89,6 +89,21 @@ would.
 editor refuses: the first recomputes every block's checksum, the second writes the same
 bytes as binary or text.
 
+## Scripts
+
+`--json` prints `info`, `groups`, `fields`, `diff` and `displays` as JSON, with the same
+names and values as the text:
+
+    $ edid-editor-cli fields monitor.bin DTD:1 --json | jq '.fields[1]'
+    {
+      "index": 2,
+      "name": "Horizontal active",
+      "core_name": "H-Active pix",
+      "value": "2560",
+      "raw": 2560,
+      ...
+    }
+
 ## Exit status
 
 0 on success, 1 when the data can't be read, a value is refused or `diff` finds

@@ -51,6 +51,7 @@ const char* const usage_text =
 "  move FILE GROUP up|down       move a group within its block\n"
 "  fix-checksums FILE            recompute the checksum of every block\n"
 "  convert FILE                  the same bytes as binary or hexadecimal text\n"
+
 "\n"
 "FILE is binary EDID or hexadecimal text, as printed by edid-decode or\n"
 "xrandr --verbose; - reads standard input. A connected display is read from\n"
@@ -71,6 +72,7 @@ const char* const usage_text =
 "      --ignore-errors    open EDID data that breaks the standard\n"
 "      --edit-read-only   allow writing fields derived from other data\n"
 "  -q, --quiet            leave out notices about the data\n"
+"      --json             print info, groups, fields, diff and displays as JSON\n"
 "  -h, --help             show this help\n"
 "      --version          show the version\n";
 
@@ -81,6 +83,7 @@ struct options {
    bool ignore_errors = false;
    bool edit_read_only = false;
    bool quiet = false;
+   bool json = false;
 };
 
 options opts;
@@ -499,6 +502,63 @@ timing_state need_timing(EDID_cl& EDID, edi_grp_cl* group) {
    return timing;
 }
 
+//-------- JSON
+
+std::string json_string(const std::string& text) {
+   std::string quoted = "\"";
+   for (unsigned char chr : text) {
+      if ((chr == '"') || (chr == '\\')) {
+         quoted += '\\';
+         quoted += static_cast<char>(chr);
+      } else if (chr < 0x20) {
+         char escape[8];
+         snprintf(escape, sizeof(escape), "\\u%04X", chr);
+         quoted += escape;
+      } else {
+         quoted += static_cast<char>(chr);
+      }
+   }
+   return quoted + "\"";
+}
+
+//members are added in order; values that are already JSON go in with raw()
+struct json_object {
+   std::string members;
+
+   json_object& raw(const char* key, const std::string& json) {
+      if (! members.empty()) members += ", ";
+      members += json_string(key) + ": " + json;
+      return *this;
+   }
+   json_object& text(const char* key, const std::string& value) {
+      return raw(key, json_string(value));
+   }
+   json_object& text_or_null(const char* key, const std::string& value) {
+      return raw(key, value.empty() ? "null" : json_string(value));
+   }
+   json_object& number(const char* key, u32_t value) {
+      return raw(key, std::to_string(value));
+   }
+   json_object& flag(const char* key, bool value) {
+      return raw(key, value ? "true" : "false");
+   }
+   std::string str() const { return "{" + members + "}"; }
+};
+
+//an array with one element to a line
+std::string json_array(const std::vector<std::string>& elements) {
+   if (elements.empty()) return "[]";
+   std::string array = "[";
+   for (size_t idx=0; idx<elements.size(); idx++) {
+      array += ((idx == 0) ? "\n  " : ",\n  ") + elements[idx];
+   }
+   return array + "\n]";
+}
+
+void print_json(const std::string& json) {
+   std::printf("%s\n", json.c_str());
+}
+
 //-------- commands
 
 void need_args(size_t count, const char* synopsis) {
@@ -510,6 +570,15 @@ int cmd_info() {
    document doc;
    open_document(doc, opts.args[1]);
    std::vector<edid_summary_item> items = edid_summary(doc.EDID);
+   if (opts.json) {
+      std::vector<std::string> elements;
+      for (const edid_summary_item& item : items) {
+         elements.push_back(json_object().text("section", item.section)
+                            .text("label", item.label).text("value", item.value).str());
+      }
+      print_json(json_array(elements));
+      return 0;
+   }
    std::string section;
    size_t width = 0;
    for (const edid_summary_item& item : items) width = std::max(width, item.label.size());
@@ -539,6 +608,19 @@ int cmd_groups() {
    document doc;
    open_document(doc, opts.args[1]);
    std::vector<listed_group> list = all_groups(doc.EDID);
+   if (opts.json) {
+      std::vector<std::string> elements;
+      for (const listed_group& entry : list) {
+         elements.push_back(json_object().text("address", address(entry.group))
+                            .number("block", entry.block)
+                            .number("offset", entry.group->getAbsOffs())
+                            .text("code", entry.group->CodeName.c_str())
+                            .text("name", group_name(doc.EDID, entry.group))
+                            .number("depth", entry.depth).str());
+      }
+      print_json(json_array(elements));
+      return 0;
+   }
    for (u32_t idx=0; idx<doc.EDID.getNumValidBlocks(); idx++) {
       if (idx > 0) std::printf("\n");
       std::printf("%s\n", block_title(doc.EDID, idx).c_str());
@@ -559,9 +641,41 @@ int cmd_fields() {
    open_document(doc, opts.args[1]);
    listed_group found = find_group(doc.EDID, opts.args[2]);
    edi_grp_cl* group = found.group;
+   u32_t count = group->FieldsAr.GetCount();
+   timing_state timing;
+   bool has_refresh = read_timing(doc.EDID, group, timing);
+   if (opts.json) {
+      std::vector<std::string> elements;
+      for (u32_t idx=0; idx<count; idx++) {
+         edi_dynfld_t* field = group->FieldsAr.Item(idx);
+         const edi_field_t& f = field->field;
+         field_value value = read_field(doc.EDID, field);
+         json_object element;
+         element.number("index", idx + 1).text("name", edid_field_display_name(f.name))
+                .text("core_name", (f.name != NULL) ? f.name : "");
+         if (value.ok) {
+            element.text("value", value.text).number("raw", value.value)
+                   .text_or_null("value_name", value.label);
+         } else {
+            element.raw("value", "null").text("error", value.text.substr(1, value.text.size() - 2));
+         }
+         element.text("unit", unit_of(doc.EDID, f))
+                .flag("read_only", (f.flags & F_RD) != 0)
+                .flag("reserved", field_is_reserved(f))
+                .flag("not_used", (f.flags & F_NU) != 0)
+                .flag("named_values", field_has_selector(f));
+         elements.push_back(element.str());
+      }
+      json_object object;
+      object.text("address", address(group)).text("name", group_name(doc.EDID, group))
+            .number("block", found.block)
+            .raw("refresh", has_refresh ? hz_text(timing.refresh) : "null")
+            .raw("fields", json_array(elements));
+      print_json(object.str());
+      return 0;
+   }
    std::printf("%s  %s, block %u\n", address(group).c_str(),
                group_name(doc.EDID, group).c_str(), found.block);
-   u32_t count = group->FieldsAr.GetCount();
    size_t name_width = 4;
    size_t value_width = 5;
    std::vector<field_value> values;
@@ -585,8 +699,7 @@ int cmd_fields() {
                   static_cast<int>(value_width), shown(values[idx]).c_str(),
                   unit.c_str(), notes.c_str());
    }
-   timing_state timing;
-   if (read_timing(doc.EDID, group, timing)) {
+   if (has_refresh) {
       std::printf("       %-*s  %-*s  %-8s%s\n", static_cast<int>(name_width), "Refresh",
                   static_cast<int>(value_width), hz_text(timing.refresh).c_str(), "Hz",
                   " derived: setting it changes the pixel clock");
@@ -908,6 +1021,18 @@ int cmd_diff() {
    open_document(one, opts.args[1]);
    open_document(two, opts.args[2]);
    std::vector<edid_difference> found = edid_compare(one.EDID, two.EDID);
+   if (opts.json) {
+      //a whole group present on one side only has no field, and no value on the other
+      std::vector<std::string> elements;
+      for (const edid_difference& difference : found) {
+         elements.push_back(json_object().text("place", difference.place)
+                            .text_or_null("field", difference.field)
+                            .text_or_null("left", difference.left)
+                            .text_or_null("right", difference.right).str());
+      }
+      print_json(json_array(elements));
+      return found.empty() ? 0 : 1;
+   }
    std::string place;
    for (const edid_difference& difference : found) {
       if (difference.place != place) {
@@ -929,6 +1054,15 @@ int cmd_diff() {
 int cmd_displays() {
    need_args(1, "displays");
    std::vector<edid_display> displays = edid_connected_displays("/sys/class/drm");
+   if (opts.json) {
+      std::vector<std::string> elements;
+      for (const edid_display& display : displays) {
+         elements.push_back(json_object().text("connector", display.connector)
+                            .text("name", display.name).text("path", display.path).str());
+      }
+      print_json(json_array(elements));
+      return displays.empty() ? 1 : 0;
+   }
    if (displays.empty()) {
       std::fprintf(stderr, "No connected display has EDID data under /sys/class/drm.\n");
       return 1;
@@ -996,6 +1130,8 @@ int main(int argc, char* argv[]) {
          opts.edit_read_only = true;
       } else if ((arg == "-q") || (arg == "--quiet")) {
          opts.quiet = true;
+      } else if (arg == "--json") {
+         opts.json = true;
       } else if ((arg.size() > 1) && (arg[0] == '-') && (arg != "-")) {
          usage_error("unknown option " + arg);
       } else {
@@ -1019,7 +1155,12 @@ int main(int argc, char* argv[]) {
       {"convert", cmd_convert},
    };
    for (const auto& command : commands) {
-      if (opts.args[0] == command.name) return command.run();
+      if (opts.args[0] != command.name) continue;
+      std::string name = " " + opts.args[0] + " ";
+      if (opts.json && (NULL == strstr(" info groups fields diff displays ", name.c_str()))) {
+         usage_error("--json works with info, groups, fields, diff and displays");
+      }
+      return command.run();
    }
    usage_error("unknown command " + opts.args[0]);
 }

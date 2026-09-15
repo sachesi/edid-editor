@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+import json
 import shutil
 import subprocess
 import sys
@@ -169,11 +170,33 @@ def bytes_and_files():
     assert run("get", str(in_place), "DTD:1", "interlace")[0].strip() == "1"
 
 
+def json_output():
+    items = json.loads(run("info", cea, "--json")[0])
+    assert {"section": "Display", "label": "Name", "value": "GTK-PORT"} in items, items
+    groups = json.loads(run("groups", "--json", cea)[0])
+    assert {"address": "DTD@0x036", "block": 0, "offset": 0x36, "code": "DTD"}.items() \
+        <= groups[14].items(), groups[14]
+    assert any(group["depth"] == 1 for group in groups)
+    fields = json.loads(run("fields", cea, "DTD:1", "--json")[0])
+    assert fields["address"] == "DTD@0x036" and fields["refresh"] > 59
+    assert fields["fields"][1]["name"] == "Horizontal active"
+    assert fields["fields"][1]["raw"] == 640 and fields["fields"][1]["value"] == "640"
+    assert json.loads(run("fields", cea, "MND", "--json")[0])["refresh"] is None
+    target = work / "json.bin"
+    run("set", cea, "DTD:1", "interlace=on", "-o", str(target))
+    differences = json.loads(run("diff", cea, str(target), "--json", status=1)[0])
+    assert differences == [{"place": differences[0]["place"], "field": "interlace",
+                            "left": "0", "right": "1"}], differences
+    assert json.loads(run("diff", cea, cea, "--json")[0]) == []
+    _, err = run("get", cea, "DTD:1", "interlace", "--json", status=2)
+    assert "--json works with" in err
+
+
 for name, test in [("help and usage errors", help_and_usage), ("reading", reading),
                    ("set and diff", set_and_diff), ("refresh rate", refresh),
                    ("refused writes", refused_writes),
                    ("group rebuild", rebuild), ("group structure", structure),
-                   ("conversion and files", bytes_and_files)]:
+                   ("conversion and files", bytes_and_files), ("JSON", json_output)]:
     check(name, test)
 shutil.rmtree(work, ignore_errors=True)
 sys.exit(1 if failures else 0)
