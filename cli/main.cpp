@@ -1206,10 +1206,13 @@ void complete_fields(EDID_cl& EDID, edi_grp_cl* group, const char* suffix) {
    }
 }
 
-void complete_values(edi_grp_cl* group, const std::string& field_spec,
+void complete_values(EDID_cl& EDID, edi_grp_cl* group, const std::string& field_spec,
                      const std::string& prefix) {
    if (is_refresh(group, field_spec)) return;
-   const edi_field_t& f = find_field(group, field_spec)->field;
+   edi_dynfld_t* field = find_field(group, field_spec);
+   //reading a field can choose its named values, as for the signal format
+   read_field(EDID, field);
+   const edi_field_t& f = field->field;
    sm_vmap* vmap = field_has_selector(f) ? vmap_GetVmap(f.vmap_idx, VMAP_MID) : NULL;
    if (vmap != NULL) {
       for (auto& entry : *vmap) candidate(prefix + entry.second.name);
@@ -1286,7 +1289,8 @@ int cmd_complete() {
       } else if (equals == std::string::npos) {
          complete_fields(doc.EDID, group, "=");
       } else {
-         complete_values(group, current.substr(0, equals), current.substr(0, equals + 1));
+         complete_values(doc.EDID, group, current.substr(0, equals),
+                         current.substr(0, equals + 1));
       }
    }
    return 0;

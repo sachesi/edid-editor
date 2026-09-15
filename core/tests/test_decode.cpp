@@ -163,6 +163,21 @@ int main(int argc, char* argv[]) {
          (label_of(EDID, input_group, "Color Depth") == wxc_String("undefined")),
          "interface type and color depth have labels");
 
+   //the signal format is a color type before EDID 1.4 and for analog input,
+   //and the color encodings of a digital input from 1.4, as edid-decode says
+   edi_grp_cl* features = find_group(base, "SPF", 0);
+   edi_grp_cl* base_group = find_group(base, "BED", 0);
+   check(label_of(EDID, features, "vsig_format") == wxc_String("Non-RGB color"),
+         "EDID 1.3 signal format is a color type");
+   write(EDID, base_group, "edid_rev", 4);
+   check(label_of(EDID, features, "vsig_format") == wxc_String("RGB 4:4:4, YCbCr 4:2:2"),
+         "EDID 1.4 digital signal format is a color encoding");
+   write(EDID, input_group, "Input Type", 0);
+   check(label_of(EDID, features, "vsig_format") == wxc_String("Non-RGB color"),
+         "EDID 1.4 analog signal format is a color type");
+   write(EDID, input_group, "Input Type", 1);
+   write(EDID, base_group, "edid_rev", 3);
+
    //range limits above 255 Hz and kHz, values as printed by edid-decode
    edi_grp_cl* range = find_group(base, "MRL", 0);
    check((value_of(EDID, range, "min_Vfreq") == 60) &&

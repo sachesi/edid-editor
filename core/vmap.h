@@ -73,6 +73,8 @@ enum vmap_selector_idx {
    VS_DID_STEREO,
    VS_DID_PRODUCT,
    VS_DID2_PRODUCT,
+   VS_SPF_ANALOG,
+   VS_SPF_DIGITAL,
    VS_NUM_OF
 };
 

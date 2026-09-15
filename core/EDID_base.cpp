@@ -566,6 +566,34 @@ void bddcs_cl::getGrpName(EDID_cl& EDID, wxc_String& gp_name) {
 }
 
 //SPF: Supported features : handlers
+//EDID 1.4 gives the color encodings of a digital input in the signal format;
+//for an analog input, and before 1.4, it is the color type of the display.
+sm_vmap SPF_analog_map = {
+   {0, {0, "Monochrome or grayscale", NULL}},
+   {1, {0, "RGB color"              , NULL}},
+   {2, {0, "Non-RGB color"          , NULL}},
+   {3, {0, "Undefined"              , NULL}}
+};
+
+sm_vmap SPF_digital_map = {
+   {0, {0, "RGB 4:4:4"                         , NULL}},
+   {1, {0, "RGB 4:4:4, YCbCr 4:4:4"            , NULL}},
+   {2, {0, "RGB 4:4:4, YCbCr 4:2:2"            , NULL}},
+   {3, {0, "RGB 4:4:4, YCbCr 4:4:4, YCbCr 4:2:2", NULL}}
+};
+
+rcode EDID_cl::SPF_vsig(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t* p_field) {
+   edi_grp_cl* base = (EDI_BaseGrpAr.GetCount() > 1) ? EDI_BaseGrpAr.Item(0) : NULL;
+   edi_grp_cl* vid  = (EDI_BaseGrpAr.GetCount() > 1) ? EDI_BaseGrpAr.Item(1) : NULL;
+   if ((base != NULL) && (base->getTypeID().base_id == ID_BED) &&
+       (vid != NULL) && (vid->getTypeID().base_id == ID_VID)) {
+      bool encodings = (base->getInstPtr()[offsetof(edid_t, edid_rev)] >= 4) &&
+                       ((vid->getInstPtr()[0] & 0x80) != 0);
+      p_field->field.vmap_idx = encodings ? VS_SPF_DIGITAL : VS_SPF_ANALOG;
+   }
+   return BitF8Val(op, sval, ival, p_field);
+}
+
 //SPF: Supported features
 const char  spft_cl::CodN[] = "SPF";
 const char  spft_cl::Name[] = "Supported features";
@@ -583,7 +611,7 @@ const edi_field_t spft_cl::fields[] = {
    "and this bit should be set to 1." },
    {&EDID_cl::BitVal, 0, 0, 2, 1, F_BIT, 0, 1, "std_srbg",
    "Standard sRGB colour space. Chromacity coords (bytes 25–34) must contain sRGB standard values." },
-   {&EDID_cl::BitF8Val, 0, 0, 3, 2, F_BFD, 0, 3, "vsig_format",
+   {&EDID_cl::SPF_vsig, VS_SPF_DIGITAL, 0, 3, 2, F_BFD|F_VS, 0, 3, "vsig_format",
    "Video signal format:\nDisplay type analog:\n"
    " 00 = Monochrome or Grayscale;\n 01 = RGB color;\n"
    " 10 = Non-RGB multi-color;\n 11 = Undefined\n"

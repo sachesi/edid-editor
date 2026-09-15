@@ -438,7 +438,8 @@ class EDID_cl {
       rcode ProdYr    (__EDID_HDL_ARGS);
       //input type : no dedicated handlers
       //basic display descriptor (old) : no dedicated handlers
-      //Supported features : no dedicated handlers
+      //Supported features
+      rcode SPF_vsig  (__EDID_HDL_ARGS);
       //Chromacity coords
       rcode ChrXY_getWriteVal(u32_t op, wxc_String& sval, u32_t& ival);
       rcode CHredX    (__EDID_HDL_ARGS);
