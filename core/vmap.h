@@ -75,6 +75,7 @@ enum vmap_selector_idx {
    VS_DID2_PRODUCT,
    VS_SPF_ANALOG,
    VS_SPF_DIGITAL,
+   VS_DID_ADAPTIVE,
    VS_NUM_OF
 };
 

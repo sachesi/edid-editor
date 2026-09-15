@@ -70,6 +70,17 @@ class displayid_range_cl : public edi_grp_cl {
       rcode init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent);
 };
 
+//DisplayID 2.x Adaptive Sync descriptor
+class displayid_adaptive_sync_cl : public edi_grp_cl {
+   private:
+      static const edi_field_t fields[];
+
+   public:
+      rcode init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent);
+      void setDataSize(u32_t dsz) {dat_sz = dsz;};
+      void getGrpName(EDID_cl& EDID, wxc_String& gp_name);
+};
+
 class displayid_raw_payload_cl : public edi_grp_cl {
    private:
       char field_names[121][24];

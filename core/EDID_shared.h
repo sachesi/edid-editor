@@ -518,6 +518,8 @@ class EDID_cl {
       rcode DisplayID_ValuePlusOne15(__EDID_HDL_ARGS);
       rcode DisplayID_PixelClockKHz(__EDID_HDL_ARGS);
       rcode DisplayID_MaxRefresh(__EDID_HDL_ARGS);
+      rcode DisplayID_MaxRefreshPlusOne(__EDID_HDL_ARGS);
+      rcode DisplayID_QuarterMs(__EDID_HDL_ARGS);
 
       EDID_cl() : num_valid_blocks(0), b_RD_Ignore(false),
                   b_ERR_Ignore(false), b_GrpNameDynamic(true)

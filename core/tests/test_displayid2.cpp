@@ -229,6 +229,59 @@ int main(int argc, char* argv[]) {
          (0 == std::memcmp(EDID.getEDID()->blk[1], original.blk[1], 127)),
          "extra descriptor byte is written back unchanged");
 
+   //Adaptive Sync: two 7-byte descriptors, values as edid-decode prints them
+   static const u8_t adaptive[] = {
+      0x70, 0x20, 17, 0x02, 0x00,
+      0x2b, 0x10, 14,                   //Adaptive Sync, 7-byte descriptors
+      0x35, 0x10, 0x30, 0x3f, 0x01, 0x08, 0xa5,
+      0x16, 0x05, 0x28, 0x8f, 0x00, 0x02, 0x5a,
+   };
+   std::memset(original.blk[1], 0, sizeof(ediblk_t));
+   std::memcpy(original.blk[1], adaptive, sizeof(adaptive));
+   u8_t sum = 0;
+   for (u32_t idx=1; idx<sizeof(adaptive); idx++) sum += adaptive[idx];
+   original.blk[1][sizeof(adaptive)] = static_cast<u8_t>(0x100 - sum);
+   EDID.Clear();
+   std::memcpy(EDID.getEDID(), &original, sizeof(original));
+   EDID.genChksum(1);
+   std::memcpy(&original, EDID.getEDID(), sizeof(original));
+   check(parse(EDID), "parse Adaptive Sync descriptors");
+   edi_grp_cl* first = find_subgroup(EDID, "DID-AS");
+   edi_grp_cl* second = NULL;
+   if (first != NULL) {
+      edi_grp_cl* block = first->getParentGrp();
+      if ((block != NULL) && (block->getSubGrpCount() == 2)) second = block->getSubGroup(1);
+   }
+   name.Empty();
+   if (first != NULL) first->getGrpName(EDID, name);
+   check((second != NULL) && (name == wxc_String("48–320 Hz, native")),
+         "Adaptive Sync descriptors are named by their range");
+   check((value_of(EDID, first, "Native panel range") == 1) &&
+         (value_of(EDID, first, "Increase without jitter") == 0) &&
+         (value_of(EDID, first, "Refresh type") == 1) &&
+         (value_of(EDID, first, "No seamless transition") == 1) &&
+         (value_of(EDID, first, "Decrease without jitter") == 1) &&
+         (value_of(EDID, first, "Maximum duration increase") == 16) &&
+         (value_of(EDID, first, "Minimum refresh") == 48) &&
+         (value_of(EDID, first, "Maximum refresh") == 320) &&
+         (value_of(EDID, first, "Maximum duration decrease") == 8) &&
+         (value_of(EDID, second, "Native panel range") == 0) &&
+         (value_of(EDID, second, "Increase without jitter") == 1) &&
+         (value_of(EDID, second, "Minimum refresh") == 40) &&
+         (value_of(EDID, second, "Maximum refresh") == 144),
+         "Adaptive Sync fields decode");
+   edi_dynfld_t* increase = find_field(second, "Maximum duration increase");
+   wxc_String quarter = "2.5";
+   u32_t unused = 0;
+   check(write(EDID, second, "Maximum refresh", 165) && (increase != NULL) &&
+         RCD_IS_OK((EDID.*increase->field.handlerfn)(OP_WRSTR, quarter, unused, increase)),
+         "Adaptive Sync fields accept new values");
+   check(RCD_IS_OK(EDID.AssembleEDID()) &&
+         (EDID.getEDID()->blk[1][16] == 10) && (EDID.getEDID()->blk[1][18] == 164) &&
+         (EDID.getEDID()->blk[1][19] == 0x00) && (EDID.getEDID()->blk[1][21] == 0x5a) &&
+         (0 == std::memcmp(EDID.getEDID()->blk[1], original.blk[1], 16)),
+         "Adaptive Sync edits are written back, the extra bytes unchanged");
+
    std::printf("---\n%s\n", failures == 0 ? "ALL OK" : "FAILURES PRESENT");
    return failures == 0 ? 0 : 1;
 }

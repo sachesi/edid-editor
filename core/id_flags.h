@@ -97,6 +97,7 @@ enum { //block and groups IDs & flags
    ID_DISPLAYID_TYPE1 = 0x00180000,
    ID_DISPLAYID_TYPE7 = 0x00190000,
    ID_DISPLAYID_RANGE = 0x001A0000,
+   ID_DISPLAYID_ADAPTIVE = 0x001B0000,
 
    ID_SUBGRP_MASK = 0x007F0000, //mask for subgroups
    ID_PARENT_MASK = (ID_EDID_MASK|ID_CEA_MASK|ID_CEA_ET_MASK), //mask for parent groups

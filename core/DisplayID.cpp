@@ -28,6 +28,13 @@ sm_vmap DID_stereo_map = {
    {2, {0, "stereo on user action", NULL}}
 };
 
+sm_vmap DID_adaptive_map = {
+   {0, {0, "Fixed average V-total"                , NULL}},
+   {1, {0, "Fixed average and adaptive V-total"   , NULL}},
+   {2, {0, "Reserved"                             , NULL}},
+   {3, {0, "Reserved"                             , NULL}}
+};
+
 sm_vmap DID_product_map = {
    {0, {0, "Extension section"                   , NULL}},
    {1, {0, "Test structure"                      , NULL}},
@@ -197,6 +204,23 @@ rcode displayid_data_block_cl::init(const u8_t* inst, u32_t orflags,
       payload += 9;
       offset += 9;
       remaining = 0;
+   } else if ((version >= 0x20) && (inst[0] == 0x2b)) {
+      u32_t size = 6 + ((inst[1] >> 4) & 7);
+      while (remaining >= size) {
+         displayid_adaptive_sync_cl* range = new displayid_adaptive_sync_cl;
+         range->setDataSize(size);
+         retU = range->init(payload, T_SUB_GRP|T_NO_MOVE, this);
+         if (! RCD_IS_OK(retU)) {
+            delete range;
+            return retU;
+         }
+         range->setRelOffs(offset);
+         range->setAbsOffs(abs_offs + offset);
+         subgroups.Append(range);
+         payload += size;
+         offset += size;
+         remaining -= size;
+      }
    } else if (inst[0] == 0x81) {
       //CTA-861 data blocks; blocks with sub-groups of their own stay raw
       while (remaining > 0) {
@@ -437,6 +461,49 @@ rcode displayid_range_cl::init(const u8_t* inst, u32_t orflags, edi_grp_cl* pare
                       "DID-RANGE");
 }
 
+//Adaptive Sync descriptors, laid out as edid-decode reads them
+const edi_field_t displayid_adaptive_sync_cl::fields[] = {
+   {&EDID_cl::BitVal, 0, 0, 0, 1, F_BIT|F_INT, 0, 1,
+    "Native panel range", "The range is native to the panel"},
+   {&EDID_cl::BitVal, 0, 0, 1, 1, F_BIT|F_INT, 0, 1,
+    "Increase without jitter",
+    "A frame can be lengthened by the maximum duration increase without jitter"},
+   {&EDID_cl::BitF8Val, VS_DID_ADAPTIVE, 0, 2, 2, F_BFD|F_INT|F_VS, 0, 3,
+    "Refresh type", "How the refresh rate varies within the range"},
+   {&EDID_cl::BitVal, 0, 0, 4, 1, F_BIT|F_INT, 0, 1,
+    "No seamless transition",
+    "Changing between refresh rates in the range is not seamless"},
+   {&EDID_cl::BitVal, 0, 0, 5, 1, F_BIT|F_INT, 0, 1,
+    "Decrease without jitter",
+    "A frame can be shortened by the maximum duration decrease without jitter"},
+   {&EDID_cl::DisplayID_QuarterMs, 0, 1, 0, 1, F_FLT|F_MLS, 0, 255,
+    "Maximum duration increase", "Longest single frame lengthening, in 1/4 ms units"},
+   {&EDID_cl::ByteVal, 0, 2, 0, 1, F_BTE|F_INT|F_HZ|F_DN, 0, 255,
+    "Minimum refresh", "Minimum refresh rate"},
+   {&EDID_cl::DisplayID_MaxRefreshPlusOne, 0, 3, 0, 2, F_INT|F_HZ|F_DN, 1, 1024,
+    "Maximum refresh", "Maximum refresh rate: 1 more than the stored 10-bit value"},
+   {&EDID_cl::DisplayID_QuarterMs, 0, 5, 0, 1, F_FLT|F_MLS, 0, 255,
+    "Maximum duration decrease", "Longest single frame shortening, in 1/4 ms units"}
+};
+
+rcode displayid_adaptive_sync_cl::init(const u8_t* inst, u32_t orflags,
+                                       edi_grp_cl* parent) {
+   rcode retU;
+   if ((dat_sz < 6) || (dat_sz > 13)) RCD_RETURN_FAULT(retU);
+   parent_grp = parent;
+   type_id.t32 = ID_DISPLAYID_ADAPTIVE | T_SUB_GRP | T_NO_MOVE | (orflags & T_MODE_EDIT);
+   CopyInstData(inst, dat_sz);
+   return init_fields(fields, inst_data, sizeof(fields) / sizeof(fields[0]),
+                      false, "Adaptive Sync Range", "DisplayID Adaptive Sync descriptor",
+                      "DID-AS");
+}
+
+void displayid_adaptive_sync_cl::getGrpName(EDID_cl& /*EDID*/, wxc_String& gp_name) {
+   u32_t maximum = 1 + inst_data[3] + ((inst_data[4] & 0x03) << 8);
+   gp_name.Printf("%u–%u Hz%s", inst_data[2], maximum,
+                  (inst_data[0] & 0x01) ? ", native" : "");
+}
+
 rcode displayid_raw_payload_cl::init(const u8_t* inst, u32_t orflags,
                                      edi_grp_cl* parent) {
    rcode retU;
@@ -538,6 +605,58 @@ rcode EDID_cl::DisplayID_MaxRefresh(u32_t op, wxc_String& sval, u32_t& ival,
    }
    inst[0] = value & 0xff;
    inst[1] = (inst[1] & 0xfc) | ((value >> 8) & 0x03);
+   RCD_RETURN_OK(retU);
+}
+
+//Adaptive Sync: 10 bits, low byte first, holding the rate minus one
+rcode EDID_cl::DisplayID_MaxRefreshPlusOne(u32_t op, wxc_String& sval, u32_t& ival,
+                                           edi_dynfld_t* p_field) {
+   rcode retU;
+   u8_t* inst = getValPtr(p_field);
+   if (op == OP_READ) {
+      ival = 1 + (inst[0] | ((inst[1] & 0x03) << 8));
+      sval.Empty();
+      sval << ival;
+      RCD_RETURN_OK(retU);
+   }
+
+   ulong value = ival;
+   if (op == OP_WRSTR) {
+      retU = getStrUint(sval, 10, 1, 1024, value);
+      if (! RCD_IS_OK(retU)) return retU;
+   } else if ((op != OP_WRINT) || (ival < 1) || (ival > 1024)) {
+      RCD_RETURN_FAULT(retU);
+   }
+   value -= 1;
+   inst[0] = value & 0xff;
+   inst[1] = (inst[1] & 0xfc) | ((value >> 8) & 0x03);
+   RCD_RETURN_OK(retU);
+}
+
+//a byte in 1/4 ms units; the integer value is the stored byte
+rcode EDID_cl::DisplayID_QuarterMs(u32_t op, wxc_String& sval, u32_t& ival,
+                                   edi_dynfld_t* p_field) {
+   rcode retU;
+   u8_t* inst = getValPtr(p_field);
+   if (op == OP_READ) {
+      ival = inst[0];
+      sval.Printf("%.2f", ival / 4.0);
+      RCD_RETURN_OK(retU);
+   }
+
+   long code;
+   if (op == OP_WRSTR) {
+      float value;
+      retU = getStrFloat(sval, 0.0, 63.75 + 0.005, value);
+      if (! RCD_IS_OK(retU)) return retU;
+      code = std::lround(value * 4.0);
+   } else if (op == OP_WRINT) {
+      code = ival;
+   } else {
+      RCD_RETURN_FAULT(retU);
+   }
+   if ((code < 0) || (code > 255)) RCD_RETURN_FAULT(retU);
+   inst[0] = code;
    RCD_RETURN_OK(retU);
 }
 

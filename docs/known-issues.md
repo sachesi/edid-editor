@@ -48,3 +48,9 @@ them.
 10. **Room Configuration Data Block, speaker location descriptors.** CTA-861-H mostly
     agrees with CTA-861-G, but defines default values for Xmax, Ymax and Zmax, stating,
     apparently in error, that 0x10 (16) corresponds to 32 decimeters.
+
+11. **DisplayID 2.x Adaptive Sync Data Block** (tag 0x2B). Its descriptors are decoded
+    as `edid-decode` reads them, which the tests check; bit 4 of the first byte set means
+    that changing between refresh rates is not seamless. Other DisplayID 2.x blocks
+    without a decoder of their own, such as the Display Parameters, are shown as data
+    bytes.
