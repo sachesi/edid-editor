@@ -16,6 +16,8 @@
 #include "CEA_ET_class.h"
 #include "EDID_text.h"
 #include "EDID_document.h"
+#include "EDID_names.h"
+#include "EDID_timing.h"
 #include "EDID_display.h"
 #include "EDID_summary.h"
 #include "EDID_compare.h"
@@ -157,21 +159,6 @@ struct wxedid_wnd {
    u32_t               invalid_fields;
 };
 
-enum timing_field {
-   TIMING_PIXCLK,
-   TIMING_HACTIVE,
-   TIMING_HBLANK,
-   TIMING_VACTIVE,
-   TIMING_VBLANK,
-   TIMING_HOFFSET,
-   TIMING_HWIDTH,
-   TIMING_VOFFSET,
-   TIMING_VWIDTH,
-   TIMING_HBORDER,
-   TIMING_VBORDER,
-   TIMING_FIELD_COUNT,
-};
-
 struct wxedid_timing {
    wxedid_wnd*   wnd;
    edi_grp_cl*   pgrp;
@@ -189,6 +176,7 @@ struct wxedid_timing {
    GtkWidget*    drawing;
    GtkWidget*    summary;
    GtkWidget*    page;
+   edid_timing_layout layout;
    double        pixel_hz_factor;
    bool          updating;
    bool          editing;
@@ -215,7 +203,6 @@ static void wnd_record_history(wxedid_wnd* wnd, edi_grp_cl* group,
                                edi_dynfld_t* field, bool integer,
                                const wxc_String& before_text, u32_t before_value,
                                const wxc_String& after_text, u32_t after_value);
-static std::string field_display_name(const char* name);
 static void wnd_request_refresh(wxedid_wnd* wnd, edi_grp_cl* group,
                                 edi_dynfld_t* field, bool type_changed, bool now);
 static void wnd_schedule_refresh(wxedid_wnd* wnd);
@@ -236,20 +223,9 @@ static char* document_basename(const char* path) {
    return g_path_get_basename(path);
 }
 
-//group name as shown: some core names start in lower case ("not used")
-static std::string group_display_name(edi_grp_cl* pgrp, EDID_cl& EDID) {
-   wxc_String name;
-   pgrp->getGrpName(EDID, name);
-   std::string display = name.std_str();
-   if (! display.empty() && (display[0] >= 'a') && (display[0] <= 'z')) {
-      display[0] = static_cast<char>(display[0] - 'a' + 'A');
-   }
-   return display;
-}
-
 static void wnd_refresh_group_title(wxedid_wnd* wnd, edi_grp_cl* pgrp) {
    if (pgrp == NULL) return;
-   gtk_label_set_text(wnd->group_title, group_display_name(pgrp, wnd->doc->EDID).c_str());
+   gtk_label_set_text(wnd->group_title, edid_group_display_name(pgrp, wnd->doc->EDID).c_str());
 }
 
 //tree item: GObject holding an edi_grp_cl* for GtkTreeListModel
@@ -408,7 +384,7 @@ static void row_show_validation(wxedid_row* row, rcode result) {
    gtk_label_set_text(row->error_label, message);
    gtk_widget_set_visible(GTK_WIDGET(row->error_label), TRUE);
 
-   std::string field = field_display_name(row->pfld->field.name);
+   std::string field = edid_field_display_name(row->pfld->field.name);
    char banner[680];
    snprintf(banner, sizeof(banner), "%s: %s", field.c_str(), message);
    adw_banner_set_title(row->wnd->banner, banner);
@@ -624,228 +600,6 @@ static void fields_refresh(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl& EDID) {
    rows_reload(list, pgrp, &EDID, wnd);
 }
 
-static std::string field_display_name(const char* name) {
-   struct field_name {
-      const char* raw;
-      const char* display;
-   };
-   static const field_name names[] = {
-      {"header", "Header"},
-      {"mfc_id", "Manufacturer ID"},
-      {"prod_id", "Product ID"},
-      {"serial", "Serial number"},
-      {"prod_week", "Manufacture week"},
-      {"prod_year", "Manufacture year"},
-      {"edid_ver", "EDID version"},
-      {"edid_rev", "EDID revision"},
-      {"num_extblk", "Extension blocks"},
-      {"checksum", "Checksum"},
-      {"Input Type", "Input type"},
-      {"VESA compat", "VESA compatibility"},
-      {"IF Type", "Interface type"},
-      {"Color Depth", "Color depth"},
-      {"sync_green", "Sync on green"},
-      {"comp_sync", "Composite sync"},
-      {"sep_sync", "Separate sync"},
-      {"blank_black", "Blank-to-black setup"},
-      {"sync_wh_lvl", "Signal levels"},
-      {"max_hsize", "Screen width"},
-      {"max_vsize", "Screen height"},
-      {"dpms_off", "DPMS off"},
-      {"dpms_susp", "DPMS suspend"},
-      {"dpms_stby", "DPMS standby"},
-      {"vsig_format", "Signal format"},
-      {"std_srbg", "sRGB default"},
-      {"dtd0_native", "Native preferred timing"},
-      {"gtf_cfreq", "Continuous frequency"},
-      {"red_x", "Red x"}, {"red_y", "Red y"},
-      {"green_x", "Green x"}, {"green_y", "Green y"},
-      {"blue_x", "Blue x"}, {"blue_y", "Blue y"},
-      {"white_x", "White x"}, {"white_y", "White y"},
-      {"X-res", "Horizontal resolution"},
-      {"Y-res", "Vertical resolution"},
-      {"V-freq", "Refresh rate"},
-      {"V-refresh", "Refresh rate"},
-      {"asp_ratio", "Aspect ratio"},
-      {"AspRatio", "Aspect ratio"},
-      {"DMT_1", "DMT code"},
-      {"DMT_2", "DMT code"},
-      {"CVT_3", "CVT code"},
-      {"H-Active pix", "Horizontal active"},
-      {"H-Blank pix", "Horizontal blanking"},
-      {"H-Border pix", "Horizontal border"},
-      {"H-Sync offs", "Horizontal sync offset"},
-      {"H-Sync width", "Horizontal sync width"},
-      {"V-Active lines", "Vertical active"},
-      {"V-Active lin", "Vertical active"},
-      {"V-Blank lines", "Vertical blanking"},
-      {"V-Border lines", "Vertical border"},
-      {"V-Sync offs", "Vertical sync offset"},
-      {"V-Sync width", "Vertical sync width"},
-      {"H-Size", "Image width"},
-      {"V-Size", "Image height"},
-      {"sync_type", "Sync type"},
-      {"Hsync_type", "Horizontal sync type"},
-      {"Vsync_type", "Vertical sync type"},
-      {"il2w_stereo", "Interleaved stereo"},
-      {"stereo_mode", "Stereo mode"},
-      {"interlace", "Interlaced"},
-      {"zero_hdr", "Descriptor header"},
-      {"desc_type", "Descriptor type"},
-      {"min_Vfreq", "Minimum vertical rate"},
-      {"max_Vfreq", "Maximum vertical rate"},
-      {"min_Hfreq", "Minimum horizontal rate"},
-      {"max_Hfreq", "Maximum horizontal rate"},
-      {"max_PixClk", "Maximum pixel clock"},
-      {"mrl_ext", "Timing support"},
-      {"sfreq_sec", "Secondary curve start"},
-      {"gtf_c", "GTF C"}, {"gtf_m", "GTF M"}, {"gtf_k", "GTF K"}, {"gtf_j", "GTF J"},
-      {"CVT_majorV", "CVT major version"},
-      {"CVT_minorV", "CVT minor version"},
-      {"maxPixClk_apb", "Pixel clock precision"},
-      {"max_HApix", "Maximum active pixels"},
-      {"aspr_4_3", "4:3"}, {"aspr_16_9", "16:9"}, {"aspr_16_10", "16:10"},
-      {"aspr_5_4", "5:4"}, {"aspr_15_9", "15:9"},
-      {"blank_std", "Standard blanking"},
-      {"blank_rb", "Reduced blanking"},
-      {"pref_ar", "Preferred aspect ratio"},
-      {"H_shrink", "Horizontal shrink"},
-      {"H_stretch", "Horizontal stretch"},
-      {"V_shrink", "Vertical shrink"},
-      {"V_stretch", "Vertical stretch"},
-      {"pref_vref", "Preferred refresh rate"},
-      {"hex_text", "Text bytes"},
-      {"wp1_idx", "White point 1 index"}, {"wp1_x", "White point 1 x"},
-      {"wp1_y", "White point 1 y"}, {"wp1_gamma", "White point 1 gamma"},
-      {"wp2_idx", "White point 2 index"}, {"wp2_x", "White point 2 x"},
-      {"wp2_y", "White point 2 y"}, {"wp2_gamma", "White point 2 gamma"},
-      {"vref_50", "50 Hz"}, {"vref_60", "60 Hz"}, {"vref_60_rb", "60 Hz reduced blanking"},
-      {"vref_75", "75 Hz"}, {"vref_85", "85 Hz"},
-      {"num_dtd", "Native timings"},
-      {"Blk length", "Block length"},
-      {"Blk_rev", "Block revision"},
-      {"blk_rev", "Block revision"},
-      {"Tag Code", "Tag code"},
-      {"Ext Tag Code", "Extended tag code"},
-      {"IEEE-OUI", "IEEE OUI"},
-      {"num_chn", "Channels"},
-      {"AFC", "Audio format"},
-      {"ACE_TC", "Audio coding extension"},
-      {"AFC_dep_val", "Format-dependent value"},
-      {"sf_32kHz", "32 kHz"}, {"sf_44.1kHz", "44.1 kHz"}, {"sf_48kHz", "48 kHz"},
-      {"sf_88.2kHz", "88.2 kHz"}, {"sf_96kHz", "96 kHz"}, {"sf_176.4kHz", "176.4 kHz"},
-      {"sf_192kHz", "192 kHz"},
-      {"sample16b", "16-bit"}, {"sample20b", "20-bit"}, {"sample24b", "24-bit"},
-      {"s16bit", "16-bit"}, {"s20bit", "20-bit"}, {"s24bit", "24-bit"},
-      {"FL_FR", "Front left/right"},
-      {"LFE1", "Low-frequency effects 1"},
-      {"LFE2", "Low-frequency effects 2"},
-      {"FC", "Front center"},
-      {"BL_BR", "Back left/right"},
-      {"BC", "Back center"},
-      {"FLC_FRC", "Front left/right of center"},
-      {"FLW_FRW", "Front left/right wide"},
-      {"TpFL_TpFR", "Top front left/right"},
-      {"TpC", "Top center"},
-      {"TpFC", "Top front center"},
-      {"LS_RS", "Left/right surround"},
-      {"TpBC", "Top back center"},
-      {"SiL_SiR", "Side left/right"},
-      {"TpSiL_TpSiR", "Top side left/right"},
-      {"TpBL_TpBR", "Top back left/right"},
-      {"BtFC", "Bottom front center"},
-      {"BtFL_BtFR", "Bottom front left/right"},
-      {"src phy", "Physical address"},
-      {"Supports_AI", "Supports AI"},
-      {"DC_48bit", "Deep color 48-bit"},
-      {"DC_36bit", "Deep color 36-bit"},
-      {"DC_30bit", "Deep color 30-bit"},
-      {"DC_Y444", "Deep color in YCbCr 4:4:4"},
-      {"DC_48bit_420", "Deep color 48-bit 4:2:0"},
-      {"DC_36bit_420", "Deep color 36-bit 4:2:0"},
-      {"DC_30bit_420", "Deep color 30-bit 4:2:0"},
-      {"DVI_dual", "DVI dual link"},
-      {"Max_TMDS", "Maximum TMDS clock"},
-      {"latency_f", "Latency present"},
-      {"i_latency", "Interlaced latency present"},
-      {"Video iLatency", "Interlaced video latency"},
-      {"Audio iLatency", "Interlaced audio latency"},
-      {"SCDC_Present", "SCDC present"},
-      {"RR_Capable", "Read request capable"},
-      {"LTE_340Mcsc_Scramble", "Scrambling at 340 Mcsc or less"},
-      {"Max_FRL_Rate", "Maximum FRL rate"},
-      {"ALLM", "Auto low latency mode"},
-      {"FVA", "Fast vactive"},
-      {"CNMVRR", "Negative MVRR"},
-      {"CinemaVRR", "Cinema VRR"},
-      {"M_delta", "M delta"},
-      {"VRRmin", "Minimum VRR"},
-      {"VRRmax", "Maximum VRR"},
-      {"QMS_TFRmin", "QMS minimum TFR"},
-      {"QMS_TFRmax", "QMS maximum TFR"},
-      {"DSC_1p2", "DSC 1.2"},
-      {"DSC_Native_420", "DSC native 4:2:0"},
-      {"DSC_All_bpp", "DSC all bit depths"},
-      {"DSC_10bpc", "DSC 10 bpc"},
-      {"DSC_12bpc", "DSC 12 bpc"},
-      {"DSC_16bpc", "DSC 16 bpc"},
-      {"DSC_MaxSlices", "DSC maximum slices"},
-      {"DSC_Max_FRL_Rate", "DSC maximum FRL rate"},
-      {"DSC_TotalChunkKBytes", "DSC total chunk size"},
-      {"UHD_VIC", "UHD VIC"},
-      {"EEODB_count", "Block count"},
-      {"Feature_Caps", "Feature capabilities"},
-      {"Min_Refresh", "Minimum refresh rate"},
-      {"Max_Refresh", "Maximum refresh rate"},
-      {"Max_Refresh_8bit", "Maximum refresh rate (8-bit)"},
-      {"Flags_1x", "FreeSync 1 flags"},
-      {"Flags_2x", "FreeSync 2 flags"},
-      {"Max_Luminance", "Maximum luminance"},
-      {"Min_Luminance", "Minimum luminance"},
-      {"Max_Luminance_2", "Maximum luminance 2"},
-      {"Min_Luminance_2", "Minimum luminance 2"},
-      {"SMPTE", "SMPTE ST 2084"},
-      {"HLG", "Hybrid log-gamma"},
-      {"SDR", "SDR gamma"},
-      {"HDR", "HDR gamma"},
-      {"SM_0", "Static metadata type 1"},
-      {"max_lum", "Maximum luminance"},
-      {"avg_lum", "Average luminance"},
-      {"min_lum", "Minimum luminance"},
-      {"QY", "YCC quantization selectable"},
-      {"QS", "RGB quantization selectable"},
-      {"S_PT01", "Preferred timing scan"},
-      {"S_IT01", "IT scan"},
-      {"S_CE01", "CE scan"},
-   };
-
-   for (const field_name& item : names) {
-      if (0 == strcmp(name, item.raw)) return item.display;
-   }
-
-   //established timings: 800x600x60 -> 800×600 @ 60 Hz
-   unsigned width = 0;
-   unsigned height = 0;
-   unsigned rate = 0;
-   char mode = 0;
-   int fields = sscanf(name, "%ux%ux%u%c", &width, &height, &rate, &mode);
-   if ((fields >= 3) && (width > 0) && ((fields == 3) || (mode == 'i'))) {
-      char timing[48];
-      snprintf(timing, sizeof(timing), "%u×%u%s @ %u Hz", width, height,
-               (fields == 4) ? "i" : "", rate);
-      return timing;
-   }
-
-   std::string display = name;
-   for (char& ch : display) {
-      if (ch == '_') ch = ' ';
-   }
-   if (! display.empty() && (display[0] >= 'a') && (display[0] <= 'z')) {
-      display[0] = (char) (display[0] - 'a' + 'A');
-   }
-   return display;
-}
-
 static std::string field_help_summary(const char* description) {
    if ((description == NULL) || (*description == 0)) return {};
 
@@ -904,7 +658,7 @@ static void field_help_popup(GtkMenuButton* button, gpointer user_data) {
    gtk_widget_set_margin_end(box, 6);
    gtk_widget_set_margin_top(box, 6);
    gtk_widget_set_margin_bottom(box, 6);
-   GtkWidget* title = gtk_label_new(field_display_name(pfld->field.name).c_str());
+   GtkWidget* title = gtk_label_new(edid_field_display_name(pfld->field.name).c_str());
    gtk_label_set_xalign(GTK_LABEL(title), 0.0);
    gtk_widget_add_css_class(title, "heading");
    gtk_box_append(GTK_BOX(box), title);
@@ -987,7 +741,7 @@ static void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
       gtk_widget_set_margin_bottom(card_content, 12);
       gtk_box_append(GTK_BOX(card), card_content);
 
-      std::string title = field_display_name(pfld->field.name);
+      std::string title = edid_field_display_name(pfld->field.name);
       wxc_String unit;
       pEDID->getValUnitName(unit, pfld->field.flags);
       if (unit == wxc_String("pix")) unit = "px";
@@ -1512,11 +1266,8 @@ static void timing_on_refresh_changed(GtkSpinButton* spin, gpointer user_data) {
    //the rate is shown rounded, so leaving the field must not move the clock
    if (std::fabs(target - current) < 0.005) return;
 
-   GtkSpinButton* clock = timing->spins[TIMING_PIXCLK];
-   const double step = gtk_adjustment_get_step_increment(
-      gtk_spin_button_get_adjustment(clock));
-   const double units = target * htotal * vtotal / timing->pixel_hz_factor;
-   gtk_spin_button_set_value(clock, std::max(step, std::round(units / step) * step));
+   gtk_spin_button_set_value(timing->spins[TIMING_PIXCLK],
+                             edid_timing_clock_for(timing->layout, target, htotal, vtotal));
    //show the rate the clock reaches, also when it did not change
    timing->updating = true;
    timing_update_outputs(timing);
@@ -1782,39 +1533,14 @@ static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
       return false;
    }
 
-   static const int dtd_fields[TIMING_FIELD_COUNT] = {
-      DTD_IDX_PIXCLK, DTD_IDX_HAPIX, DTD_IDX_HBPIX, DTD_IDX_VALIN,
-      DTD_IDX_VBLIN, DTD_IDX_HSOFFS, DTD_IDX_HSWIDTH, DTD_IDX_VSOFFS,
-      DTD_IDX_VSWIDTH, DTD_IDX_HBORD, DTD_IDX_VBORD,
-   };
-   static const int displayid_type1_fields[TIMING_FIELD_COUNT] = {
-      0, 5, 6, 10, 11, 7, 8, 12, 13, -1, -1,
-   };
-   static const int t7_fields[TIMING_FIELD_COUNT] = {
-      T7F_IDX_PIXCLK, T7F_IDX_HAPIX, T7F_IDX_HBPIX, T7F_IDX_VALIN,
-      T7F_IDX_VBLIN, T7F_IDX_HSOFFS, T7F_IDX_HSWIDTH, T7F_IDX_VSOFFS,
-      T7F_IDX_VSWIDTH, -1, -1,
-   };
-
-   const int* field_indices = NULL;
-   const char* code = pgrp->CodeName.c_str();
-   if (0 == strcmp(code, "DTD")) {
-      field_indices = dtd_fields;
-      timing->pixel_hz_factor = 10000.0;
-      gtk_label_set_text(timing->clock_unit, "×10 kHz");
-   } else if ((0 == strcmp(code, "DID-T1")) || (0 == strcmp(code, "DID-T7"))) {
-      //Type VII shares the Type I layout
-      field_indices = displayid_type1_fields;
-      timing->pixel_hz_factor = 1000.0;
-      gtk_label_set_text(timing->clock_unit, "kHz");
-   } else if (0 == strcmp(code, "T7VTB")) {
-      field_indices = t7_fields;
-      timing->pixel_hz_factor = 1000.0;
-      gtk_label_set_text(timing->clock_unit, "kHz");
-   } else {
+   edid_timing_layout& layout = timing->layout;
+   if (! edid_timing_layout_of(pgrp, layout)) {
       timing->pgrp = NULL;
       return false;
    }
+   const int* field_indices = layout.fields;
+   timing->pixel_hz_factor = layout.pixel_hz;
+   gtk_label_set_text(timing->clock_unit, (layout.pixel_hz == 10000.0) ? "×10 kHz" : "kHz");
 
    timing->updating = true;
    timing->pgrp = pgrp;
@@ -1852,14 +1578,12 @@ static bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
          return false;
       }
       double minimum = field->field.minv;
-      if (idx == TIMING_PIXCLK) minimum = 1;
       double maximum = field->field.maxv;
       double step = 1;
-      if ((idx == TIMING_PIXCLK) && (0 == strcmp(code, "DID-T1"))) {
-         maximum = 167772160;
-         step = 10;
-      } else if ((idx == TIMING_PIXCLK) && (0 == strcmp(code, "DID-T7"))) {
-         maximum = 16777216;
+      if (idx == TIMING_PIXCLK) {
+         minimum = 1;
+         step = layout.clock_step;
+         if (layout.clock_max > 0.0) maximum = layout.clock_max;
       }
       GtkAdjustment* adjustment = gtk_spin_button_get_adjustment(timing->spins[idx]);
       gtk_adjustment_set_lower(adjustment, minimum);
@@ -2072,7 +1796,7 @@ static void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
    it->bound_label = GTK_LABEL(label);
    std::string  display_name;
    if ((it != NULL) && (it->pgrp != NULL) && (it->pEDID != NULL)) {
-      display_name = group_display_name(it->pgrp, *it->pEDID);
+      display_name = edid_group_display_name(it->pgrp, *it->pEDID);
    } else if (it != NULL) {
       display_name = it->label;
    }
@@ -2113,7 +1837,7 @@ static void tree_name_unbind(GtkSignalListItemFactory* /*factory*/,
 
 static void wnd_refresh_tree_label(wxedid_item* item) {
    if ((item != NULL) && (item->pgrp != NULL) && (item->bound_label != NULL)) {
-      std::string name = group_display_name(item->pgrp, *item->pEDID);
+      std::string name = edid_group_display_name(item->pgrp, *item->pEDID);
       gtk_label_set_text(item->bound_label, name.c_str());
       gtk_widget_set_tooltip_text(GTK_WIDGET(item->bound_label), name.c_str());
    }
@@ -2213,7 +1937,7 @@ static void wnd_refresh_raw_view(wxedid_wnd* wnd) {
       }
    }
    if (mark_count > 0) {
-      std::string name = field_display_name(field->field.name);
+      std::string name = edid_field_display_name(field->field.name);
       char where[160];
       u32_t first = offset + mark_start;
       if ((field->field.flags & F_BIT) != 0) {
@@ -2664,7 +2388,7 @@ static void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
       adw_view_stack_page_set_visible(wnd->overview_page, FALSE);
    }
    std::string group_name = (it->pgrp != NULL)
-      ? group_display_name(it->pgrp, *it->pEDID) : std::string(it->label);
+      ? edid_group_display_name(it->pgrp, *it->pEDID) : std::string(it->label);
    gtk_label_set_text(wnd->group_title, group_name.c_str());
    if (it->pgrp != NULL) {
       char where[128];
@@ -3609,7 +3333,7 @@ static void wnd_present_compare(wxedid_wnd* wnd, const char* path, bool hex) {
          }
          GtkWidget* row = adw_action_row_new();
          adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
-         std::string title = entry.field.empty() ? "Group" : field_display_name(entry.field.c_str());
+         std::string title = entry.field.empty() ? "Group" : edid_field_display_name(entry.field.c_str());
          adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), title.c_str());
          adw_action_row_set_subtitle(ADW_ACTION_ROW(row), compare_change(entry, other).c_str());
          adw_action_row_set_subtitle_selectable(ADW_ACTION_ROW(row), TRUE);
