@@ -19,6 +19,7 @@
 RCD_AUTOGEN_DEFINE_UNIT
 
 #include <stddef.h>
+#include <cmath>
 
 #include "vmap.h"
 #include "CEA.h"
@@ -2125,7 +2126,7 @@ rcode EDID_cl::T7VTB_PixClk(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_
 
       if (op == OP_WRSTR) {
          retU = getStrFloat(sval, 0.001, 16777.215, fval);
-         ival = (fval * 1000.0); //kHz
+         ival = std::lround(fval * 1000.0); //kHz
       } else if (op == OP_WRINT) {
          RCD_SET_OK(retU);
       }

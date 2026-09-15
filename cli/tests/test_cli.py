@@ -78,6 +78,10 @@ def set_and_diff():
     assert checksums_valid(target)
     out, _ = run("diff", cea, str(target), status=1)
     assert "Pixel clock: 25.18 -> 25.20" in out
+    # rounded to the nearest 10 kHz, not truncated by float error
+    for clock in ("150.01", "189.89", "655.35"):
+        _, err = run("set", cea, "DTD:1", f"pixelclock={clock}", "-o", "-")
+        assert f"Pixel clock: 25.18 -> {clock}" in err, err
     run("diff", cea, cea)
     same = work / "same.bin"
     run("set", cea, "DTD:1", "hactivepix=640", "-o", str(same))

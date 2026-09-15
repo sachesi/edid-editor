@@ -63,7 +63,7 @@ rcode EDID_cl::DTD_PixClk(u32_t op, wxc_String& sval, u32_t& ival, edi_dynfld_t*
 
       if (op == OP_WRSTR) {
          retU = getStrFloat(sval, 0.0, 655.35, fval);
-         ival = (fval * 100.0);
+         ival = lround(fval * 100.0);
       } else if (op == OP_WRINT) {
          RCD_SET_OK(retU);
       }
