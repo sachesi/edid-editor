@@ -9,6 +9,12 @@ app_resources = import('gnome').compile_resources(
 app_sources = [
   'main.cpp',
   'window.cpp',
+  'document.cpp',
+  'fields.cpp',
+  'history.cpp',
+  'overview.cpp',
+  'sidebar.cpp',
+  'timing.cpp',
   app_resources,
 ]
 
