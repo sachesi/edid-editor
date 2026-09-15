@@ -100,6 +100,8 @@ The timing and the first one change places, converted between their formats when
 a DisplayID timing, and DisplayID timings lose a preferred flag that would compete. The
 first detailed timing holds a pixel clock of up to 655.35 MHz; a faster DisplayID timing
 is flagged preferred there instead, and `prefer` says which mode Linux then lists first.
+`prefer FILE GROUP off` clears the flag of a DisplayID timing; the first detailed timing
+is preferred by its place, so another timing has to be preferred to replace it.
 
 `fix-checksums` and `convert` work on the bytes alone, so they also serve data the
 editor refuses: the first recomputes every block's checksum, the second writes the same

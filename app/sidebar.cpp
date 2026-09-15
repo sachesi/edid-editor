@@ -332,9 +332,16 @@ void wnd_update_group_actions(wxedid_wnd* wnd) {
    g_simple_action_set_enabled(wnd->move_down_action,
                                (array != NULL) && array->CanMoveDn(index));
 
+   //a timing is made preferred, or loses its DisplayID flag; the first
+   //detailed timing is preferred by its place
    edid_timing_layout layout;
+   bool timing = (group != NULL) && edid_timing_layout_of(group, layout);
+   edid_preference preference = timing ? edid_timing_preference(wnd->doc->EDID, group)
+                                       : PREFERENCE_NONE;
    g_simple_action_set_enabled(wnd->make_preferred_action,
-                               (group != NULL) && edid_timing_layout_of(group, layout));
+                               timing && (preference == PREFERENCE_NONE));
+   g_simple_action_set_enabled(wnd->remove_preferred_action,
+                               timing && (preference == PREFERENCE_FLAGGED));
 
    u8_t tag = wnd_selected_extension_tag(wnd);
    g_simple_action_set_enabled(wnd->add_cta_action, tag == 0x02);
@@ -717,6 +724,26 @@ void wnd_make_preferred(wxedid_wnd* wnd, edi_grp_cl* timing) {
 void wnd_on_make_preferred(GSimpleAction*, GVariant*, gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
    wnd_make_preferred(wnd, wnd_selected_group(wnd));
+}
+
+void wnd_remove_preferred(wxedid_wnd* wnd, edi_grp_cl* timing) {
+   wnd_flush_refresh(wnd);
+   std::vector<edid_data_change> changes;
+   std::string message;
+   if (! edid_plan_not_preferred(wnd->doc->EDID, timing, changes, message)) {
+      wnd_show_error(wnd, message.c_str());
+      return;
+   }
+   std::string name = edid_group_display_name(timing, wnd->doc->EDID);
+   wnd_apply_changes(wnd, changes, timing);
+   char* text = g_strdup_printf(_("%s is no longer preferred"), name.c_str());
+   adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(text));
+   g_free(text);
+}
+
+void wnd_on_remove_preferred(GSimpleAction*, GVariant*, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   wnd_remove_preferred(wnd, wnd_selected_group(wnd));
 }
 
 void wnd_popup_group_menu(wxedid_wnd* wnd, double x, double y) {

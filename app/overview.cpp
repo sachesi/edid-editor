@@ -17,7 +17,11 @@ struct wnd_mode_choice {
 //after the click: the change rebuilds the page that holds the button
 static gboolean wnd_prefer_mode(gpointer data) {
    wnd_mode_choice* choice = static_cast<wnd_mode_choice*>(data);
-   wnd_make_preferred(choice->wnd, choice->group);
+   if (edid_timing_preference(choice->wnd->doc->EDID, choice->group) == PREFERENCE_FLAGGED) {
+      wnd_remove_preferred(choice->wnd, choice->group);
+   } else {
+      wnd_make_preferred(choice->wnd, choice->group);
+   }
    delete choice;
    return G_SOURCE_REMOVE;
 }
@@ -69,18 +73,32 @@ static GtkWidget* wnd_modes_group(wxedid_wnd* wnd) {
       g_object_set_data(G_OBJECT(row), "group", mode.group);
       g_signal_connect(row, "activated", G_CALLBACK(wnd_on_mode_activated), wnd);
 
-      GtkWidget* star = gtk_button_new_from_icon_name(mode.preferred ? "starred-symbolic"
-                                                                     : "non-starred-symbolic");
-      gtk_widget_add_css_class(star, "flat");
+      edid_preference preference = edid_timing_preference(EDID, mode.group);
+      //the first timing is preferred by its place: a plain star, as another
+      //timing has to replace it
+      GtkWidget* star = (preference == PREFERENCE_FIRST)
+         ? gtk_image_new_from_icon_name("starred-symbolic")
+         : gtk_button_new_from_icon_name(mode.preferred ? "starred-symbolic"
+                                                        : "non-starred-symbolic");
       gtk_widget_set_valign(star, GTK_ALIGN_CENTER);
-      char label[128];
-      snprintf(label, sizeof(label), mode.preferred ? _("%s is preferred") : _("Make %s preferred"),
-               title);
+      if (preference == PREFERENCE_FIRST) {
+         gtk_widget_set_margin_start(star, 10);
+         gtk_widget_set_margin_end(star, 10);
+      } else {
+         gtk_widget_add_css_class(star, "flat");
+      }
+      char label[160];
+      snprintf(label, sizeof(label),
+               (preference == PREFERENCE_FIRST) ? _("%s is preferred") :
+               (preference == PREFERENCE_FLAGGED) ? _("Remove the preferred flag of %s")
+                                                  : _("Make %s preferred"), title);
       gtk_widget_set_tooltip_text(star, label);
       gtk_accessible_update_property(GTK_ACCESSIBLE(star), GTK_ACCESSIBLE_PROPERTY_LABEL,
                                      label, -1);
       g_object_set_data(G_OBJECT(star), "group", mode.group);
-      g_signal_connect(star, "clicked", G_CALLBACK(wnd_on_mode_star), wnd);
+      if (preference != PREFERENCE_FIRST) {
+         g_signal_connect(star, "clicked", G_CALLBACK(wnd_on_mode_star), wnd);
+      }
       adw_action_row_add_suffix(ADW_ACTION_ROW(row), star);
       adw_preferences_group_add(ADW_PREFERENCES_GROUP(group), row);
    }

@@ -118,4 +118,17 @@ bool edid_plan_preferred(EDID_cl& EDID, edi_grp_cl* timing,
 
 void edid_apply_changes(const std::vector<edid_data_change>& changes, bool forward);
 
+enum edid_preference {
+   PREFERENCE_NONE,
+   PREFERENCE_FIRST,   //the first detailed timing, preferred by its place
+   PREFERENCE_FLAGGED, //flagged preferred in DisplayID
+};
+
+edid_preference edid_timing_preference(EDID_cl& EDID, edi_grp_cl* timing);
+
+//What clears the DisplayID flag of a preferred timing, without applying it. The
+//first detailed timing stays preferred by its place: another timing has to take it.
+bool edid_plan_not_preferred(EDID_cl& EDID, edi_grp_cl* timing,
+                             std::vector<edid_data_change>& changes, std::string& message);
+
 #endif

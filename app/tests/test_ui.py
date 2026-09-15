@@ -300,8 +300,12 @@ def functional(Atspi, app, fixture):
             press(Atspi, "Make 2560 × 1440 @ 59.95 Hz preferred")
             wait_for(lambda: named(Atspi, "2560x1440 @ 59.95Hz is now the preferred timing"),
                      "the star did not make the mode preferred")
-            wait_for(lambda: named(Atspi, "2560 × 1440 @ 59.95 Hz is preferred"),
-                     "the overview did not star the preferred mode")
+            first = wait_for(lambda: named(Atspi, "2560 × 1440 @ 59.95 Hz is preferred"),
+                             "the overview did not star the preferred mode")
+            assert role_of(first) != Atspi.Role.PUSH_BUTTON, \
+                "the star of the first timing, preferred by its place, can be pressed"
+            assert named(Atspi, "Make 640 × 480 @ 59.95 Hz preferred"), \
+                "the timing that left the first place has no star to take it back"
             select_group(Atspi, 15)
             wait_for(lambda: clock_is(241.5), "the mode did not move to the first timing")
             assert switch_on("Positive horizontal sync"), "the sync polarity was not carried"

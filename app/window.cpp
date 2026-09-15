@@ -440,6 +440,12 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->make_preferred_action));
    g_object_unref(wnd->make_preferred_action);
 
+   wnd->remove_preferred_action = g_simple_action_new("remove-preferred", NULL);
+   g_signal_connect(wnd->remove_preferred_action, "activate",
+                    G_CALLBACK(wnd_on_remove_preferred), wnd);
+   g_action_map_add_action(G_ACTION_MAP(window), G_ACTION(wnd->remove_preferred_action));
+   g_object_unref(wnd->remove_preferred_action);
+
    wnd->delete_action = g_simple_action_new("delete-group", NULL);
    g_signal_connect(wnd->delete_action, "activate",
                     G_CALLBACK(wnd_on_delete_group), wnd);
@@ -687,6 +693,10 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    g_menu_item_set_attribute(prefer_item, "hidden-when", "s", "action-disabled");
    g_menu_append_item(timing_section, prefer_item);
    g_object_unref(prefer_item);
+   GMenuItem* unprefer_item = g_menu_item_new(_("Remove Preferred Flag"), "win.remove-preferred");
+   g_menu_item_set_attribute(unprefer_item, "hidden-when", "s", "action-disabled");
+   g_menu_append_item(timing_section, unprefer_item);
+   g_object_unref(unprefer_item);
    g_menu_append_section(group_menu_model, NULL, G_MENU_MODEL(timing_section));
    g_object_unref(timing_section);
    g_menu_append_submenu(group_menu_model, _("Add"), G_MENU_MODEL(add_menu));

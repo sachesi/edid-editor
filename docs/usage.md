@@ -64,7 +64,10 @@ timing the preferred one without losing any other: the timing and the first one 
 places, converted between their formats, and competing DisplayID flags are cleared. The
 first detailed timing holds a pixel clock of up to 655.35 MHz, so a faster DisplayID
 timing is flagged preferred instead, and a dialog says which mode Linux then uses. Undo
-takes the whole change back.
+takes the whole change back. Remove Preferred Flag, or the star of a flagged timing,
+clears a DisplayID flag; the first detailed timing is preferred by its place, so another
+timing has to be made preferred to replace it. The Overview names the mode Linux uses as
+the preferred timing, and the first detailed timing too when that is another one.
 
 To add a mode, such as 150 Hz next to 144 Hz, choose Add → Detailed Timing with a group
 of a CTA-861 block selected. The new timing is a copy of the selected timing, or of the

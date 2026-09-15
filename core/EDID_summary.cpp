@@ -11,6 +11,7 @@
 
 #include "EDID_class.h"
 #include "EDID_summary.h"
+#include "EDID_timing.h"
 
 namespace {
 
@@ -162,7 +163,18 @@ void video_section(summary_state& state) {
    std::vector<edi_grp_cl*> base_timings;
    GroupAr_cl* base = state.EDID.BlkGroupsAr[EDI_BASE_IDX];
    for (u32_t idx=0; idx<base->GetCount(); idx++) collect(base->Item(idx), "DTD", base_timings);
-   if (! base_timings.empty()) {
+   //the mode Linux uses, and the first timing when systems reading only the base
+   //block use another
+   std::vector<edid_mode> all_modes = edid_modes(state.EDID);
+   size_t chosen = edid_default_mode(all_modes);
+   edi_grp_cl* first = edid_first_timing(state.EDID);
+   if (chosen < all_modes.size()) {
+      edi_grp_cl* preferred = all_modes[chosen].group;
+      add(state, section, "Preferred timing", group_name(state, preferred));
+      if ((first != NULL) && (preferred != first)) {
+         add(state, section, "First detailed timing", group_name(state, first));
+      }
+   } else if (! base_timings.empty()) {
       add(state, section, "Preferred timing", group_name(state, base_timings[0]));
    }
 

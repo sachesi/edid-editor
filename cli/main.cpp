@@ -50,8 +50,8 @@ const char* const usage_text =
 "  duplicate FILE GROUP          copy a group after itself\n"
 "  delete FILE GROUP             remove a group\n"
 "  move FILE GROUP up|down       move a group within its block\n"
-"  prefer FILE GROUP             make a detailed timing the preferred one, keeping\n"
-"                                every other timing\n"
+"  prefer FILE GROUP [off]       make a detailed timing the preferred one, keeping\n"
+"                                every other timing; off clears its DisplayID flag\n"
 "  fix-checksums FILE            recompute the checksum of every block\n"
 "  convert FILE                  the same bytes as binary or hexadecimal text\n"
 "\n"
@@ -1044,14 +1044,17 @@ int cmd_move() {
 }
 
 int cmd_prefer() {
-   need_args(3, "prefer FILE GROUP");
+   bool off = (opts.args.size() == 4) && (opts.args[3] == "off");
+   if (! off) need_args(3, "prefer FILE GROUP [off]");
    document doc;
    open_document(doc, opts.args[1]);
    output_path(doc.path);
    edi_grp_cl* group = find_group(doc.EDID, opts.args[2]).group;
    std::vector<edid_data_change> changes;
    std::string message;
-   if (! edid_plan_preferred(doc.EDID, group, changes, message)) fail(address(group) + ": " + message);
+   bool planned = off ? edid_plan_not_preferred(doc.EDID, group, changes, message)
+                      : edid_plan_preferred(doc.EDID, group, changes, message);
+   if (! planned) fail(address(group) + ": " + message);
    edid_apply_changes(changes, true);
    std::fprintf(report_stream(), "%s\n", message.c_str());
    save_document(doc);
@@ -1153,7 +1156,7 @@ int cmd_convert() {
 int cmd_complete();
 
 //the arguments of a command after COMMAND: F a file, G a group, N a field,
-//A any number of FIELD=VALUE, B a block, K a kind of group, M up or down
+//A any number of FIELD=VALUE, B a block, K a kind of group, M up or down, P off
 const struct command {
    const char* name;
    int (*run)();
@@ -1173,7 +1176,7 @@ const struct command {
    {"duplicate", cmd_duplicate, "FG", "copy a group after itself"},
    {"delete", cmd_delete, "FG", "remove a group"},
    {"move", cmd_move, "FGM", "move a group within its block"},
-   {"prefer", cmd_prefer, "FG", "make a detailed timing the preferred one"},
+   {"prefer", cmd_prefer, "FGP", "make a detailed timing the preferred one, or not"},
    {"fix-checksums", cmd_fix_checksums, "F", "recompute the checksum of every block"},
    {"convert", cmd_convert, "F", "the same bytes as binary or hexadecimal text"},
    {"complete", cmd_complete, "", ""},
@@ -1295,6 +1298,10 @@ int cmd_complete() {
    if (kind == 'M') {
       candidate("up");
       candidate("down");
+      return 0;
+   }
+   if (kind == 'P') {
+      candidate("off", "remove the DisplayID preferred flag");
       return 0;
    }
 

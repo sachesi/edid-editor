@@ -430,6 +430,44 @@ bool edid_plan_preferred(EDID_cl& EDID, edi_grp_cl* timing,
    return true;
 }
 
+edid_preference edid_timing_preference(EDID_cl& EDID, edi_grp_cl* timing) {
+   if ((timing != NULL) && (timing == edid_first_timing(EDID))) return PREFERENCE_FIRST;
+   edid_timing_values values;
+   if ((timing != NULL) && edid_timing_read(EDID, timing, values) &&
+       values.flag[TIMING_PREFERRED]) return PREFERENCE_FLAGGED;
+   return PREFERENCE_NONE;
+}
+
+bool edid_plan_not_preferred(EDID_cl& EDID, edi_grp_cl* timing,
+                             std::vector<edid_data_change>& changes, std::string& message) {
+   changes.clear();
+   edid_preference preference = edid_timing_preference(EDID, timing);
+   std::string name = (timing != NULL) ? mode_name(EDID, timing) : std::string();
+   if (preference == PREFERENCE_FIRST) {
+      message = name + " is the first detailed timing, which is always preferred; make "
+                "another timing preferred to take its place.";
+      return false;
+   }
+   if (preference == PREFERENCE_NONE) {
+      message = name + " is not preferred.";
+      return false;
+   }
+   edid_timing_layout layout;
+   edid_timing_layout_of(timing, layout);
+   std::vector<u8_t> before = data_of(timing);
+   write_field(EDID, timing->FieldsAr.Item(layout.flags[TIMING_PREFERRED]), 0);
+   std::vector<edid_mode> modes = edid_modes(EDID);
+   size_t best = edid_default_mode(modes);
+   message = name + " is no longer preferred";
+   if (best < modes.size()) {
+      message += "; Linux now uses " + mode_name(EDID, modes[best].group) + " by default";
+   }
+   message += ".";
+   changes.push_back({timing, before, data_of(timing)});
+   set_data(timing, before);
+   return true;
+}
+
 void edid_apply_changes(const std::vector<edid_data_change>& changes, bool forward) {
    for (const edid_data_change& change : changes) {
       set_data(change.group, forward ? change.after : change.before);

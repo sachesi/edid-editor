@@ -119,8 +119,10 @@ Removes a group.
 .BI move " file group " up | down
 Moves a group within its block.
 .TP
-.BI prefer " file group"
-Makes a detailed timing the preferred one.
+.BI prefer " file group \fR[\fPoff\fR]\fP"
+Makes a detailed timing the preferred one, or with
+.B off
+clears the preferred flag of a DisplayID timing.
 It changes places with the first detailed timing of the base block, which every system
 prefers, converted between formats when it is a DisplayID timing, and DisplayID timings
 lose a preferred flag that would compete.

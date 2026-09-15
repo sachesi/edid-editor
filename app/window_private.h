@@ -126,6 +126,7 @@ struct wxedid_wnd {
    GSimpleAction*      ignore_errors_action;
    GSimpleAction*      ignore_read_only_action;
    GSimpleAction*      make_preferred_action;
+   GSimpleAction*      remove_preferred_action;
    GtkPopoverMenu*     group_menu;
    edi_grp_cl*         pending_delete;
    edi_grp_cl*         last_selected;  //restored when a search shows it again
@@ -318,6 +319,8 @@ gboolean wnd_on_tree_key(GtkEventControllerKey*, guint keyval,
 void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group = NULL);
 void wnd_make_preferred(wxedid_wnd* wnd, edi_grp_cl* timing);
 void wnd_on_make_preferred(GSimpleAction*, GVariant*, gpointer user_data);
+void wnd_remove_preferred(wxedid_wnd* wnd, edi_grp_cl* timing);
+void wnd_on_remove_preferred(GSimpleAction*, GVariant*, gpointer user_data);
 
 // history.cpp
 void wnd_update_history_state(wxedid_wnd* wnd);

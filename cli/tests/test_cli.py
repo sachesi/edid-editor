@@ -227,6 +227,19 @@ def preferred():
     assert back.read_bytes() == bytes(raw)
     out, _ = run("prefer", cea, "DTD:1", "-o", str(target))
     assert "is the first detailed timing" in out
+
+    # off clears a DisplayID flag; the first timing stays preferred by its place
+    out, _ = run("prefer", displayid, "DID-T1:1", "off", "-o", str(target))
+    assert "is no longer preferred; Linux now uses 640x480 @ 59.95 Hz" in out, out
+    assert run("get", str(target), "DID-T1:1", "preferred")[0].strip() == "0"
+    _, err = run("prefer", displayid, "DTD:1", "off", "-o", str(target), status=1)
+    assert "which is always preferred" in err
+    _, err = run("prefer", displayid, "DID-T1:2", "off", "-o", str(target), status=1)
+    assert "is not preferred" in err
+    info = run("info", displayid)[0]
+    assert "Preferred timing       2560x1440 @ 164.96 Hz" in info, info
+    assert "First detailed timing  640x480 @ 59.95Hz" in info, info
+    assert "First detailed timing" not in run("info", str(target))[0]
     _, err = run("prefer", cea, "MND", "-o", str(target), status=1)
     assert "only a detailed timing can be preferred" in err
 

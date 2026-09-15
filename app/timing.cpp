@@ -359,6 +359,14 @@ static void timing_on_refresh_changed(GtkSpinButton* spin, gpointer user_data) {
    timing->updating = false;
 }
 
+static void timing_on_star(GtkButton* button, gpointer user_data) {
+   wxedid_timing* timing = static_cast<wxedid_timing*>(user_data);
+   if (gtk_actionable_get_action_name(GTK_ACTIONABLE(button)) != NULL) return;
+   adw_toast_overlay_add_toast(timing->wnd->toast_overlay, adw_toast_new(
+      _("The first detailed timing is always preferred. Make another timing preferred to "
+        "replace it.")));
+}
+
 //a single bit of the timing, written as a field edit
 static void timing_on_flag_changed(GtkSwitch* toggle, GParamSpec*, gpointer user_data) {
    wxedid_timing* timing = static_cast<wxedid_timing*>(user_data);
@@ -571,6 +579,8 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_box_append(GTK_BOX(summary), refresh_box);
 
    timing->star = gtk_button_new_from_icon_name("non-starred-symbolic");
+   //without an action, as for the first timing, a press explains the star
+   g_signal_connect(timing->star, "clicked", G_CALLBACK(timing_on_star), timing);
    gtk_widget_add_css_class(timing->star, "flat");
    gtk_widget_add_css_class(timing->star, "circular");
    gtk_widget_set_valign(timing->star, GTK_ALIGN_CENTER);
@@ -779,13 +789,17 @@ bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
    }
    gtk_widget_set_visible(timing->signal_card, any_flag);
 
-   bool preferred = false;
-   for (const edid_mode& mode : edid_modes(*pEDID)) {
-      if (mode.group == pgrp) preferred = mode.preferred;
-   }
-   gtk_button_set_icon_name(GTK_BUTTON(timing->star),
-                            preferred ? "starred-symbolic" : "non-starred-symbolic");
-   const char* star_label = preferred ? _("Preferred timing") : _("Make Preferred");
+   //the star makes the timing preferred, or takes its DisplayID flag away
+   edid_preference preference = edid_timing_preference(*pEDID, pgrp);
+   gtk_button_set_icon_name(GTK_BUTTON(timing->star), (preference == PREFERENCE_NONE)
+                            ? "non-starred-symbolic" : "starred-symbolic");
+   gtk_actionable_set_action_name(GTK_ACTIONABLE(timing->star),
+      (preference == PREFERENCE_NONE) ? "win.make-preferred" :
+      (preference == PREFERENCE_FLAGGED) ? "win.remove-preferred" : NULL);
+   const char* star_label = (preference == PREFERENCE_NONE) ? _("Make Preferred") :
+      (preference == PREFERENCE_FLAGGED) ? _("Remove Preferred Flag") :
+      _("The first detailed timing is always preferred. Make another timing preferred to "
+        "replace it.");
    gtk_widget_set_tooltip_text(timing->star, star_label);
    gtk_accessible_update_property(GTK_ACCESSIBLE(timing->star),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL, star_label, -1);
