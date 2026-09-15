@@ -76,8 +76,8 @@ recomputed, and a connected display is never written to.
     edid-editor-cli delete new.bin DTD:3 --in-place
     edid-editor-cli diff monitor.bin new.bin
 
-`set` takes a value as the field shows it, a named value from `describe`, or `on` and
-`off` for single bits. Fields are set in the order given, so a `refresh` after a change of
+`set` takes a value as the field shows it, a named value from `describe`, `on` and
+`off` for single bits, or a decimal number for bit fields shown in binary. Fields are set in the order given, so a `refresh` after a change of
 the blanking uses the new totals. A value the field refuses stops the command before
 anything is written. Fields derived from other data need `--edit-read-only`, like Edit Read-Only
 Fields in the editor, and a change that alters the type or layout of a group rebuilds it,

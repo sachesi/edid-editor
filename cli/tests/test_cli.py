@@ -170,6 +170,15 @@ def bytes_and_files():
     assert run("get", str(in_place), "DTD:1", "interlace")[0].strip() == "1"
 
 
+def binary_bits():
+    target = work / "bits.bin"
+    out, _ = run("set", cea, "DTD:1", "sync-type=2", "-o", str(target))
+    assert "Sync type: 0b11 -> 0b10" in out, out
+    run("set", cea, "DTD:1", "sync-type=0b01", "-o", str(target))
+    _, err = run("set", cea, "DTD:1", "sync-type=9", "-o", str(target), status=1)
+    assert "9 is not a valid value (0 to 3)" in err
+
+
 def json_output():
     items = json.loads(run("info", cea, "--json")[0])
     assert {"section": "Display", "label": "Name", "value": "GTK-PORT"} in items, items
@@ -226,7 +235,8 @@ for name, test in [("help and usage errors", help_and_usage), ("reading", readin
                    ("set and diff", set_and_diff), ("refresh rate", refresh),
                    ("refused writes", refused_writes),
                    ("group rebuild", rebuild), ("group structure", structure),
-                   ("conversion and files", bytes_and_files), ("JSON", json_output),
+                   ("conversion and files", bytes_and_files),
+                   ("binary bit fields", binary_bits), ("JSON", json_output),
                    ("shell completion", completion)]:
     check(name, test)
 shutil.rmtree(work, ignore_errors=True)

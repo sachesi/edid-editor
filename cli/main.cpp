@@ -840,6 +840,19 @@ void write_field(document& doc, const std::string& group_spec, const std::string
          break;
       }
    }
+   //bit fields shown in binary, as 0b11, also take a decimal number
+   u32_t number = 0;
+   if (! written && ((f.flags & F_BFD) != 0) && ((f.flags & F_INT) == 0) &&
+       (text.find_first_not_of("0123456789") == std::string::npos) &&
+       parse_number(text, 10, number)) {
+      if ((number < f.minv) || (number > f.maxv)) {
+         fail(where + ": " + text + " is not a valid value (" + std::to_string(f.minv) +
+              " to " + std::to_string(f.maxv) + ")");
+      }
+      wxc_String unused;
+      result = (doc.EDID.*f.handlerfn)(OP_WRINT, unused, number, field);
+      written = true;
+   }
    if (! written) {
       std::string value = text;
       if ((f.flags & F_BIT) != 0) {
