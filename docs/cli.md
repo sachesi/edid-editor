@@ -89,7 +89,7 @@ would.
 editor refuses: the first recomputes every block's checksum, the second writes the same
 bytes as binary or text.
 
-## Scripts
+## Scripts and shells
 
 `--json` prints `info`, `groups`, `fields`, `diff` and `displays` as JSON, with the same
 names and values as the text:
@@ -103,6 +103,18 @@ names and values as the text:
       "raw": 2560,
       ...
     }
+
+The completions for bash, zsh and fish, installed with the program, complete commands,
+options and files, and read groups, fields and named values from the file on the command
+line, with their names and current values where the shell shows descriptions:
+
+    $ edid-editor-cli set monitor.bin DTD:1 inter<Tab>
+    interlaced=  interleaved-stereo=
+    $ edid-editor-cli set monitor.bin VID color-depth=<Tab>
+    10 bits  12 bits  14 bits  16 bits  6 bits  8 bits  undefined
+
+They ask `edid-editor-cli complete`, which prints the candidates for the last word after
+the words before it; `man edid-editor-cli` describes it.
 
 ## Exit status
 

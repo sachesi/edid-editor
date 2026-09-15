@@ -1,0 +1,291 @@
+.TH EDID-EDITOR-CLI 1 2026-09-15 "EDID Editor" "User Commands"
+.SH NAME
+edid\-editor\-cli \- read and change EDID data from the command line
+.SH SYNOPSIS
+.B edid\-editor\-cli
+.I command
+.RI [ option ...]
+.RI [ argument ...]
+.SH DESCRIPTION
+.B edid\-editor\-cli
+reads and changes EDID, the data a display sends to describe itself, with the same
+parser as
+.BR edid\-editor (1),
+and without a display.
+It reads the EDID base block, CTA-861 extensions and DisplayID 1.x and 2.x blocks.
+.PP
+A
+.I file
+is binary EDID or hexadecimal text in the layouts
+.BR edid\-decode (1)
+and
+.B xrandr \-\-verbose
+print; the kind is recognised from the data, and
+.B \-
+reads standard input.
+The EDID of a connected display is read from its
+.I edid
+file under
+.IR /sys/class/drm ;
+see
+.BR displays .
+EDID data that breaks the standard is refused unless
+.B \-\-ignore\-errors
+is given.
+.PP
+Options may come before or after the command and its arguments.
+.SH READING
+.TP
+.BI info " file"
+An overview of the display: name, manufacturer, date, input, screen size, timings,
+refresh ranges, color and HDR support, audio and extension blocks.
+.TP
+.BI report " file"
+Every group, field, value and unit, followed by the raw data.
+.TP
+.BI groups " file"
+Every group with its offset and code, block by block; sub-groups are indented under the
+group that holds them.
+These are the addresses the other commands take.
+.TP
+.BI fields " file group"
+The fields of a group with their values, units and notes: read-only, reserved, not used,
+or with named values.
+A detailed timing also lists its refresh rate.
+.TP
+.BI describe " file group field"
+A field in full: value, unit, range, the bytes it occupies, its description and its
+named values.
+.TP
+.BI get " file group field"
+The value of a field, as the editor shows it.
+.TP
+.BI diff " file1 file2"
+The fields whose values differ, by block and group, and the groups only one of the files
+has.
+Groups are paired by their code in order; checksums are left out.
+.TP
+.B displays
+The connected displays whose EDID is available, with the file it is read from.
+.SH CHANGING
+A changed EDID is written to the file given with
+.BR \-o ,
+or back to the file it was read from with
+.BR \-\-in\-place .
+It is written as hexadecimal text when the name ends in
+.I .hex
+or
+.IR .txt ,
+or is
+.B \-
+for standard output, and as binary otherwise.
+The new file replaces the old one only once it is complete, the checksums are recomputed,
+and nothing is ever written under
+.IR /sys .
+What each command changed is printed, to standard error when the EDID goes to standard
+output.
+.TP
+.BI set " file group field" = value " \fR...\fP"
+Writes fields of a group, in the order given; a value a field refuses stops the command
+before anything is written.
+A change that alters the type or layout of a group, such as a data block tag, rebuilds
+the group from its data.
+Fields derived from other data, such as lengths and offsets, need
+.BR \-\-edit\-read\-only .
+.TP
+.BI add " file block kind"
+Adds a group to a block, where the editor would put it.
+.I kind
+is
+.BR audio\-lpcm ,
+.BR audio\-extended ,
+.B video
+or
+.B timing
+for a CTA-861 block, and
+.B displayid
+for a DisplayID block.
+.TP
+.BI duplicate " file group"
+Copies a group after itself.
+.TP
+.BI delete " file group"
+Removes a group.
+.TP
+.BI move " file group " up | down
+Moves a group within its block.
+.TP
+.BI fix\-checksums " file"
+Recomputes the checksum of every block.
+.TP
+.BI convert " file"
+Writes the same bytes as binary or hexadecimal text.
+.PP
+.B fix\-checksums
+and
+.B convert
+work on the bytes alone, so they also serve data the parser refuses.
+.SH SHELL COMPLETION
+.TP
+.BI complete " \fR[\fPword\fR...]\fP current"
+Prints the candidates for the word
+.I current
+after the words before it, one to a line, each optionally followed by a tab and a
+description.
+Groups, fields and values are read from the file named in the words.
+The words are the command line after the program name, without options.
+Exit status 3 means that
+.I current
+is a file name, which the shell completes itself.
+.PP
+The completions for
+.BR bash (1),
+.BR zsh (1)
+and
+.BR fish (1)
+installed with the program use this command.
+.SH ADDRESSES
+A
+.I group
+is named by its offset as
+.B groups
+lists it
+.RB ( 0x036 ),
+by its code when only one group has it
+.RB ( MRL ),
+by the nth group with a code
+.RB ( DTD:2 ),
+or by both
+.RB ( DTD@0x036 ).
+Offsets change when groups are added, moved or removed.
+.PP
+A
+.I field
+is named by the name
+.B fields
+shows, or by the name the parser gives it, which
+.B describe
+adds when it differs.
+Names are matched without regard to case, spaces,
+.B \-
+and
+.BR _ ,
+so
+.BR "\(dqHorizontal active\(dq" ,
+.B horizontal\-active
+and
+.B hactivepix
+are the same field.
+.IB name : n
+is the nth field of a name that repeats, and
+.BI # n
+the nth field of the group.
+.PP
+A detailed timing also has a
+.B refresh
+field, in Hz, which follows from the pixel clock and the totals.
+Setting it sets the pixel clock that comes closest to the rate with the current
+blanking, in steps of the clock's unit; the rate reached is printed.
+A field of that name in another group, as standard timings have, is that field.
+.PP
+A
+.I value
+is text as the field shows it, a named value as
+.B describe
+lists it, or
+.BR on ,
+.BR off ,
+.BR yes ,
+.BR no ,
+.B true
+or
+.B false
+for a single bit.
+.SH OPTIONS
+.TP
+.BR \-o ", " \-\-output " \fIfile\fP"
+Where a changed EDID is written.
+.TP
+.BR \-i ", " \-\-in\-place
+Writes a changed EDID back to the file it was read from.
+.TP
+.B \-\-ignore\-errors
+Opens EDID data that breaks the standard, as Open Anyway does in the editor.
+.TP
+.B \-\-edit\-read\-only
+Allows writing fields derived from other data.
+.TP
+.BR \-q ", " \-\-quiet
+Leaves out notices about the data.
+.TP
+.B \-\-json
+Prints
+.BR info ,
+.BR groups ,
+.BR fields ,
+.B diff
+and
+.B displays
+as JSON: an array of objects, or for
+.B fields
+an object holding the group and an array of its fields.
+.TP
+.BR \-h ", " \-\-help
+Shows a summary of the commands and options.
+.TP
+.B \-\-version
+Shows the version.
+.SH EXIT STATUS
+.TP
+.B 0
+Success.
+.TP
+.B 1
+The data can't be read or written, a value is refused, or
+.B diff
+found differences.
+.TP
+.B 2
+A mistake in the command line.
+.TP
+.B 3
+.B complete
+asks for file names.
+.SH EXAMPLES
+Read the EDID of a connected display:
+.PP
+.RS
+.EX
+edid\-editor\-cli displays
+edid\-editor\-cli info /sys/class/drm/card1\-DP\-1/edid
+.EE
+.RE
+.PP
+Save it, raise the refresh rate of its first detailed timing, and compare:
+.PP
+.RS
+.EX
+cp /sys/class/drm/card1\-DP\-1/edid monitor.bin
+edid\-editor\-cli set monitor.bin DTD:1 refresh=75 \-o new.bin
+edid\-editor\-cli diff monitor.bin new.bin
+.EE
+.RE
+.PP
+Change fields in place, add an audio block to the first extension, and print the groups
+as JSON:
+.PP
+.RS
+.EX
+edid\-editor\-cli set new.bin VID "color\-depth=10 bits" \-\-in\-place
+edid\-editor\-cli add new.bin 1 audio\-lpcm \-\-in\-place
+edid\-editor\-cli groups new.bin \-\-json
+.EE
+.RE
+.SH SEE ALSO
+.BR edid\-editor (1),
+.BR edid\-decode (1),
+.BR xrandr (1)
+.SH BUGS
+Report bugs at
+.UR https://github.com/sachesi/edid\-editor/issues
+.UE .

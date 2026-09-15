@@ -1,0 +1,92 @@
+.TH EDID-EDITOR 1 2026-09-15 "EDID Editor" "User Commands"
+.SH NAME
+edid\-editor \- inspect and edit EDID data of displays
+.SH SYNOPSIS
+.B edid\-editor
+.RI [ option ...]
+.RI [ file ]
+.SH DESCRIPTION
+.B EDID Editor
+inspects and edits EDID, the data a display sends to describe itself: its name, size,
+timings, refresh ranges, color and HDR support, and audio formats.
+It reads the EDID base block, CTA-861 extensions and DisplayID 1.x and 2.x blocks.
+.PP
+A
+.I file
+given opens at start.
+Files ending in
+.I .hex
+or
+.I .txt
+are read as hexadecimal text, in the layouts printed by
+.BR edid\-decode (1),
+.B xrandr \-\-verbose
+or Export Hex; other files are read as binary EDID.
+Open from Display reads the EDID of a connected display from
+.IR /sys/class/drm ;
+the display itself is never written to.
+.PP
+An opened EDID starts on an overview of the display, which follows unsaved edits.
+The sidebar lists the blocks and their groups, and the fields of the selected group are
+shown with their plain names, units and descriptions.
+Detailed timings open in a visual editor, where typing a refresh rate sets the pixel
+clock.
+CTA-861 and DisplayID data blocks can be added, duplicated, moved and deleted, two EDIDs
+can be compared field by field, and Save recomputes the checksums.
+.PP
+.BR edid\-editor\-cli (1)
+does the same from a terminal.
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Shows the options.
+.TP
+.B \-\-help\-all
+Shows all options, including those of the GTK application framework.
+.SH KEYBOARD SHORTCUTS
+.TP
+.B Ctrl+O
+Open.
+.TP
+.B Ctrl+S
+Save.
+.TP
+.B Ctrl+Shift+S
+Save As.
+.TP
+.BR Ctrl+Z ", " Ctrl+Shift+Z
+Undo and Redo, for field edits and changes to groups.
+.TP
+.B Ctrl+F
+Search the groups; Escape clears the search.
+.TP
+.B Ctrl+?
+Show the keyboard shortcuts.
+.PP
+While the group list has focus:
+.TP
+.B Ctrl+D
+Duplicate the group.
+.TP
+.B Delete
+Delete the group.
+.TP
+.BR Alt+Up ", " Alt+Down
+Move the group.
+.TP
+.BR Shift+F10 ", " Menu
+Open the context menu.
+.SH FILES
+.TP
+.I $XDG_DATA_HOME/recently\-used.xbel
+The files opened or saved recently, shared with other applications.
+.TP
+.I /sys/class/drm/*/edid
+The EDID of connected displays, read by Open from Display.
+.SH SEE ALSO
+.BR edid\-editor\-cli (1),
+.BR edid\-decode (1)
+.SH BUGS
+Report bugs at
+.UR https://github.com/sachesi/edid\-editor/issues
+.UE .

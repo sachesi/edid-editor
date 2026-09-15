@@ -192,11 +192,42 @@ def json_output():
     assert "--json works with" in err
 
 
+def completion():
+    def words(*args, status=0):
+        lines = run("complete", *args, status=status)[0].splitlines()
+        return [line.split("\t")[0] for line in lines]
+    out = run("complete", "set", cea, "DTD:1", "")[0]
+    assert "pixel-clock=\t25.18 MHz\n" in out and "refresh=\t59.95 Hz\n" in out, out
+    assert "DTD:2\t640x480 @ 59.95Hz\n" in run("complete", "set", cea, "")[0]
+    assert "set" in words("") and "complete" not in words("")
+    assert words("info", "", status=3) == []
+    assert words("diff", cea, "", status=3) == []
+    groups = words("set", cea, "")
+    assert {"0x036", "DTD:1", "DTD:2", "MND", "VSD"} <= set(groups), groups
+    assert "DTD" not in groups
+    assert words("get", cea, "DTD:1", "") [:2] == ["pixel-clock", "horizontal-active"]
+    assert "refresh" in words("get", cea, "DTD:1", "")
+    assert "interlaced=" in words("set", cea, "DTD:1", "--in-place", "")
+    assert words("set", cea, "DTD:1", "interlaced=") == ["interlaced=on", "interlaced=off"]
+    assert "desctype=MND" in words("set", cea, "0x05A", "pixel-clock=1", "desctype=")
+    assert words("add", cea, "") == ["1"]
+    assert words("add", cea, "1", "") == ["audio-lpcm", "audio-extended", "video", "timing"]
+    assert words("add", displayid, "2", "") == ["displayid"]
+    assert words("move", cea, "VSD", "") == ["up", "down"]
+    assert words("displays", "") == [] and words("frob", "") == []
+    # every field offered is one the other commands take
+    for sample in cea, displayid:
+        for group in words("get", sample, ""):
+            for field in words("get", sample, group, ""):
+                run("get", sample, group, field)
+
+
 for name, test in [("help and usage errors", help_and_usage), ("reading", reading),
                    ("set and diff", set_and_diff), ("refresh rate", refresh),
                    ("refused writes", refused_writes),
                    ("group rebuild", rebuild), ("group structure", structure),
-                   ("conversion and files", bytes_and_files), ("JSON", json_output)]:
+                   ("conversion and files", bytes_and_files), ("JSON", json_output),
+                   ("shell completion", completion)]:
     check(name, test)
 shutil.rmtree(work, ignore_errors=True)
 sys.exit(1 if failures else 0)

@@ -20,6 +20,7 @@ release := "build"
 debug := "builddir"
 bindir := destdir + prefix + "/bin"
 datadir := destdir + prefix + "/share"
+mandir := datadir + "/man/man1"
 
 default:
     @just --list
@@ -55,8 +56,13 @@ test-ui: build-debug
 install:
     @test -x {{release}}/cli/edid-editor-cli || { echo "error: {{release}}/cli/edid-editor-cli missing; run 'just build' first" >&2; exit 1; }
     install -Dm755 {{release}}/cli/edid-editor-cli {{bindir}}/edid-editor-cli
+    install -Dm644 docs/edid-editor-cli.1 {{mandir}}/edid-editor-cli.1
+    install -Dm644 cli/completions/edid-editor-cli.bash {{datadir}}/bash-completion/completions/edid-editor-cli
+    install -Dm644 cli/completions/_edid-editor-cli {{datadir}}/zsh/site-functions/_edid-editor-cli
+    install -Dm644 cli/completions/edid-editor-cli.fish {{datadir}}/fish/vendor_completions.d/edid-editor-cli.fish
     if [ -x {{release}}/app/edid-editor ]; then \
         install -Dm755 {{release}}/app/edid-editor {{bindir}}/edid-editor; \
+        install -Dm644 docs/edid-editor.1 {{mandir}}/edid-editor.1; \
         install -Dm644 app/{{app_id}}.desktop {{datadir}}/applications/{{app_id}}.desktop; \
         install -Dm644 app/{{app_id}}.metainfo.xml {{datadir}}/metainfo/{{app_id}}.metainfo.xml; \
         install -Dm644 app/icons/{{app_id}}.svg {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg; \
@@ -69,6 +75,10 @@ install:
 
 uninstall:
     rm -f {{bindir}}/edid-editor {{bindir}}/edid-editor-cli
+    rm -f {{mandir}}/edid-editor.1 {{mandir}}/edid-editor-cli.1
+    rm -f {{datadir}}/bash-completion/completions/edid-editor-cli
+    rm -f {{datadir}}/zsh/site-functions/_edid-editor-cli
+    rm -f {{datadir}}/fish/vendor_completions.d/edid-editor-cli.fish
     rm -f {{datadir}}/applications/{{app_id}}.desktop {{datadir}}/metainfo/{{app_id}}.metainfo.xml
     rm -f {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg
     update-desktop-database -q {{datadir}}/applications || true

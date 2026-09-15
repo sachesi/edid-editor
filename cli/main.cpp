@@ -51,7 +51,10 @@ const char* const usage_text =
 "  move FILE GROUP up|down       move a group within its block\n"
 "  fix-checksums FILE            recompute the checksum of every block\n"
 "  convert FILE                  the same bytes as binary or hexadecimal text\n"
-
+"\n"
+"Shell completion:\n"
+"  complete [WORD...] CURRENT    candidates for CURRENT after WORD..., one to a\n"
+"                                line; exit status 3 asks for file names\n"
 "\n"
 "FILE is binary EDID or hexadecimal text, as printed by edid-decode or\n"
 "xrandr --verbose; - reads standard input. A connected display is read from\n"
@@ -1106,12 +1109,198 @@ int cmd_convert() {
    return 0;
 }
 
+int cmd_complete();
+
+//the arguments of a command after COMMAND: F a file, G a group, N a field,
+//A any number of FIELD=VALUE, B a block, K a kind of group, M up or down
+const struct command {
+   const char* name;
+   int (*run)();
+   const char* arguments;
+   const char* summary;
+} commands[] = {
+   {"info", cmd_info, "F", "overview of the display"},
+   {"report", cmd_report, "F", "every group, field, value and unit"},
+   {"groups", cmd_groups, "F", "groups and their addresses"},
+   {"fields", cmd_fields, "FG", "fields of a group"},
+   {"describe", cmd_describe, "FGN", "a field's description, range and named values"},
+   {"get", cmd_get, "FGN", "the value of a field"},
+   {"diff", cmd_diff, "FF", "fields that differ"},
+   {"displays", cmd_displays, "", "connected displays"},
+   {"set", cmd_set, "FGA", "write fields"},
+   {"add", cmd_add, "FBK", "add a group to a block"},
+   {"duplicate", cmd_duplicate, "FG", "copy a group after itself"},
+   {"delete", cmd_delete, "FG", "remove a group"},
+   {"move", cmd_move, "FGM", "move a group within its block"},
+   {"fix-checksums", cmd_fix_checksums, "F", "recompute the checksum of every block"},
+   {"convert", cmd_convert, "F", "the same bytes as binary or hexadecimal text"},
+   {"complete", cmd_complete, "", ""},
+};
+
+//a candidate, with a description after a tab for the shells that show one
+void candidate(const std::string& word, std::string description = "") {
+   std::replace(description.begin(), description.end(), '\t', ' ');
+   std::replace(description.begin(), description.end(), '\n', ' ');
+   if (description.empty()) {
+      std::printf("%s\n", word.c_str());
+   } else {
+      std::printf("%s\t%s\n", word.c_str(), description.c_str());
+   }
+}
+
+//a field name as the command line takes it, without spaces
+std::string field_word(const char* name) {
+   std::string word;
+   for (char chr : edid_field_display_name(name)) {
+      word += (chr == ' ') ? '-' : static_cast<char>(((chr >= 'A') && (chr <= 'Z'))
+                                                     ? chr - 'A' + 'a' : chr);
+   }
+   return word;
+}
+
+void complete_groups(EDID_cl& EDID) {
+   std::vector<listed_group> list = all_groups(EDID);
+   for (const listed_group& entry : list) {
+      char offset[16];
+      snprintf(offset, sizeof(offset), "0x%03X", entry.group->getAbsOffs());
+      candidate(offset, std::string(entry.group->CodeName.c_str()) + " " +
+                        group_name(EDID, entry.group));
+   }
+   std::vector<std::string> codes;
+   for (const listed_group& entry : list) {
+      const std::string code = entry.group->CodeName.c_str();
+      if (std::find(codes.begin(), codes.end(), code) != codes.end()) continue;
+      codes.push_back(code);
+      size_t nth = 0;
+      size_t count = std::count_if(list.begin(), list.end(), [&](const listed_group& other) {
+         return code == other.group->CodeName.c_str();
+      });
+      for (const listed_group& other : list) {
+         if (code != other.group->CodeName.c_str()) continue;
+         nth++;
+         candidate((count == 1) ? code : code + ":" + std::to_string(nth),
+                   group_name(EDID, other.group));
+      }
+   }
+}
+
+void complete_fields(EDID_cl& EDID, edi_grp_cl* group, const char* suffix) {
+   std::vector<std::string> words;
+   for (u32_t idx=0; idx<group->FieldsAr.GetCount(); idx++) {
+      const char* name = group->FieldsAr.Item(idx)->field.name;
+      words.push_back(field_word((name != NULL) ? name : ""));
+   }
+   for (size_t idx=0; idx<words.size(); idx++) {
+      if (words[idx].empty()) continue;
+      std::string word = words[idx];
+      if (std::count(words.begin(), words.end(), word) > 1) {
+         word += ":" + std::to_string(std::count(words.begin(), words.begin() + idx + 1, word));
+      }
+      edi_dynfld_t* field = group->FieldsAr.Item(idx);
+      std::string unit = unit_of(EDID, field->field);
+      candidate(word + suffix, shown(read_field(EDID, field)) + (unit.empty() ? "" : " " + unit));
+   }
+   timing_state timing;
+   if (read_timing(EDID, group, timing)) {
+      candidate(std::string("refresh") + suffix, hz_text(timing.refresh) + " Hz");
+   }
+}
+
+void complete_values(edi_grp_cl* group, const std::string& field_spec,
+                     const std::string& prefix) {
+   if (is_refresh(group, field_spec)) return;
+   const edi_field_t& f = find_field(group, field_spec)->field;
+   sm_vmap* vmap = field_has_selector(f) ? vmap_GetVmap(f.vmap_idx, VMAP_MID) : NULL;
+   if (vmap != NULL) {
+      for (auto& entry : *vmap) candidate(prefix + entry.second.name);
+   } else if ((f.flags & F_BIT) != 0) {
+      candidate(prefix + "on");
+      candidate(prefix + "off");
+   }
+}
+
+//Candidates for the last word, CURRENT, from the words before it, one to a
+//line; exit status 3 asks for file names instead. Options are left to the
+//shell, which removes them from the words.
+int cmd_complete() {
+   if (opts.args.size() < 2) usage_error("usage: edid-editor-cli complete [WORD...] CURRENT");
+   std::vector<std::string> words(opts.args.begin() + 1, opts.args.end() - 1);
+   const std::string& current = opts.args.back();
+   if (words.empty()) {
+      for (const command& entry : commands) {
+         if (entry.run != cmd_complete) candidate(entry.name, entry.summary);
+      }
+      return 0;
+   }
+   const command* found = NULL;
+   for (const command& entry : commands) {
+      if (words[0] == entry.name) found = &entry;
+   }
+   if ((found == NULL) || (found->run == cmd_complete)) return 0;
+   size_t count = strlen(found->arguments);
+   size_t position = words.size() - 1;
+   char kind = 0;
+   if (position < count) {
+      kind = found->arguments[position];
+   } else if ((count > 0) && (found->arguments[count - 1] == 'A')) {
+      kind = 'A';
+   }
+   if (kind == 0) return 0;
+   if (kind == 'F') return 3;
+   if (kind == 'M') {
+      candidate("up");
+      candidate("down");
+      return 0;
+   }
+
+   //the rest is read from the file, whatever state it is in
+   opts.quiet = true;
+   opts.ignore_errors = true;
+   document doc;
+   open_document(doc, words[1]);
+   if (kind == 'G') {
+      complete_groups(doc.EDID);
+   } else if (kind == 'B') {
+      for (u32_t block=1; block<doc.EDID.getNumValidBlocks(); block++) {
+         if (doc.EDID.BlkGroupsAr[block]->GetCount() == 0) continue;
+         std::string title = block_title(doc.EDID, block);
+         candidate(std::to_string(block), title.substr(title.find(": ") + 2));
+      }
+   } else if (kind == 'K') {
+      u32_t block = 0;
+      if (! parse_number(words[2], 10, block) || (block == 0) ||
+          (block >= doc.EDID.getNumValidBlocks())) return 0;
+      if (doc.EDID.getEDID()->blk[block][0] == 0x70) {
+         candidate("displayid", "DisplayID data block");
+      } else {
+         candidate("audio-lpcm", "LPCM audio block");
+         candidate("audio-extended", "extended audio block");
+         candidate("video", "video block");
+         candidate("timing", "detailed timing");
+      }
+   } else {
+      edi_grp_cl* group = find_group(doc.EDID, words[2]).group;
+      size_t equals = current.find('=');
+      if (kind == 'N') {
+         complete_fields(doc.EDID, group, "");
+      } else if (equals == std::string::npos) {
+         complete_fields(doc.EDID, group, "=");
+      } else {
+         complete_values(group, current.substr(0, equals), current.substr(0, equals + 1));
+      }
+   }
+   return 0;
+}
+
 } //namespace
 
 int main(int argc, char* argv[]) {
    for (int idx=1; idx<argc; idx++) {
       std::string arg = argv[idx];
-      if ((arg == "-h") || (arg == "--help")) {
+      if (! opts.args.empty() && (opts.args[0] == "complete")) {
+         //the words to complete may look like options
+         opts.args.push_back(arg);
+      } else if ((arg == "-h") || (arg == "--help")) {
          std::fputs(usage_text, stdout);
          return 0;
       } else if (arg == "--version") {
@@ -1143,24 +1332,13 @@ int main(int argc, char* argv[]) {
       return 2;
    }
 
-   static const struct {
-      const char* name;
-      int (*run)();
-   } commands[] = {
-      {"info", cmd_info}, {"report", cmd_report}, {"groups", cmd_groups},
-      {"fields", cmd_fields}, {"describe", cmd_describe}, {"get", cmd_get},
-      {"diff", cmd_diff}, {"displays", cmd_displays}, {"set", cmd_set},
-      {"add", cmd_add}, {"duplicate", cmd_duplicate}, {"delete", cmd_delete},
-      {"move", cmd_move}, {"fix-checksums", cmd_fix_checksums},
-      {"convert", cmd_convert},
-   };
-   for (const auto& command : commands) {
-      if (opts.args[0] != command.name) continue;
+   for (const command& entry : commands) {
+      if (opts.args[0] != entry.name) continue;
       std::string name = " " + opts.args[0] + " ";
       if (opts.json && (NULL == strstr(" info groups fields diff displays ", name.c_str()))) {
          usage_error("--json works with info, groups, fields, diff and displays");
       }
-      return command.run();
+      return entry.run();
    }
    usage_error("unknown command " + opts.args[0]);
 }

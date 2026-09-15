@@ -39,7 +39,7 @@ jobs:
       - name: Install the build dependencies
         run: >
           dnf install -y --setopt=install_weak_deps=False
-          git-core just meson ninja-build gcc-c++ python3
+          git-core just meson ninja-build gcc-c++ python3 bash-completion zsh fish
       - uses: actions/checkout@v5
       - name: Test
         run: just gui=disabled test

@@ -1,0 +1,62 @@
+#compdef edid-editor-cli
+#
+# zsh completion for edid-editor-cli. Commands, groups, fields and values come
+# from edid-editor-cli complete, which reads them from the file being worked on.
+
+_edid-editor-cli_candidates() {
+  local -a args lines described
+  local i word line current out ret
+  # the words before this one, as the program would get them, without options
+  for (( i = 2; i < CURRENT; i++ )); do
+    word=${(Q)words[i]}
+    case $word in
+      (-o|--output) (( i++ )) ;;
+      (-?*) ;;
+      (*)
+        [[ $word == '~/'* ]] && word=$HOME/${word#\~/}
+        args+=("$word")
+        ;;
+    esac
+  done
+  current=${(Q)words[CURRENT]}
+
+  out=$(${(Q)words[1]} complete "${args[@]}" "$current" 2>/dev/null)
+  ret=$?
+  if (( ret == 3 )); then
+    _files
+    return
+  fi
+  lines=(${(f)out})
+  (( $#lines )) || return 1
+
+  # a value after FIELD= is completed on its own
+  if [[ $current == *=* ]]; then
+    compset -P '*='
+    lines=(${lines#*=})
+  fi
+  # each line is a candidate, then a tab and a description
+  for line in $lines; do
+    word=${line%%$'\t'*}
+    if [[ $line == *$'\t'* ]]; then
+      described+=("${word//:/\\:}:${line#*$'\t'}")
+    else
+      described+=("${word//:/\\:}")
+    fi
+  done
+  if [[ ${lines[1]%%$'\t'*} == *= ]]; then
+    _describe -t fields 'field' described -S ''
+  else
+    _describe -t values 'value' described
+  fi
+}
+
+_arguments -s -S \
+  '(-o --output -i --in-place)'{-o+,--output=}'[write a changed EDID to this file]:output file:_files' \
+  '(-o --output -i --in-place)'{-i,--in-place}'[write a changed EDID back to the file]' \
+  '--ignore-errors[open EDID data that breaks the standard]' \
+  '--edit-read-only[allow writing fields derived from other data]' \
+  '(-q --quiet)'{-q,--quiet}'[leave out notices about the data]' \
+  '--json[print as JSON]' \
+  '(- *)'{-h,--help}'[show the help]' \
+  '(- *)--version[show the version]' \
+  '*: :_edid-editor-cli_candidates'

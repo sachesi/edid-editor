@@ -48,6 +48,8 @@ install_data(
   install_dir : get_option('datadir') / 'icons/hicolor/scalable/apps',
 )
 
+install_man(files('../docs/edid-editor.1'))
+
 desktop_file_validate = find_program('desktop-file-validate', required : false)
 if desktop_file_validate.found()
   test(

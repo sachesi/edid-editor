@@ -15,7 +15,8 @@ recomputes the checksums and keeps data the editor does not understand.
 
 `edid-editor-cli` does the same from a terminal, without a display: it lists and reads
 every field, sets fields, adds, duplicates, moves and deletes groups, and compares and
-converts EDIDs.
+converts EDIDs. It prints JSON for scripts, and comes with a manual page and completions
+for bash, zsh and fish that read groups and fields from the file being edited.
 
 ## Building and installing
 
