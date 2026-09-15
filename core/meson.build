@@ -6,6 +6,7 @@ edid_core_sources = [
   'EDID_display.cpp',
   'EDID_summary.cpp',
   'EDID_compare.cpp',
+  'EDID_document.cpp',
   'CEA.cpp',
   'CEA_ET.cpp',
   'DisplayID.cpp',

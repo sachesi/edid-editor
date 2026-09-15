@@ -15,6 +15,7 @@
 #include "CEA_class.h"
 #include "CEA_ET_class.h"
 #include "EDID_text.h"
+#include "EDID_document.h"
 #include "EDID_display.h"
 #include "EDID_summary.h"
 #include "EDID_compare.h"
@@ -2803,31 +2804,6 @@ static GroupAr_cl* wnd_selected_root_array(wxedid_wnd* wnd) {
    return (root != NULL) ? root->getParentAr() : NULL;
 }
 
-static bool wnd_insert_group(GroupAr_cl* array, edi_grp_cl* group) {
-   if ((array == NULL) || (group == NULL) || (array->GetCount() == 0)) return false;
-   gtid_t type = group->getTypeID();
-   bool timing = (type.base_id == ID_DTD);
-   u32_t last_data = 0;
-   for (u32_t index=1; index<array->GetCount(); index++) {
-      gtid_t candidate = array->Item(index)->getTypeID();
-      if ((candidate.base_id == ID_DTD) ||
-          ((candidate.t32 & ID_PARENT_MASK) == ID_DISPLAYID_PADDING)) {
-         if (array->CanInsertUp(index, group)) {
-            array->InsertUp(index, group);
-            return true;
-         }
-         break;
-      }
-      last_data = index;
-   }
-   if (timing && (last_data + 1 < array->GetCount())) return false;
-   if (array->CanInsertDn(last_data, group)) {
-      array->InsertDn(last_data, group);
-      return true;
-   }
-   return false;
-}
-
 static void wnd_on_add_cta_group(GSimpleAction*, GVariant* parameter,
                                  gpointer user_data) {
    wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
@@ -2841,7 +2817,7 @@ static void wnd_on_add_cta_group(GSimpleAction*, GVariant* parameter,
    edi_grp_cl* group = NULL;
    rcode result = wnd->doc->EDID.CreateGroup(which, 0, &group);
    GroupAr_cl* array = wnd_selected_root_array(wnd);
-   if (! RCD_IS_OK(result) || ! wnd_insert_group(array, group)) {
+   if (! RCD_IS_OK(result) || ! edid_insert_group(array, group)) {
       delete group;
       wnd_show_error(wnd, "This CTA group does not fit in the selected block");
       return;
@@ -2861,7 +2837,7 @@ static void wnd_on_add_displayid_group(GSimpleAction*, GVariant*,
    edi_grp_cl* group = NULL;
    rcode result = wnd->doc->EDID.CreateGroup(
       EDID_cl::DISPLAYID_DATA, version, &group);
-   if (! RCD_IS_OK(result) || ! wnd_insert_group(array, group)) {
+   if (! RCD_IS_OK(result) || ! edid_insert_group(array, group)) {
       delete group;
       wnd_show_error(wnd, "A DisplayID block does not fit in the selected section");
       return;
@@ -3372,119 +3348,17 @@ static void wnd_offer_retry(wxedid_wnd* wnd) {
 
 static void wnd_load_bytes(wxedid_wnd* wnd, const char* path,
                            const u8_t* data, size_t size, bool hex_source) {
-   bool ignore_errors = wnd->doc->EDID.b_ERR_Ignore;
-   bool partial = (size % sizeof(ediblk_t)) != 0;
-   if ((size == 0) || (size > sizeof(edi_t)) || (partial && ! ignore_errors)) {
-      char msg[1400];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t open %s: EDID data must contain 1 to 4 complete "
-               "128-byte blocks. Choose another EDID file.", path);
-      wnd->doc->GLog.DoLog(msg);
-      if ((size > 0) && (size <= sizeof(edi_t))) wnd_offer_retry(wnd);
+   //a pending rebuild refers to groups that loading may release
+   wnd_flush_refresh(wnd);
+   edid_load_result loaded = edid_load(wnd->doc->EDID, data, size, path, wnd->doc->GLog);
+   if (loaded.rejected) {
+      if (loaded.can_retry) wnd_offer_retry(wnd);
       return;
    }
-
-   edi_buf_t loaded = {};
-   memcpy(loaded.buff, data, size);
-   size_t blocks = (size + sizeof(ediblk_t) - 1) / sizeof(ediblk_t);
-   if (partial) {
-      char msg[160];
-      snprintf(msg, sizeof(msg),
-               "[i] The last block is incomplete; its missing %zu bytes are read as zero",
-               (blocks * sizeof(ediblk_t)) - size);
-      wnd->doc->GLog.DoLog(msg);
-   }
-
-   //dumps often hold only the blocks the base block counts, even when an
-   //override block declares more
-   u32_t declared = EDID_cl::DeclaredBlocks(loaded.buff, blocks * sizeof(ediblk_t));
-   u32_t base_declared = 1U + loaded.edi.base.num_extblk;
-   bool block_count_adjusted = false;
-   if ((declared != blocks) && (base_declared == blocks)) {
-      char msg[192];
-      snprintf(msg, sizeof(msg),
-               "[i] The EDID Extension Override block declares %u blocks; the file "
-               "holds the %zu blocks the base block declares", declared, blocks);
-      wnd->doc->GLog.DoLog(msg);
-   } else if (declared != blocks) {
-      char msg[192];
-      if (! ignore_errors) {
-         snprintf(msg, sizeof(msg),
-                  "[E!] Couldn’t open this EDID: it declares %u blocks, but the "
-                  "file contains %zu. Choose a file with a matching block count.",
-                  declared, blocks);
-         wnd->doc->GLog.DoLog(msg);
-         wnd_offer_retry(wnd);
-         return;
-      }
-      snprintf(msg, sizeof(msg),
-               "[i] This EDID declares %u blocks, but %zu are present; the block "
-               "count now matches the data", declared, blocks);
-      wnd->doc->GLog.DoLog(msg);
-      //the count lives in the override block when there is one
-      if (declared != (1U + loaded.edi.base.num_extblk)) {
-         loaded.buff[sizeof(ediblk_t) + 6] = static_cast<u8_t>(blocks - 1);
-      } else {
-         loaded.edi.base.num_extblk = static_cast<u8_t>(blocks - 1);
-      }
-      block_count_adjusted = true;
-   }
-
-   //the pending rebuild refers to groups that are about to be released
-   if (wnd->refresh_source != 0) g_source_remove(wnd->refresh_source);
-   wnd->refresh_source = 0;
-   wnd->refresh_group = NULL;
-   wnd->refresh_field = NULL;
-   wnd->refresh_type_changed = false;
-   wnd->doc->EDID.Clear();
-   edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
-   memcpy(pbuf->buff, loaded.buff, blocks * sizeof(ediblk_t));
-
-   rcode retU;
-   u32_t parsed_extblk = 0;
-   bool extension_failed = false;
-
-   retU = wnd->doc->EDID.ParseEDID_Base(parsed_extblk);
-   bool base_ok = RCD_IS_OK(retU);
-   parsed_extblk = blocks - 1;
-   if (base_ok) {
-      for (u32_t block=1; block<=parsed_extblk; block++) {
-         u8_t tag = pbuf->blk[block][0];
-         bool parsed = false;
-         if (tag == 0x02) {
-            retU = wnd->doc->EDID.ParseEDID_CEA(block);
-            parsed = true;
-         } else if (tag == 0x70) {
-            retU = wnd->doc->EDID.ParseEDID_DisplayID(block);
-            parsed = true;
-         }
-         if (parsed && ! RCD_IS_OK(retU)) {
-            wnd->doc->GLog.PrintRcode(retU);
-            wnd->doc->EDID.BlkGroupsAr[block]->Clear();
-            extension_failed = true;
-         }
-      }
-      wnd->doc->EDID.ForceNumValidBlocks(1U + parsed_extblk);
-   } else {
-      char msg[1400];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t parse %s as base EDID data. Choose a valid EDID file.",
-               path);
-      wnd->doc->GLog.DoLog(msg);
-      wnd->doc->GLog.PrintRcode(retU);
-   }
-
-   if (base_ok) {
-      for (u32_t block=1; block<=parsed_extblk; block++) {
-         if (wnd->doc->EDID.BlkGroupsAr[block]->GetCount() != 0) continue;
-         u8_t tag = pbuf->blk[block][0];
-         char msg[144];
-         snprintf(msg, sizeof(msg),
-                  "[i] Extension block %u (tag 0x%02X) preserved read-only",
-                  block, tag);
-         wnd->doc->GLog.DoLog(msg);
-      }
-   }
+   bool base_ok = loaded.opened;
+   bool extension_failed = loaded.extension_failed;
+   bool partial = loaded.partial;
+   bool block_count_adjusted = loaded.count_adjusted;
 
    wnd->loaded = base_ok;
    wnd->dirty = false;
@@ -3970,41 +3844,9 @@ static void wnd_on_compare_display_action(GSimpleAction*, GVariant*, gpointer us
 // output: assemble groups into the buffer and recompute checksums
 static bool wnd_prepare_output(wxedid_wnd* wnd) {
    wnd_flush_refresh(wnd);
-   edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
-   u32_t parsed_blocks = wnd->doc->EDID.getNumValidBlocks();
-   u32_t declared_blocks = EDID_cl::DeclaredBlocks(pbuf->buff,
-                                                   parsed_blocks * sizeof(ediblk_t));
-   if ((declared_blocks != parsed_blocks) &&
-       ((1U + pbuf->edi.base.num_extblk) != parsed_blocks)) {
-      char msg[160];
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t write this EDID: it declares %u blocks, but only %u "
-               "were parsed. Reopen valid EDID data, then try again.",
-               declared_blocks, parsed_blocks);
-      wnd->doc->GLog.DoLog(msg);
-      return false;
-   }
-
-   rcode retU = wnd->doc->EDID.AssembleEDID();
-   if (! RCD_IS_OK(retU)) {
-      char detail[1024];
-      char msg[1400];
-      wxedid_RCD_GET_MSG(retU, detail, sizeof(detail));
-      snprintf(msg, sizeof(msg),
-               "[E!] Couldn’t write this EDID: %s. Fix invalid data, then try again.",
-               detail);
-      wnd->doc->GLog.DoLog(msg);
-      return false;
-   }
-
-   //checksums: base + all valid extension blocks
-   for (u32_t blk=0; blk < wnd->doc->EDID.getNumValidBlocks(); blk++) {
-      if (wnd->doc->EDID.BlkGroupsAr[blk]->GetCount() != 0) {
-         wnd->doc->EDID.genChksum(blk);
-      }
-   }
-   wnd_refresh_raw_view(wnd);
-   return true;
+   bool prepared = edid_prepare_output(wnd->doc->EDID, wnd->doc->GLog);
+   if (prepared) wnd_refresh_raw_view(wnd);
+   return prepared;
 }
 
 //------------
