@@ -34,3 +34,9 @@ textview.byte-view,
 label.modeline {
   font-family: "Adwaita Mono", monospace;
 }
+
+/* a mode that isn't preferred: the filled star faded, as some icon themes
+   draw the empty star filled */
+button.unstarred > image {
+  opacity: 0.35;
+}

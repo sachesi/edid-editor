@@ -78,8 +78,10 @@ static GtkWidget* wnd_modes_group(wxedid_wnd* wnd) {
       //timing has to replace it
       GtkWidget* star = (preference == PREFERENCE_FIRST)
          ? gtk_image_new_from_icon_name("starred-symbolic")
-         : gtk_button_new_from_icon_name(mode.preferred ? "starred-symbolic"
-                                                        : "non-starred-symbolic");
+         : gtk_button_new_from_icon_name("starred-symbolic");
+      //one icon for both states, faded when not preferred: some icon themes
+      //draw the empty star filled
+      if (! mode.preferred) gtk_widget_add_css_class(star, "unstarred");
       gtk_widget_set_valign(star, GTK_ALIGN_CENTER);
       if (preference == PREFERENCE_FIRST) {
          gtk_widget_set_margin_start(star, 10);

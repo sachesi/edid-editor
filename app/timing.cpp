@@ -578,7 +578,7 @@ GtkWidget* timing_create_page(wxedid_timing* timing) {
    gtk_box_append(GTK_BOX(refresh_box), refresh_row);
    gtk_box_append(GTK_BOX(summary), refresh_box);
 
-   timing->star = gtk_button_new_from_icon_name("non-starred-symbolic");
+   timing->star = gtk_button_new_from_icon_name("starred-symbolic");
    //without an action, as for the first timing, a press explains the star
    g_signal_connect(timing->star, "clicked", G_CALLBACK(timing_on_star), timing);
    gtk_widget_add_css_class(timing->star, "flat");
@@ -791,11 +791,17 @@ bool timing_load_group(wxedid_timing* timing, edi_grp_cl* pgrp,
 
    //the star makes the timing preferred, or takes its DisplayID flag away
    edid_preference preference = edid_timing_preference(*pEDID, pgrp);
-   gtk_button_set_icon_name(GTK_BUTTON(timing->star), (preference == PREFERENCE_NONE)
-                            ? "non-starred-symbolic" : "starred-symbolic");
+   //faded when not preferred, as some icon themes draw the empty star filled
+   if (preference == PREFERENCE_NONE) {
+      gtk_widget_add_css_class(timing->star, "unstarred");
+   } else {
+      gtk_widget_remove_css_class(timing->star, "unstarred");
+   }
    gtk_actionable_set_action_name(GTK_ACTIONABLE(timing->star),
       (preference == PREFERENCE_NONE) ? "win.make-preferred" :
       (preference == PREFERENCE_FLAGGED) ? "win.remove-preferred" : NULL);
+   //an action it had, now disabled, would leave it insensitive
+   if (preference == PREFERENCE_FIRST) gtk_widget_set_sensitive(timing->star, TRUE);
    const char* star_label = (preference == PREFERENCE_NONE) ? _("Make Preferred") :
       (preference == PREFERENCE_FLAGGED) ? _("Remove Preferred Flag") :
       _("The first detailed timing is always preferred. Make another timing preferred to "
