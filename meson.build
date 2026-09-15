@@ -13,6 +13,7 @@ adw_dep = dependency('libadwaita-1', version : '>=1.8')
 inc_core = include_directories('core')
 
 subdir('core')
+subdir('cli')
 subdir('app')
 
 gnome = import('gnome')

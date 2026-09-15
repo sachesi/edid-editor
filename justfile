@@ -51,6 +51,7 @@ test-ui: build-debug
 install:
     @test -x {{release}}/app/edid-editor || { echo "error: {{release}}/app/edid-editor missing; run 'just build' first" >&2; exit 1; }
     install -Dm755 {{release}}/app/edid-editor {{bindir}}/edid-editor
+    install -Dm755 {{release}}/cli/edid-editor-cli {{bindir}}/edid-editor-cli
     install -Dm644 app/{{app_id}}.desktop {{datadir}}/applications/{{app_id}}.desktop
     install -Dm644 app/{{app_id}}.metainfo.xml {{datadir}}/metainfo/{{app_id}}.metainfo.xml
     install -Dm644 app/icons/{{app_id}}.svg {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg
@@ -60,7 +61,7 @@ install:
     @echo "installed to {{prefix}}"
 
 uninstall:
-    rm -f {{bindir}}/edid-editor
+    rm -f {{bindir}}/edid-editor {{bindir}}/edid-editor-cli
     rm -f {{datadir}}/applications/{{app_id}}.desktop {{datadir}}/metainfo/{{app_id}}.metainfo.xml
     rm -f {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg
     update-desktop-database -q {{datadir}}/applications || true

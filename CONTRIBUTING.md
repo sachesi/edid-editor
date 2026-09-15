@@ -32,9 +32,13 @@ Before a change goes in:
       EDID_summary.cpp       the facts listed on the Overview
       EDID_compare.cpp       field by field comparison of two EDIDs
       EDID_display.cpp       connected displays under /sys/class/drm
+      EDID_document.cpp      opening and writing whole EDIDs, placing new groups
       wxcompat.h             the small part of wxString and wxArray the core uses
       rcode/                 result codes and the generator of their scope table
       tests/                 core tests, sample EDID generator, real EDID corpus
+    cli/                     edid-editor-cli, on the core alone
+      main.cpp               the commands, group and field addressing
+      tests/test_cli.py      every command, run on the sample EDIDs
     app/                     the GTK application
       window.cpp             the window: sidebar, field cards, timing editor, dialogs
       style.css              structural CSS, colors come from libadwaita

@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+import shutil
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+cli, cea, displayid = sys.argv[1], sys.argv[2], sys.argv[3]
+work = Path(tempfile.mkdtemp(prefix="edid-editor-cli-"))
+failures = 0
+
+
+def run(*args, stdin=None, status=0):
+    result = subprocess.run([cli, *args], input=stdin, capture_output=True)
+    if result.returncode != status:
+        raise AssertionError(f"{' '.join(args)}: exit status {result.returncode}, "
+                             f"expected {status}\n{result.stderr.decode()}")
+    return result.stdout.decode(errors="replace"), result.stderr.decode(errors="replace")
+
+
+def check(what, test):
+    global failures
+    try:
+        test()
+        print(f"PASS: {what}")
+    except AssertionError as error:
+        failures += 1
+        print(f"FAIL: {what}: {error}")
+
+
+def checksums_valid(path):
+    data = Path(path).read_bytes()
+    return all(sum(data[index:index + 128]) % 256 == 0
+               for index in range(0, len(data), 128))
+
+
+def help_and_usage():
+    out, _ = run("--help")
+    assert "Usage: edid-editor-cli" in out
+    run(status=2)
+    _, err = run("frob", status=2)
+    assert "unknown command frob" in err
+    _, err = run("set", cea, "DTD:1", "interlace=on", status=2)
+    assert "-o OUTPUT or --in-place" in err
+
+
+def reading():
+    out, _ = run("info", cea)
+    assert "Display" in out and "GTK-PORT" in out
+    out, _ = run("groups", cea)
+    assert "0x036  DTD" in out and "Block 1: CTA-861" in out
+    out, _ = run("fields", cea, "DTD:1")
+    assert "#1   Pixel clock" in out
+    out, _ = run("get", cea, "0x036", "h-active-pix")
+    assert out.strip() == "640"
+    out, _ = run("describe", cea, "0x05A", "desc_type")
+    assert "Named values:" in out and "MND" in out
+    out, _ = run("report", cea)
+    assert "EDID block [1]: CTA-861 extension" in out
+    _, err = run("get", cea, "DTD", "#1", status=1)
+    assert "matches several groups: DTD@0x036 DTD@0x090" in err
+
+
+def set_and_diff():
+    target = work / "set.bin"
+    out, _ = run("set", cea, "DTD:1", "pixelclock=25.20", "interlace=on", "-o", str(target))
+    assert "Pixel clock: 25.18 -> 25.20" in out and "interlace: 0 -> 1" in out
+    assert run("get", str(target), "DTD:1", "interlace")[0].strip() == "1"
+    assert checksums_valid(target)
+    out, _ = run("diff", cea, str(target), status=1)
+    assert "Pixel clock: 25.18 -> 25.20" in out
+    run("diff", cea, cea)
+    same = work / "same.bin"
+    run("set", cea, "DTD:1", "hactivepix=640", "-o", str(same))
+    assert same.read_bytes() == Path(cea).read_bytes()
+
+
+def refused_writes():
+    target = work / "refused.bin"
+    _, err = run("set", cea, "CHD", "#2=5", "-o", str(target), status=1)
+    assert "--edit-read-only" in err
+    _, err = run("set", cea, "DTD:1", "hactivepix=99999", "-o", str(target), status=1)
+    assert "99999 is not a valid value (0 to 4095)" in err
+    assert not target.exists()
+    _, err = run("set", cea, "DTD:1", "interlace=on", "-o", "/sys/edid", status=1)
+    assert "connected displays are only read" in err
+
+
+def rebuild():
+    target = work / "rebuild.bin"
+    out, _ = run("set", cea, "0x05A", "desc_type=MND", "--edit-read-only",
+                 "-o", str(target))
+    assert "rebuilt as MND@0x05A" in out
+    assert "0x05A  MND" in run("groups", str(target))[0]
+
+
+def structure():
+    added = work / "added.bin"
+    run("add", cea, "1", "audio-lpcm", "-o", str(added))
+    out, _ = run("groups", str(added))
+    assert "0x090  ADB" in out and "0x094  DTD" in out
+    assert checksums_valid(added)
+    _, err = run("add", cea, "1", "displayid", "-o", str(added), status=1)
+    assert "goes into a DisplayID block" in err
+
+    before = run("groups", displayid)[0].count("DID-DB")
+    target = work / "displayid.bin"
+    run("add", displayid, "2", "displayid", "-o", str(target))
+    assert run("groups", str(target))[0].count("DID-DB") == before + 1
+
+    target = work / "structure.bin"
+    run("duplicate", cea, "SVD:1", "-o", str(target))
+    assert run("groups", str(target))[0].count("SVD") == 4
+    run("move", cea, "VSD", "up", "-o", str(target))
+    assert "0x084  VSD" in run("groups", str(target))[0]
+    run("delete", cea, "VSD", "-o", str(target))
+    assert "VSD" not in run("groups", str(target))[0]
+
+
+def bytes_and_files():
+    text = work / "sample.hex"
+    run("convert", cea, "-o", str(text))
+    assert text.read_text().startswith("00FFFFFFFFFFFF00")
+    binary = work / "sample.bin"
+    run("convert", "-", "-o", str(binary), stdin=text.read_bytes())
+    assert binary.read_bytes() == Path(cea).read_bytes()
+    out, _ = run("convert", cea, "-o", "-")
+    assert out == text.read_text()
+
+    broken = bytearray(Path(cea).read_bytes())
+    broken[127] ^= 0x55
+    damaged = work / "damaged.bin"
+    damaged.write_bytes(broken)
+    out, _ = run("fix-checksums", str(damaged), "--in-place")
+    assert "block 0: checksum" in out
+    assert damaged.read_bytes() == Path(cea).read_bytes()
+
+    in_place = work / "in-place.bin"
+    shutil.copy(cea, in_place)
+    run("set", str(in_place), "DTD:1", "interlace=on", "-i")
+    assert run("get", str(in_place), "DTD:1", "interlace")[0].strip() == "1"
+
+
+for name, test in [("help and usage errors", help_and_usage), ("reading", reading),
+                   ("set and diff", set_and_diff), ("refused writes", refused_writes),
+                   ("group rebuild", rebuild), ("group structure", structure),
+                   ("conversion and files", bytes_and_files)]:
+    check(name, test)
+shutil.rmtree(work, ignore_errors=True)
+sys.exit(1 if failures else 0)

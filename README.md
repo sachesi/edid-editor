@@ -13,6 +13,10 @@ and its bytes marked, detailed timings have a visual editor, data blocks can be 
 duplicated, moved and deleted, and two EDIDs can be compared field by field. Saving
 recomputes the checksums and keeps data the editor does not understand.
 
+`edid-editor-cli` does the same from a terminal, without a display: it lists and reads
+every field, sets fields, adds, duplicates, moves and deletes groups, and compares and
+converts EDIDs.
+
 ## Building and installing
 
     just build
@@ -20,6 +24,7 @@ recomputes the checksums and keeps data the editor does not understand.
     just uninstall           # with sudo if it was installed with sudo
 
     just run [FILE]          # a debug build, uninstalled
+    builddir/cli/edid-editor-cli --help
 
 `just` runs Meson; `meson setup`, `meson compile` and `meson install` work as well.
 Building needs Meson, a C++17 compiler, and the development packages for GTK 4 and
@@ -30,6 +35,7 @@ bindings for AT-SPI, and are skipped when those are missing.
 ## Documentation
 
 - [Using EDID Editor](docs/usage.md), including keyboard shortcuts
+- [The command line](docs/cli.md)
 - [Known issues](docs/known-issues.md) with the standards and the editor
 - [Contributing](CONTRIBUTING.md), including where things are in the code, and
   [reporting a vulnerability](SECURITY.md)
