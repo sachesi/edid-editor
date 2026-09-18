@@ -1,0 +1,59 @@
+name: Release
+
+# A release tag gets a GitHub release, once CI has passed (ci.yml calls this). The tag
+# must agree with the version in the sources and with the newest release in the metainfo,
+# whose notes become the release's.
+on:
+  workflow_call:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Publish the release
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the version and write the notes
+        run: |
+          python3 - <<'EOF'
+          import os, re, sys
+          import xml.etree.ElementTree as ET
+
+          def grep(path, pattern):
+              with open(path) as f:
+                  return path, re.search(pattern, f.read()).group(1)
+
+          tag = os.environ["TAG"].removeprefix("v")
+          found = [
+              grep("meson.build", r"version\s*:\s*\x27(.*?)\x27"),
+          ]
+          release = ET.parse("app/io.github.sachesi.EdidEditor.metainfo.xml.in").find("releases/release")
+          found.append(("the metainfo", release.get("version")))
+          wrong = [f"{where} says {v}" for where, v in found if v != tag]
+          if wrong:
+              sys.exit(f"The tag is {tag}, but " + ", ".join(wrong))
+
+          def text(e):
+              return re.sub(r"\s+", " ", "".join(e.itertext())).strip()
+
+          notes = []
+          for e in release.find("description"):
+              if e.tag == "p":
+                  notes.append(text(e))
+              elif e.tag in ("ul", "ol"):
+                  notes.append("\n".join(f"- {text(li)}" for li in e))
+          with open(os.environ["RUNNER_TEMP"] + "/notes.md", "w") as f:
+              f.write("\n\n".join(notes) + "\n")
+          EOF
+      - name: Publish
+        run: |
+          # A release that already exists keeps its notes, which may have been edited by hand.
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" --verify-tag --title "EDID Editor ${TAG#v}" \
+              --notes-file "$RUNNER_TEMP/notes.md"
+          fi

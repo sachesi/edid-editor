@@ -5,27 +5,36 @@ on:
     branches: [main]
     tags: ["v*"]
   pull_request:
+  # Weekly, against Rawhide, for what the next Fedora's GTK, libadwaita and toolchain
+  # will break.
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   check:
-    name: Build and test
+    name: Build and test${{ matrix.fedora != '44' && format(' on Fedora {0}', matrix.fedora) || '' }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        fedora: ${{ github.event_name == 'schedule' && fromJSON('["44", "rawhide"]') || fromJSON('["44"]') }}
     # The compiler and the libraries the application is developed against.
-    container: registry.fedoraproject.org/fedora:44
+    container: registry.fedoraproject.org/fedora:${{ matrix.fedora }}
     steps:
       - name: Install the build dependencies
         run: >
           dnf install -y --setopt=install_weak_deps=False
           git-core just meson ninja-build gcc-c++ gtk4-devel libadwaita-devel
           desktop-file-utils appstream gettext python3
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Lint
         run: just check
       - name: Test
@@ -40,14 +49,22 @@ jobs:
         run: >
           dnf install -y --setopt=install_weak_deps=False
           git-core just meson ninja-build gcc-c++ python3 bash-completion zsh fish
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test
         run: just gui=disabled test
 
-  aur:
-    name: AUR
+  release:
+    name: Release
     needs: [check, cli]
     if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/release.yml
+    permissions:
+      contents: write
+
+  aur:
+    name: AUR
+    # After the release, whose job also checks that the tag matches the sources.
+    needs: release
     uses: ./.github/workflows/aur.yml
     # A called workflow sees no secrets, its environment's included, unless the
     # caller passes them on.
