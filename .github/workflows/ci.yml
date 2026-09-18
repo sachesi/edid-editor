@@ -43,3 +43,9 @@ jobs:
       - uses: actions/checkout@v5
       - name: Test
         run: just gui=disabled test
+
+  aur:
+    name: AUR
+    needs: [check, cli]
+    if: startsWith(github.ref, 'refs/tags/v')
+    uses: ./.github/workflows/aur.yml

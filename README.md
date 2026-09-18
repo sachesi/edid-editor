@@ -36,6 +36,9 @@ Meson), only `edid-editor-cli` is built. The tests of the interface also need We
 Xwayland, xdotool, the session bus and the Python bindings for AT-SPI, and are skipped
 when those are missing.
 
+Arch Linux: the AUR package `edid-editor`, built from
+[packaging/aur/PKGBUILD](packaging/aur/PKGBUILD), which each release tag updates.
+
 ## Documentation
 
 - [Using EDID Editor](docs/usage.md), including keyboard shortcuts
