@@ -1,0 +1,36 @@
+Source: edid-editor
+Section: utils
+Priority: optional
+Maintainer: sachesi <xsachesi@pm.me>
+Build-Depends: debhelper-compat (= 13),
+               meson,
+               ninja-build,
+               g++,
+               pkg-config,
+               python3,
+               gettext,
+               desktop-file-utils,
+               appstream,
+               libgtk-4-dev (>= 4.10),
+               libadwaita-1-dev (>= 1.8)
+Standards-Version: 4.7.2
+Homepage: https://github.com/sachesi/edid-editor
+Rules-Requires-Root: no
+
+Package: edid-editor
+Architecture: any
+Depends: ${shlibs:Depends},
+         ${misc:Depends},
+         libgtk-4-1 (>= 4.10),
+         libadwaita-1-0 (>= 1.8),
+         hicolor-icon-theme
+Description: EDID editor for GNOME, with a command line interface
+ EDID Editor inspects and edits EDID, the data a display sends to describe
+ itself: its name, size, timings, refresh ranges, color and HDR support, and
+ audio formats. It reads the base block, CTA-861 extensions and DisplayID 1.x
+ and 2.x blocks from files or from a connected display, and never writes to the
+ display itself. It is written with GTK 4 and libadwaita, and is based on wxEDID
+ by Tomasz Pawlak.
+ .
+ edid-editor-cli reads, edits, compares and converts EDID data from a terminal
+ with the same code, with a manual page and completions for bash, zsh and fish.
