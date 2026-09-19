@@ -18,6 +18,37 @@ every field, sets fields, adds, duplicates, moves and deletes groups, and compar
 converts EDIDs. It prints JSON for scripts, and comes with a manual page and completions
 for bash, zsh and fish that read groups and fields from the file being edited.
 
+## Packages
+
+Fedora 44, 45 and Rawhide, from the Copr project
+[sachesi/software](https://copr.fedorainfracloud.org/coprs/sachesi/software/):
+
+    sudo dnf copr enable sachesi/software
+    sudo dnf install edid-editor
+
+openSUSE Tumbleweed and Slowroll, from the OBS project
+[home:sachesi:software](https://build.opensuse.org/project/show/home:sachesi:software); for
+Slowroll the address has `openSUSE_Slowroll` in it, and on aarch64 `openSUSE_Factory_ARM`:
+
+    sudo zypper addrepo https://download.opensuse.org/repositories/home:sachesi:software/openSUSE_Tumbleweed/home:sachesi:software.repo
+    sudo zypper install edid-editor
+
+Debian testing and Ubuntu 26.04, from the same OBS project; for Ubuntu the addresses
+have `xUbuntu_26.04` in place of `Debian_Testing`:
+
+    sudo install -d /etc/apt/keyrings
+    curl -fsSL https://download.opensuse.org/repositories/home:sachesi:software/Debian_Testing/Release.key | sudo gpg --dearmor -o /etc/apt/keyrings/sachesi-software.gpg
+    echo 'deb [signed-by=/etc/apt/keyrings/sachesi-software.gpg] https://download.opensuse.org/repositories/home:sachesi:software/Debian_Testing/ /' | sudo tee /etc/apt/sources.list.d/sachesi-software.list
+    sudo apt update
+    sudo apt install edid-editor
+
+Debian 13 and Ubuntu 24.04 ship a libadwaita older than EDID Editor needs.
+
+Arch Linux: the AUR package `edid-editor`, built from
+[packaging/aur/PKGBUILD](packaging/aur/PKGBUILD), which each release tag updates.
+
+The same packages are attached to each [release](https://github.com/sachesi/edid-editor/releases).
+
 ## Building and installing
 
     just build
@@ -35,9 +66,6 @@ development packages for GTK 4 and libadwaita 1.8 or newer; it is developed agai
 Meson), only `edid-editor-cli` is built. The tests of the interface also need Weston,
 Xwayland, xdotool, the session bus and the Python bindings for AT-SPI, and are skipped
 when those are missing.
-
-Arch Linux: the AUR package `edid-editor`, built from
-[packaging/aur/PKGBUILD](packaging/aur/PKGBUILD), which each release tag updates.
 
 ## Documentation
 
