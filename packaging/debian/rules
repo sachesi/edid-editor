@@ -1,0 +1,11 @@
+#!/usr/bin/make -f
+
+%:
+	dh $@ --buildsystem=meson
+
+override_dh_auto_configure:
+	dh_auto_configure -- -Dgui=enabled
+
+# The ui suite needs a Wayland compositor.
+override_dh_auto_test:
+	dh_auto_test -- --no-suite ui

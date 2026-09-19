@@ -1,0 +1,10 @@
+Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
+Upstream-Name: edid-editor
+Upstream-Contact: sachesi <xsachesi@pm.me>
+Source: https://github.com/sachesi/edid-editor
+
+Files: *
+Copyright: sachesi <xsachesi@pm.me>
+License: GPL-3.0-or-later
+ See the LICENSE file in the source; on Debian systems, the GNU General Public
+ License is in /usr/share/common-licenses.
