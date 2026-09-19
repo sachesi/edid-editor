@@ -18,6 +18,10 @@ every field, sets fields, adds, duplicates, moves and deletes groups, and compar
 converts EDIDs. It prints JSON for scripts, and comes with a manual page and completions
 for bash, zsh and fish that read groups and fields from the file being edited.
 
+An edited EDID loaded with `drm.edid_firmware` or a compositor override can leave a
+display blank or out of range. Keep a way back, such as a second output or a boot entry
+without the override. EDID Editor comes with no warranty, see [LICENSE](LICENSE).
+
 ## Packages
 
 Fedora 44, 45 and Rawhide, from the Copr project
