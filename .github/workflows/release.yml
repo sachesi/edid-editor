@@ -112,6 +112,10 @@ jobs:
     env:
       REVISION: ${{ matrix.revision }}
       DEBIAN_FRONTEND: noninteractive
+    defaults:
+      run:
+        # Not the image's sh, which is dash.
+        shell: bash
     steps:
       - name: Install the build dependencies
         run: |
