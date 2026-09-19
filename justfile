@@ -88,3 +88,5 @@ uninstall:
     rm -f {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg
     rm -f {{datadir}}/locale/*/LC_MESSAGES/edid-editor.mo
     update-desktop-database -q {{datadir}}/applications || true
+    # A cache that still lists the removed icons hides the same icons installed elsewhere.
+    gtk4-update-icon-cache -qtf {{datadir}}/icons/hicolor || gtk-update-icon-cache -qtf {{datadir}}/icons/hicolor || true
