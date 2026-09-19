@@ -2,24 +2,34 @@ name: Release
 
 # A release tag gets a GitHub release, once CI has passed (ci.yml calls this). The tag
 # must agree with the version in the sources and with the newest release in the metainfo,
-# whose notes become the release's.
+# whose notes become the release's. The release carries packages for Fedora, Debian,
+# Ubuntu and Arch Linux. Run by hand, it publishes a tag pushed before this workflow
+# existed.
 on:
   workflow_call:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, such as v1.2.3
+        required: true
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  TAG: ${{ inputs.tag || github.ref_name }}
 
 jobs:
-  release:
-    name: Publish the release
+  source:
+    name: Check the version and write the notes
     runs-on: ubuntu-latest
-    env:
-      TAG: ${{ github.ref_name }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
       - name: Check the version and write the notes
         run: |
+          mkdir -p notes
           python3 - <<'EOF'
           import os, re, sys
           import xml.etree.ElementTree as ET
@@ -47,13 +57,175 @@ jobs:
                   notes.append(text(e))
               elif e.tag in ("ul", "ol"):
                   notes.append("\n".join(f"- {text(li)}" for li in e))
-          with open(os.environ["RUNNER_TEMP"] + "/notes.md", "w") as f:
+          with open("notes/notes.md", "w") as f:
               f.write("\n\n".join(notes) + "\n")
           EOF
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: notes
+          path: notes/notes.md
+
+  fedora:
+    name: Package for Fedora
+    needs: source
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:44
+    steps:
+      - name: Install the tools
+        run: dnf install -y --setopt=install_weak_deps=False git-core rpm-build dnf-plugins-core
+      # The spec of this workflow's revision, which builds the tag's sources.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build
+        run: |
+          spec=packaging/fedora/edid-editor.spec
+          sed -i "s/^Version:.*/Version:        ${TAG#v}/; s/^Release:.*/Release:        1%{?dist}/" "$spec"
+          dnf builddep -y --setopt=install_weak_deps=False "$spec"
+          # rpmbuild fetches Source0 from the tag into a directory it does not create itself.
+          mkdir -p rpmbuild/SOURCES
+          rpmbuild -bb --define "_topdir $PWD/rpmbuild" --define "_disable_source_fetch 0" "$spec"
+          mkdir dist && mv rpmbuild/RPMS/*/*.rpm dist/
+          # The dependencies resolve on the release it was built for.
+          dnf install -y dist/*.rpm
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: fedora
+          path: dist/*
+
+  debian:
+    name: Package for ${{ matrix.name }}
+    needs: source
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Testing: stable's GTK and libadwaita are older than it needs.
+          - name: Debian
+            image: debian:forky
+            artifact: debian
+            revision: "1"
+          - name: Ubuntu 26.04
+            image: ubuntu:26.04
+            artifact: ubuntu
+            revision: 1~ubuntu26.04
+    container: ${{ matrix.image }}
+    env:
+      REVISION: ${{ matrix.revision }}
+      DEBIAN_FRONTEND: noninteractive
+    steps:
+      - name: Install the build dependencies
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates git dpkg-dev \
+            meson ninja-build g++ pkg-config python3 gettext desktop-file-utils appstream libgtk-4-dev libadwaita-1-dev
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.TAG }}
+      - name: Build
+        run: |
+          meson setup build --prefix=/usr --buildtype=release -Dgui=enabled
+          meson compile -C build
+          meson install -C build --destdir "$PWD/stage"
+          install -Dm644 LICENSE stage/usr/share/doc/edid-editor/copyright
+      - name: Package
+        run: |
+          bins=()
+          for f in $(find stage -type f); do
+            readelf -h "$f" >/dev/null 2>&1 && bins+=("$f")
+          done
+          arch=all shlibs=
+          if [ ${#bins[@]} -gt 0 ]; then
+            arch=$(dpkg --print-architecture)
+            strip --strip-unneeded "${bins[@]}"
+            # dpkg-shlibdeps wants a source package to belong to.
+            mkdir debian
+            printf 'Source: edid-editor\n\nPackage: edid-editor\nArchitecture: any\n' > debian/control
+            shlibs=$(dpkg-shlibdeps -O $(printf -- '-e %s ' "${bins[@]}") | sed -n 's/^shlibs:Depends=//p')
+          fi
+          mkdir stage/DEBIAN
+          cat > stage/DEBIAN/control <<EOF
+          Package: edid-editor
+          Version: ${TAG#v}-$REVISION
+          Architecture: $arch
+          Maintainer: sachesi <xsachesi@pm.me>
+          Installed-Size: $(du -sk stage | cut -f1)
+          Depends: ${shlibs:+$shlibs, }libgtk-4-1 (>= 4.10), libadwaita-1-0 (>= 1.8), hicolor-icon-theme
+          Section: utils
+          Priority: optional
+          Homepage: https://github.com/sachesi/edid-editor
+          Description: EDID editor for GNOME, with a command line interface
+           EDID Editor inspects and edits EDID, the data a display sends to describe
+           itself: its name, size, timings, refresh ranges, color and HDR support, and
+           audio formats. It reads the base block, CTA-861 extensions and DisplayID 1.x
+           and 2.x blocks from files or from a connected display, and never writes to the
+           display itself. It is written with GTK 4 and libadwaita, and is based on
+           wxEDID by Tomasz Pawlak.
+           .
+           edid-editor-cli reads, edits, compares and converts EDID data from a terminal
+           with the same code, with a manual page and completions for bash, zsh and fish.
+          EOF
+          mkdir dist
+          deb="dist/edid-editor_${TAG#v}-${REVISION}_$arch.deb"
+          dpkg-deb --root-owner-group -Zxz --build stage "$deb"
+          # The dependencies resolve on the release it was built for.
+          apt-get install -y "./$deb"
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ matrix.artifact }}
+          path: dist/*
+
+  arch:
+    name: Package for Arch Linux
+    needs: source
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+      # The PKGBUILD of this workflow's revision, which builds the tag's sources.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Build
+        run: |
+          pacman -Syu --noconfirm --needed git
+          useradd -m builder
+          install -d -o builder pkg
+          cp packaging/aur/PKGBUILD pkg/
+          sed -i "s/^pkgver=.*/pkgver=${TAG#v}/; s/^pkgrel=.*/pkgrel=1/" pkg/PKGBUILD
+          (source pkg/PKGBUILD && pacman -S --noconfirm --needed --asdeps "${depends[@]}" "${makedepends[@]}")
+          su builder -c 'cd pkg && makepkg --noconfirm'
+          name=$(source pkg/PKGBUILD && echo "$pkgname")
+          mkdir dist && mv pkg/"$name-${TAG#v}"-1-*.pkg.tar.zst dist/
+          # The dependencies resolve on Arch as it is today.
+          pacman -U --noconfirm dist/*.pkg.tar.zst
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: arch
+          path: dist/*
+
+  publish:
+    name: Publish the release
+    needs: [source, fedora, debian, arch]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: notes
+          name: notes
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: dist
+          pattern: "{fedora,debian,ubuntu,arch}"
+          merge-multiple: true
       - name: Publish
         run: |
+          cd dist
+          sha256sum * > SHA256SUMS
           # A release that already exists keeps its notes, which may have been edited by hand.
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --verify-tag --title "EDID Editor ${TAG#v}" \
-              --notes-file "$RUNNER_TEMP/notes.md"
+          if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" -R "$GITHUB_REPOSITORY" --clobber *
+          else
+            gh release create "$TAG" -R "$GITHUB_REPOSITORY" --verify-tag --title "EDID Editor ${TAG#v}" \
+              --notes-file ../notes/notes.md *
           fi
