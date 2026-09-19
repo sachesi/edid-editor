@@ -4,6 +4,7 @@
 %global app_id io.github.sachesi.EdidEditor
 
 Name:           edid-editor
+# The release workflow and Copr set Version to the tag they build.
 Version:        0.4.0
 Release:        1%{?dist}
 Summary:        EDID editor for GNOME, with a command line interface
