@@ -225,6 +225,11 @@ jobs:
       - name: Publish
         run: |
           cd dist
+          # GitHub turns the ~ of the Ubuntu revision into a dot in asset names; rename
+          # first, so the checksums list the names people download.
+          for f in *~*; do
+            if [ -e "$f" ]; then mv "$f" "${f//\~/.}"; fi
+          done
           sha256sum * > SHA256SUMS
           # A release that already exists keeps its notes, which may have been edited by hand.
           if gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
