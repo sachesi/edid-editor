@@ -102,6 +102,8 @@ data.
 | Ctrl+Shift+Z | Redo |
 | Ctrl+F | Search the groups; Escape clears the search |
 | Ctrl+? | Keyboard shortcuts |
+| Ctrl+W | Close the window |
+| Ctrl+Q | Quit |
 
 While the group list has focus:
 

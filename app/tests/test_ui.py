@@ -505,6 +505,8 @@ def functional(Atspi, app, fixture):
             activate_menu_item(Atspi, "Keyboard Shortcuts")
             wait_for(lambda: named(Atspi, "Duplicate group"),
                      "keyboard shortcuts dialog did not list group shortcuts")
+            wait_for(lambda: named(Atspi, "Quit"),
+                     "keyboard shortcuts dialog did not list the quit shortcut")
             wait_for(lambda: named(Atspi, "Search groups", Atspi.Role.LABEL) or
                      any(name_of(node) == "Search groups" and role_of(node) != Atspi.Role.ENTRY
                          for node in nodes(Atspi)),
