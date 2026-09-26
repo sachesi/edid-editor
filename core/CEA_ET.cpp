@@ -453,35 +453,50 @@ rcode cea_vddd_cl::init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent) {
    pgrp = new vddd_iface_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init(inst_data, (ID_VDDD | T_SUB_GRP | T_GRP_FIXED), this );
-   if (! RCD_IS_OK(retU)) return retU;
+   if (! RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    pgrp->setAbsOffs(abs_offs);
    subgroups.Append(pgrp);
    //CPT
    pgrp = new vddd_cprot_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init(inst_data, (ID_VDDD | T_SUB_GRP | T_GRP_FIXED), this );
-   if (! RCD_IS_OK(retU)) return retU;
+   if (! RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    pgrp->setAbsOffs(abs_offs);
    subgroups.Append(pgrp);
    //AUD
    pgrp = new vddd_audio_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init(inst_data, (ID_VDDD | T_SUB_GRP | T_GRP_FIXED), this );
-   if (! RCD_IS_OK(retU)) return retU;
+   if (! RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    pgrp->setAbsOffs(abs_offs);
    subgroups.Append(pgrp);
    //DPR
    pgrp = new vddd_disp_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init(inst_data, (ID_VDDD | T_SUB_GRP | T_GRP_FIXED), this );
-   if (! RCD_IS_OK(retU)) return retU;
+   if (! RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    pgrp->setAbsOffs(abs_offs);
    subgroups.Append(pgrp);
    //CXY
    pgrp = new vddd_cxy_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init(inst_data, (ID_VDDD | T_SUB_GRP | T_GRP_FIXED), this );
-   if (! RCD_IS_OK(retU)) return retU;
+   if (! RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    pgrp->setAbsOffs(abs_offs);
    subgroups.Append(pgrp);
 
