@@ -8,7 +8,8 @@ Before a change goes in:
 
 - `just check`, `just test` and `just test-ui` pass. The debug build treats compiler
   warnings as errors. CI runs `just check` and `just test` on Fedora 44 for every push
-  and pull request, and `just gui=disabled test` without the GTK packages.
+  and pull request, and `just gui=disabled test` and `just gui=disabled test-sanitize`
+  without the GTK packages.
 - Commit messages follow [Conventional Commits](https://www.conventionalcommits.org/):
   `fix:`, `feat:`, `docs:`, `test:` and so on, with a subject that says what changed for
   someone using EDID Editor.
@@ -86,6 +87,7 @@ them for scripts, so both stay in English for now.
     just check           # debug build, desktop entry and AppStream validation
     just test            # the core tests and the metadata validators
     just test-ui         # the interface tests, a few minutes
+    just test-sanitize   # the tests of `just test` under ASan and UBSan
 
 The interface tests start the application in a headless Weston session with Xwayland and
 drive it through the accessibility tree, because keyboard and pointer events do not
