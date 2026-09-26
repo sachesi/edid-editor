@@ -1498,7 +1498,10 @@ rcode edi_grp_cl::init_fields(const edi_field_t* field_ar, const u8_t* inst, u32
 
       if ((pfld->field.flags & F_VS) != 0) {
          //A field with F_VS flag set must have defined valid VS index.
-         if (VS_NO_SELECTOR == pfld->field.vmap_idx) RCD_RETURN_FAULT(retU);
+         if (VS_NO_SELECTOR == pfld->field.vmap_idx) {
+            delete pfld;
+            RCD_RETURN_FAULT(retU);
+         }
       }
 
       FieldsAr.Add(pfld);
@@ -1532,7 +1535,10 @@ rcode dbc_grp_cl::Append_UNK_DAT(const u8_t* inst, u32_t dlen, u32_t orflags, u3
    pgrp->setDataSize(dlen);
 
    retU = pgrp->init(inst, orflags, parent_grp);
-   if (! RCD_IS_OK(retU)) return retU;
+   if (! RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
 
    pgrp->setAbsOffs(abs_offs);
    pgrp->setRelOffs(rel_offs);

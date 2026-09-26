@@ -553,7 +553,10 @@ rcode EDID_cl::ParseEDID_CEA(u32_t block) {
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
 
    retU = pgrp->init(pext, 0, NULL);
-   if (!RCD_IS_OK(retU)) return retU;
+   if (!RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
 
    pgrp->setAbsOffs(calcGroupOffs(pext));
    groups.Append(pgrp);
@@ -915,37 +918,55 @@ rcode EDID_cl::ParseEDID_Base(u32_t& n_extblk) {
    pgrp = new edibase_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init(reinterpret_cast <u8_t*> (&EDID_buff.edi.base.hdr), 0, NULL);
-   if (!RCD_IS_OK(retU)) return retU;
+   if (!RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    EDI_BaseGrpAr.Append(pgrp);
    //VID: Video Input Descriptor
    pgrp = new vindsc_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init(reinterpret_cast <u8_t*> (&EDID_buff.edi.base.vinput_dsc), 0, NULL);
-   if (!RCD_IS_OK(retU)) return retU;
+   if (!RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    EDI_BaseGrpAr.Append(pgrp);
    //BDD: basic display descriptior
    pgrp = new bddcs_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init( reinterpret_cast <u8_t*> (&EDID_buff.edi.base.bdd), 0, NULL);
-   if (!RCD_IS_OK(retU)) return retU;
+   if (!RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    EDI_BaseGrpAr.Append(pgrp);
    //SPF: Supported features class
    pgrp = new spft_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init(reinterpret_cast <u8_t*> (&EDID_buff.edi.base.features), 0, NULL);
-   if (!RCD_IS_OK(retU)) return retU;
+   if (!RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    EDI_BaseGrpAr.Append(pgrp);
    //CXY: CIE Chromacity coords class
    pgrp = new chromxy_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init(reinterpret_cast <u8_t*> (&EDID_buff.edi.base.chromxy), 0, NULL);
-   if (!RCD_IS_OK(retU)) return retU;
+   if (!RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    EDI_BaseGrpAr.Append(pgrp);
    //Resolution map class
    pgrp = new resmap_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU = pgrp->init(reinterpret_cast <u8_t*> (&EDID_buff.edi.base.res_map), 0, NULL);
-   if (!RCD_IS_OK(retU)) return retU;
+   if (!RCD_IS_OK(retU)) {
+      delete pgrp;
+      return retU;
+   }
    EDI_BaseGrpAr.Append(pgrp);
    //STI: Std Timing Information descriptors
    {
