@@ -377,6 +377,7 @@ void wnd_present_compare(wxedid_wnd* wnd, const char* path, bool hex);
 void wnd_on_compare_file_action(GSimpleAction*, GVariant*, gpointer user_data);
 
 // document.cpp
+char* wnd_display_path(const char* path);
 void wnd_refresh_recent(wxedid_wnd* wnd);
 void wnd_on_recent_changed(GtkRecentManager*, gpointer user_data);
 void wnd_on_open_recent(GSimpleAction*, GVariant* parameter, gpointer user_data);

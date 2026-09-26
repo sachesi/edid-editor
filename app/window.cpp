@@ -81,7 +81,7 @@ void wnd_update_document_ui(wxedid_wnd* wnd) {
 
    if (wnd->loaded) {
       char* basename = document_basename(wnd->doc->path);
-      char* display_path = g_filename_display_name(wnd->doc->path);
+      char* display_path = wnd_display_path(wnd->doc->path);
       //Translators: the window name; %s is the file name
       char* window_name = g_strdup_printf(_("%s — EDID Editor"), basename);
       const char* state = wnd->dirty ? _("Modified") : NULL;
