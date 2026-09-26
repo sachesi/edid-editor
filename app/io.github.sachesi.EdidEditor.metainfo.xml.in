@@ -18,19 +18,19 @@
   </description>
   <screenshots>
     <screenshot type="default">
-      <image>https://raw.githubusercontent.com/sachesi/edid-editor/ac802435b44737778df01d01b2f2ea1b8456e148/data/screenshots/overview.png</image>
+      <image>https://raw.githubusercontent.com/sachesi/edid-editor/v0.5.0/data/screenshots/overview.png</image>
       <caption>See what a display reports about itself at a glance</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/sachesi/edid-editor/ac802435b44737778df01d01b2f2ea1b8456e148/data/screenshots/modes.png</image>
+      <image>https://raw.githubusercontent.com/sachesi/edid-editor/v0.5.0/data/screenshots/modes.png</image>
       <caption>Make any mode the one a display prefers</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/sachesi/edid-editor/ac802435b44737778df01d01b2f2ea1b8456e148/data/screenshots/timing.png</image>
+      <image>https://raw.githubusercontent.com/sachesi/edid-editor/v0.5.0/data/screenshots/timing.png</image>
       <caption>Adjust a detailed timing on a drawing of the frame to scale</caption>
     </screenshot>
     <screenshot>
-      <image>https://raw.githubusercontent.com/sachesi/edid-editor/ac802435b44737778df01d01b2f2ea1b8456e148/data/screenshots/fields.png</image>
+      <image>https://raw.githubusercontent.com/sachesi/edid-editor/v0.5.0/data/screenshots/fields.png</image>
       <caption>Edit each field of a data block by its plain name</caption>
     </screenshot>
   </screenshots>
@@ -47,6 +47,32 @@
     <binary>edid-editor-cli</binary>
   </provides>
   <releases>
+    <release version="0.5.0" date="2026-09-26">
+      <description>
+        <p>
+          Saving no longer truncates the file before writing it: the EDID goes
+          to a new file that replaces the old one, so a failed save keeps the
+          old data. Files, connected displays and compared EDIDs are read off
+          the main thread, so a display the kernel is still probing no longer
+          freezes the window. Fixes an undefined read of CTA-861 data block
+          headers, memory leaked by data that fails to parse, and a star
+          pressed on a mode an undo had just removed.
+        </p>
+        <p>
+          Requires GTK 4.22 and libadwaita 1.9. The sidebar and the content
+          have their own header bars, the group menu opens with a long press,
+          Ctrl+W closes the window and Ctrl+Q quits. Bytes and modelines use
+          the monospace font chosen in settings, a field’s bytes are marked in
+          the accent color, and the window subtitle shows the home folder as
+          ~. Adds a symbolic icon, lists the application under Settings, and
+          translates the byte view headings.
+        </p>
+        <p>
+          Fedora packages are published in Copr, openSUSE, Debian and Ubuntu
+          packages on OBS, and the Arch Linux package in the AUR.
+        </p>
+      </description>
+    </release>
     <release version="0.4.0" date="2026-09-15">
       <description>
         <p>
