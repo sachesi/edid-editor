@@ -6,5 +6,5 @@ Exec=edid-editor %f
 Icon=io.github.sachesi.EdidEditor
 Terminal=false
 StartupNotify=true
-Categories=System;HardwareSettings;GTK;
+Categories=Settings;HardwareSettings;GTK;
 Keywords=EDID;display;monitor;CTA-861;DisplayID;
