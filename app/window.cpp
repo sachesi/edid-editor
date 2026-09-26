@@ -187,6 +187,20 @@ static void wnd_on_source_banner(AdwBanner*, gpointer user_data) {
    g_action_activate(G_ACTION(wnd->save_as_action), NULL);
 }
 
+//the bytes of the selected field and the timing diagram follow the accent color
+static void wnd_apply_accent(wxedid_wnd* wnd) {
+   GdkRGBA* accent = adw_style_manager_get_accent_color_rgba(adw_style_manager_get_default());
+   accent->alpha = 0.3f;
+   GtkTextTagTable* tags = gtk_text_buffer_get_tag_table(gtk_text_view_get_buffer(wnd->raw_view));
+   g_object_set(gtk_text_tag_table_lookup(tags, "field"), "background-rgba", accent, NULL);
+   gdk_rgba_free(accent);
+   gtk_widget_queue_draw(wnd->timing->drawing);
+}
+
+static void wnd_on_accent_changed(AdwStyleManager*, GParamSpec*, gpointer user_data) {
+   wnd_apply_accent(static_cast<wxedid_wnd*>(user_data));
+}
+
 static void wnd_on_toggle_sidebar(GtkButton* /*button*/, gpointer user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
    gboolean visible = adw_overlay_split_view_get_show_sidebar(wnd->split_view);
@@ -403,6 +417,9 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
                               if (w->recent_changed != 0)
                                  g_signal_handler_disconnect(gtk_recent_manager_get_default(),
                                                              w->recent_changed);
+                              if (w->accent_changed != 0)
+                                 g_signal_handler_disconnect(adw_style_manager_get_default(),
+                                                             w->accent_changed);
                               g_clear_object(&w->recent_menu);
                               g_clear_object(&w->cancellable);
                               g_clear_object(&w->load_cancellable);
@@ -913,8 +930,11 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
                                   _("Selected group bytes"), -1);
    gtk_text_buffer_create_tag(gtk_text_view_get_buffer(wnd->raw_view), "field",
-                              "background", "rgba(53,132,228,0.3)",
                               "weight", PANGO_WEIGHT_BOLD, NULL);
+   wnd_apply_accent(wnd);
+   wnd->accent_changed = g_signal_connect(adw_style_manager_get_default(),
+                                          "notify::accent-color-rgba",
+                                          G_CALLBACK(wnd_on_accent_changed), wnd);
    gtk_text_buffer_create_tag(gtk_text_view_get_buffer(wnd->raw_view), "heading",
                               "weight", PANGO_WEIGHT_BOLD, NULL);
    //the bytes card hugs its lines; the page scrolls as a whole
