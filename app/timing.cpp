@@ -64,6 +64,7 @@ static void timing_update_outputs(wxedid_timing* timing) {
 
    gtk_spin_button_set_value(timing->refresh, std::round(refresh * 100.0) / 100.0);
    char text[64];
+   //Translators: the pixel clock as the EDID stores it
    snprintf(text, sizeof(text), (timing->pixel_hz_factor == 10000.0) ? _("stored as %u × 10 kHz")
                                                                    : _("stored as %u kHz"),
             timing_value(timing, TIMING_PIXCLK));
@@ -73,6 +74,7 @@ static void timing_update_outputs(wxedid_timing* timing) {
    gtk_label_set_text(timing->htotal, text);
    snprintf(text, sizeof(text), "%.2f kHz", pixclk / htotal / 1000.0);
    gtk_label_set_text(timing->hfreq, text);
+   //Translators: the lines of a frame and how long a frame lasts
    snprintf(text, sizeof(text), _("%u lines  ·  %.3f ms"), vtotal,
             vtotal * line_ms);
    gtk_label_set_text(timing->vtotal, text);
@@ -214,11 +216,13 @@ static void timing_draw(GtkDrawingArea* area, cairo_t* cr, int width, int height
       {active_x + active_w, pad, right - (active_x + active_w), canvas_h,
        right + (pad / 2.0), 0.0, true, {}, {}},
    };
+   //Translators: the blanking lines above the image, in the timing diagram
    snprintf(bands[0].text, sizeof(bands[0].text), _("Sync %u + back porch %u lines"),
             vwidth, vback_porch);
    snprintf(bands[0].short_text, sizeof(bands[0].short_text), _("%u lines"), vback);
    snprintf(bands[1].text, sizeof(bands[1].text), _("Sync offset %u lines"), voffset);
    snprintf(bands[1].short_text, sizeof(bands[1].short_text), _("%u lines"), voffset);
+   //Translators: the blanking pixels left of the image, in the timing diagram
    snprintf(bands[2].text, sizeof(bands[2].text), _("Sync %u + back porch %u px"),
             hwidth, hback_porch);
    snprintf(bands[2].short_text, sizeof(bands[2].short_text), "%u px", hback);
@@ -234,6 +238,7 @@ static void timing_draw(GtkDrawingArea* area, cairo_t* cr, int width, int height
    char active_text[48];
    snprintf(active_text, sizeof(active_text), "%u × %u", hactive, vactive);
    char total_text[64];
+   //Translators: the whole frame, blanking included: pixels by lines
    snprintf(total_text, sizeof(total_text), _("Total %.0f × %.0f"), htotal, vtotal);
    int total_w = 0;
    int total_h = 0;

@@ -82,11 +82,14 @@ void wnd_update_document_ui(wxedid_wnd* wnd) {
    if (wnd->loaded) {
       char* basename = document_basename(wnd->doc->path);
       char* display_path = g_filename_display_name(wnd->doc->path);
+      //Translators: the window name; %s is the file name
       char* window_name = g_strdup_printf(_("%s — EDID Editor"), basename);
       const char* state = wnd->dirty ? _("Modified") : NULL;
       char* subtitle = NULL;
       if (wnd->document_hex) {
          subtitle = (state != NULL)
+            //Translators: the window subtitle: the document state, such as
+            //Modified, then the file path
             ? g_strdup_printf(_("%s · Imported · %s"), state, display_path)
             : g_strdup_printf(_("Imported · %s"), display_path);
       } else if (! wnd->source_writable && (state != NULL)) {

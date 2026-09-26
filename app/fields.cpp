@@ -442,6 +442,7 @@ void rows_reload(GtkFlowBox* list, edi_grp_cl* pgrp, EDID_cl* pEDID,
          gtk_widget_add_css_class(about, "circular");
          gtk_widget_add_css_class(about, "field-help");
          gtk_widget_set_valign(about, GTK_ALIGN_CENTER);
+         //Translators: the tooltip of a field's help button; %s is the field name
          char* about_label = g_strdup_printf(_("About %s"), title.c_str());
          gtk_widget_set_tooltip_text(about, about_label);
          gtk_accessible_update_property(GTK_ACCESSIBLE(about),

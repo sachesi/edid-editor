@@ -36,6 +36,8 @@ static wxedid_item* wxedid_item_new_raw_extension(u32_t block, u8_t tag,
    wxedid_item* item = wxedid_item_new(NULL, pEDID);
    const char* type = (tag == 0x70) ? "DisplayID" : _("Unsupported");
    snprintf(item->label, sizeof(item->label),
+            //Translators: an extension block the editor can't read: its number,
+            //type and tag byte
             _("Extension %u: %s (0x%02X), preserved read-only"), block, type, tag);
    item->selectable = true;
    item->raw_block = static_cast<int>(block);
@@ -366,6 +368,12 @@ void wnd_update_group_actions(wxedid_wnd* wnd) {
       _("Select a group in a CTA-861 or DisplayID block to add groups"));
 }
 
+static void raw_append_heading(GString* text, const char* heading, glong width) {
+   glong length = g_utf8_strlen(heading, -1);
+   g_string_append(text, heading);
+   g_string_append_printf(text, "%*s", static_cast<int>(std::max<glong>(1, width - length)), "");
+}
+
 void wnd_refresh_raw_view(wxedid_wnd* wnd) {
    if (wnd->raw_view == NULL) return;
 
@@ -411,6 +419,8 @@ void wnd_refresh_raw_view(wxedid_wnd* wnd) {
       char where[160];
       u32_t first = offset + mark_start;
       if ((field->field.flags & F_BIT) != 0) {
+         //Translators: where the marked field is: its name, then its bit and
+         //byte in the EDID
          snprintf(where, sizeof(where), _("%s · bit %u of byte 0x%03X"),
                   name.c_str(), field->field.shift, first);
       } else if (mark_count == 1) {
@@ -424,7 +434,11 @@ void wnd_refresh_raw_view(wxedid_wnd* wnd) {
       gtk_label_set_text(wnd->raw_caption, _("Select a field to mark its bytes"));
    }
 
-   GString* text = g_string_new("Offset  Hex bytes                                         Text\n");
+   GString* text = g_string_new(NULL);
+   //headings padded to the offset and hex columns below
+   raw_append_heading(text, _("Offset"), 8);
+   raw_append_heading(text, _("Hex bytes"), 49);
+   g_string_append_printf(text, "%s\n", C_("byte view heading", "Text"));
    for (u32_t pos=0; pos<size; pos += 16) {
       g_string_append_printf(text, "%04X    ", offset + pos);
       for (u32_t byte=0; byte<16; byte++) {
@@ -513,6 +527,7 @@ void wnd_on_tree_select(GtkSelectionModel* selmodel, guint /*position*/,
    gtk_label_set_text(wnd->group_title, group_name.c_str());
    if (it->pgrp != NULL) {
       char where[128];
+      //Translators: the group's code, its offset in the EDID and its block number
       snprintf(where, sizeof(where), _("%s · offset 0x%03X · block %u"),
                it->pgrp->CodeName.c_str(), it->pgrp->getAbsOffs(),
                it->pgrp->getAbsOffs() / static_cast<u32_t>(sizeof(ediblk_t)));
@@ -822,6 +837,7 @@ void wnd_rebuild_tree(wxedid_wnd* wnd, edi_grp_cl* select_group) {
                             (buffer->blk[block][0] == 0x70) ? "DisplayID" :
                                                              _("Extension");
          char label[64];
+         //Translators: a sidebar heading: the block number and its type
          snprintf(label, sizeof(label), _("Block %u: %s"), block, type);
          wxedid_item* section = wxedid_item_new_block(label, groups, &edid);
          g_list_store_append(root, section);

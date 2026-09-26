@@ -66,6 +66,7 @@ static GtkWidget* wnd_modes_group(wxedid_wnd* wnd) {
          place = _("Base block");
       } else {
          char text[64];
+         //Translators: where a detailed timing is: the block number and its type
          snprintf(text, sizeof(text), _("Block %u, %s"), mode.block,
                   (tag == 0x70) ? "DisplayID" : "CTA-861");
          place = text;
@@ -265,6 +266,7 @@ static bool read_edid_source(const wxedid_source& source, std::vector<u8_t>& byt
 static std::string compare_change(const edid_difference& entry, const char* other) {
    if (entry.field.empty() || (entry.left.empty() != entry.right.empty())) {
       if (entry.right.empty()) return _("Only in this EDID");
+      //Translators: %s is the name of the EDID compared with
       char* text = g_strdup_printf(_("Only in %s"), other);
       std::string only = text;
       g_free(text);
@@ -287,6 +289,7 @@ static void wnd_on_compare_read(GObject*, GAsyncResult* result, gpointer user_da
    if (! read_edid_source(*source, bytes, problem) ||
        ! edid_parse_bytes(EDID, bytes, problem)) {
       char message[1400];
+      //Translators: the name of the EDID compared with, then the problem
       snprintf(message, sizeof(message), _("Couldn’t compare with %s: %s"), other, problem.c_str());
       wnd_show_error(wnd, message);
       g_free(other);
