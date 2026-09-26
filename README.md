@@ -13,6 +13,8 @@ and its bytes marked, detailed timings have a visual editor, data blocks can be 
 duplicated, moved and deleted, and two EDIDs can be compared field by field. Saving
 recomputes the checksums and keeps data the editor does not understand.
 
+![The timing editor, with a detailed timing drawn to scale](data/screenshots/timing.png)
+
 `edid-editor-cli` does the same from a terminal, without a display: it lists and reads
 every field, sets fields, adds, duplicates, moves and deletes groups, and compares and
 converts EDIDs. It prints JSON for scripts, and comes with a manual page and completions
