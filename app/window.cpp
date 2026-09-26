@@ -63,9 +63,9 @@ static void log_sink(const char* msg, void* user_data) {
 
 void wnd_update_document_ui(wxedid_wnd* wnd) {
    bool can_save = wnd->loaded && wnd->dirty && (wnd->invalid_fields == 0);
-   g_simple_action_set_enabled(wnd->save_action, can_save);
+   g_simple_action_set_enabled(wnd->save_action, can_save && ! wnd->save_pending);
    bool can_write = wnd->loaded && (wnd->invalid_fields == 0);
-   g_simple_action_set_enabled(wnd->save_as_action, can_write);
+   g_simple_action_set_enabled(wnd->save_as_action, can_write && ! wnd->save_pending);
    g_simple_action_set_enabled(wnd->export_hex_action, can_write);
    g_simple_action_set_enabled(wnd->save_report_action, can_write);
    g_simple_action_set_enabled(wnd->compare_file_action, wnd->loaded);
@@ -156,6 +156,12 @@ void wnd_show_error(wxedid_wnd* wnd, const char* message) {
    wnd->banner_offers_retry = false;
 }
 
+//reads and dialogs still open would only find the window gone; writes finish
+void wnd_cancel_io(wxedid_wnd* wnd) {
+   g_cancellable_cancel(wnd->cancellable);
+   if (wnd->load_cancellable != NULL) g_cancellable_cancel(wnd->load_cancellable);
+}
+
 void wnd_clear_feedback(wxedid_wnd* wnd) {
    gtk_text_buffer_set_text(wnd->log, "", -1);
    wnd->notes.clear();
@@ -198,17 +204,27 @@ static void wnd_on_discard_close_response(GObject* source, GAsyncResult* result,
    const char* response = adw_alert_dialog_choose_finish(
       ADW_ALERT_DIALOG(source), result);
    wnd->close_confirmation_open = false;
-   if (0 == strcmp(response, "discard")) {
-      wnd->dirty = false;
-      wnd_save_state(wnd);
-      gtk_window_destroy(wnd->window);
+   if (0 != strcmp(response, "discard")) return;
+   if (wnd->save_pending) {
+      wnd->close_after_save = true;
+      return;
    }
+   wnd->dirty = false;
+   wnd_save_state(wnd);
+   wnd_cancel_io(wnd);
+   gtk_window_destroy(wnd->window);
 }
 
 static gboolean wnd_on_close_request(GtkWindow* /*window*/, gpointer user_data) {
    wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+   //the window stays until the EDID being saved is written, or fails to be
+   if (wnd->save_pending) {
+      wnd->close_after_save = true;
+      return TRUE;
+   }
    if (! wnd->dirty) {
       wnd_save_state(wnd);
+      wnd_cancel_io(wnd);
       return FALSE;
    }
    if (wnd->close_confirmation_open) return TRUE;
@@ -343,35 +359,37 @@ static void wnd_on_shortcuts_action(GSimpleAction*, GVariant*, gpointer user_dat
    adw_dialog_present(dialog, GTK_WIDGET(wnd->window));
 }
 
+static wxedid_wnd* wnd_new(AdwApplication* app);
+
 //------------
-// 'open' signal: files passed on the command line
+// 'open' signal: files passed on the command line. The last local one is
+// opened, and the window shows once it is read.
 void wxedid_app_open(AdwApplication* app, GFile** files, gint n_files,
                      gchar* /*hint*/, gpointer /*user_data*/) {
-   //activate first (creates the window), then load into it
-   wxedid_app_activate(app, NULL);
-
-   //find the window created by activate
-   GtkWindow* window = gtk_application_get_active_window(GTK_APPLICATION(app));
-   if (window == NULL) return;
-
-   wxedid_wnd* wnd = (wxedid_wnd*) g_object_get_data(G_OBJECT(window), "wxedid-wnd");
-   if (wnd == NULL) return;
-
-   for (gint i=0; i<n_files; i++) {
-      char* path = g_file_get_path(files[i]);
-      if (path != NULL) {
-         wnd_load_file(wnd, path, path_is_hex_text(path));
-         g_free(path);
-      }
+   wxedid_wnd* wnd = wnd_new(app);
+   char* path = NULL;
+   for (gint i=n_files - 1; (i >= 0) && (path == NULL); i--) {
+      path = g_file_get_path(files[i]);
    }
+   if (path == NULL) {
+      gtk_window_present(wnd->window);
+      return;
+   }
+   wnd_load_file(wnd, path, path_is_hex_text(path));
+   g_free(path);
+}
+
+void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
+   gtk_window_present(wnd_new(app)->window);
 }
 
 //------------
-void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
+static wxedid_wnd* wnd_new(AdwApplication* app) {
    wxedid_wnd* wnd = new wxedid_wnd{};
    wnd->doc        = new wxedid_doc;
    wnd->doc->path[0] = 0;
    wnd->saved_history_position = 0;
+   wnd->cancellable = g_cancellable_new();
 
    GtkWidget* window = adw_application_window_new(GTK_APPLICATION(app));
    wnd->window = GTK_WINDOW(window);
@@ -386,6 +404,8 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
                                  g_signal_handler_disconnect(gtk_recent_manager_get_default(),
                                                              w->recent_changed);
                               g_clear_object(&w->recent_menu);
+                              g_clear_object(&w->cancellable);
+                              g_clear_object(&w->load_cancellable);
                               g_clear_object(&w->log);
                               g_clear_object(&w->tree_filtered);
                               g_clear_object(&w->tree_filter);
@@ -1084,5 +1104,5 @@ void wxedid_app_activate(AdwApplication* app, gpointer /*user_data*/) {
    wnd_load_state(wnd);
    wnd_update_history_state(wnd);
    wnd_update_document_ui(wnd);
-   gtk_window_present(GTK_WINDOW(window));
+   return wnd;
 }

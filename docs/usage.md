@@ -84,7 +84,10 @@ or extended audio layout. Undo and Redo cover these changes as well as field edi
 
 Save assembles the blocks and recomputes their checksums. Data the editor does not
 understand is kept, but a CTA-861 extension is written with a correct detailed timing
-offset and with any non-zero padding cleared. Export Hex writes the EDID as hexadecimal
+offset and with any non-zero padding cleared. The data goes to a new file that takes
+the place and permissions of the old one once it is complete, so a save that fails
+leaves the file as it was; a link, or a file in a folder you can't write to, is written
+in place instead. Export Hex writes the EDID as hexadecimal
 text, and Save Report writes every group, field, value and unit followed by the raw
 data.
 
