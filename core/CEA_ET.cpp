@@ -1751,7 +1751,6 @@ rcode spkld_cl::init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent) {
 void spkld_cl::getGrpName(EDID_cl& EDID, wxc_String& gp_name) {
    u32_t         ival;
    float         fval;
-   i8_t         *CoordN;
    spkld_t      *spkld;
    edi_dynfld_t *p_field;
 
@@ -1776,7 +1775,7 @@ void spkld_cl::getGrpName(EDID_cl& EDID, wxc_String& gp_name) {
    //NOTE: this can display trash data if parent grp length is invalid (too short)
    gp_name << ", ";
    ival   = 0;
-   CoordN = &spkld->CoordX;
+   const i8_t CoordN[3] = {spkld->CoordX, spkld->CoordY, spkld->CoordZ};
    do {
       fval  = (i32_t) CoordN[ival];
       fval /= 64.0;
@@ -1971,7 +1970,10 @@ rcode cea_ifdb_cl::init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent) {
    pgrp = new ifdb_ifpdh_cl;
    if (pgrp == NULL) RCD_RETURN_FAULT(retU);
    retU2 = pgrp->init(g_inst, (ID_IFDB | T_SUB_GRP | T_GRP_FIXED | orflags), this );
-   if (! RCD_IS_OK(retU2)) goto unk;
+   if (! RCD_IS_OK(retU2)) {
+      delete pgrp;
+      goto unk;
+   }
 
    pgrp->setAbsOffs(abs_ofs);
    pgrp->setRelOffs(rel_ofs);
@@ -2003,7 +2005,10 @@ rcode cea_ifdb_cl::init(const u8_t* inst, u32_t orflags, edi_grp_cl* parent) {
          if (pgrp == NULL) RCD_RETURN_FAULT(retU);
          retU2 = pgrp->init(g_inst, (ID_IFDB | T_SUB_GRP | orflags), this );
       }
-      if (! RCD_IS_OK(retU2)) goto unk;
+      if (! RCD_IS_OK(retU2)) {
+         delete pgrp;
+         goto unk;
+      }
 
       pgrp->setAbsOffs(abs_ofs);
       pgrp->setRelOffs(rel_ofs);
