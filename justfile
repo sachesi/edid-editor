@@ -71,6 +71,7 @@ install:
             install -Dm644 "$mo" {{datadir}}/locale/$lang/LC_MESSAGES/edid-editor.mo; \
         done; \
         install -Dm644 app/icons/{{app_id}}.svg {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg; \
+        install -Dm644 app/icons/{{app_id}}-symbolic.svg {{datadir}}/icons/hicolor/symbolic/apps/{{app_id}}-symbolic.svg; \
         if [ -z "{{destdir}}" ]; then \
             update-desktop-database -q {{datadir}}/applications || true; \
             gtk4-update-icon-cache -qtf {{datadir}}/icons/hicolor || gtk-update-icon-cache -qtf {{datadir}}/icons/hicolor || true; \
@@ -86,6 +87,7 @@ uninstall:
     rm -f {{datadir}}/fish/vendor_completions.d/edid-editor-cli.fish
     rm -f {{datadir}}/applications/{{app_id}}.desktop {{datadir}}/metainfo/{{app_id}}.metainfo.xml
     rm -f {{datadir}}/icons/hicolor/scalable/apps/{{app_id}}.svg
+    rm -f {{datadir}}/icons/hicolor/symbolic/apps/{{app_id}}-symbolic.svg
     rm -f {{datadir}}/locale/*/LC_MESSAGES/edid-editor.mo
     update-desktop-database -q {{datadir}}/applications || true
     # A cache that still lists the removed icons hides the same icons installed elsewhere.
