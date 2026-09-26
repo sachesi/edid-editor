@@ -21,11 +21,11 @@ BuildRequires:  python3
 BuildRequires:  gettext
 BuildRequires:  desktop-file-utils
 BuildRequires:  appstream
-BuildRequires:  pkgconfig(gtk4) >= 4.10
-BuildRequires:  pkgconfig(libadwaita-1) >= 1.8
+BuildRequires:  pkgconfig(gtk4) >= 4.22
+BuildRequires:  pkgconfig(libadwaita-1) >= 1.9
 
-Requires:       gtk4%{?_isa} >= 4.10
-Requires:       libadwaita%{?_isa} >= 1.8
+Requires:       gtk4%{?_isa} >= 4.22
+Requires:       libadwaita%{?_isa} >= 1.9
 Requires:       hicolor-icon-theme
 
 %description

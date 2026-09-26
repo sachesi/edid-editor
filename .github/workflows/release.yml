@@ -153,7 +153,7 @@ jobs:
           Architecture: $arch
           Maintainer: sachesi <xsachesi@pm.me>
           Installed-Size: $(du -sk stage | cut -f1)
-          Depends: ${shlibs:+$shlibs, }libgtk-4-1 (>= 4.10), libadwaita-1-0 (>= 1.8), hicolor-icon-theme
+          Depends: ${shlibs:+$shlibs, }libgtk-4-1 (>= 4.22), libadwaita-1-0 (>= 1.9), hicolor-icon-theme
           Section: utils
           Priority: optional
           Homepage: https://github.com/sachesi/edid-editor
