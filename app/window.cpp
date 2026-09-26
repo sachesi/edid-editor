@@ -358,6 +358,8 @@ static void wnd_on_shortcuts_action(GSimpleAction*, GVariant*, gpointer user_dat
       {N_("General"), {
          {N_("Search groups"), "<Control>f"},
          {N_("Keyboard shortcuts"), "<Control>question"},
+         {N_("Close window"), "<Control>w"},
+         {N_("Quit"), "<Control>q"},
       }},
    };
    AdwDialog* dialog = adw_shortcuts_dialog_new();
@@ -612,6 +614,11 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
    const char* shortcuts_accels[] = {"<Control>question", NULL};
    gtk_application_set_accels_for_action(GTK_APPLICATION(app), "win.shortcuts",
                                          shortcuts_accels);
+   const char* close_accels[] = {"<Control>w", NULL};
+   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "window.close",
+                                         close_accels);
+   const char* quit_accels[] = {"<Control>q", NULL};
+   gtk_application_set_accels_for_action(GTK_APPLICATION(app), "app.quit", quit_accels);
 
    //header bar
    GtkWidget* header = adw_header_bar_new();
