@@ -175,7 +175,7 @@ rcode EDID_cl::ParseDBC_TAG(u8_t *pinst, edi_grp_cl** pp_grp) {
 
    RCD_SET_OK(retU);
 
-   ethdr.w16 = reinterpret_cast<u16_t*> (pinst)[0];
+   memcpy(&ethdr.w16, pinst, sizeof(ethdr.w16));
    tagcode   = ethdr.ehdr.hdr.tag.tag_code;
 
    switch (tagcode) {
@@ -595,7 +595,7 @@ rcode EDID_cl::ParseEDID_CEA(u32_t block) {
 
       do {
          //Parse Data Block Collection (DBC)
-         ethdr.w16 = reinterpret_cast<u16_t*> (pinst)[0];
+         memcpy(&ethdr.w16, pinst, sizeof(ethdr.w16));
          blklen    = ethdr.ehdr.hdr.tag.blk_len;
          blklen   += sizeof(bhdr_t);
 
