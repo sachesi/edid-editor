@@ -163,6 +163,7 @@ struct wxedid_wnd {
    GtkWidget*          recent_group;
    GMenu*              recent_menu;    //Open Recent submenu
    gulong              recent_changed;
+   gulong              accent_changed;
    GtkLabel*           reserved_label;
    u32_t               invalid_fields;
    GCancellable*       cancellable;      //cancelled when the window closes
