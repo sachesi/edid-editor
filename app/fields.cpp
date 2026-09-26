@@ -83,7 +83,8 @@ void wnd_record_edit_history(wxedid_wnd* wnd, edi_grp_cl* group,
       (wnd->history_position == wnd->history.size()) &&
       (wnd->history[*history_index].group == group) &&
       (wnd->history[*history_index].field == field) &&
-      (wnd->saved_history_position != static_cast<long>(wnd->history_position));
+      (wnd->saved_history_position != static_cast<long>(wnd->history_position)) &&
+      ! (wnd->save_pending && (wnd->save_position == wnd->history_position));
 
    if (can_coalesce) {
       wxedid_history_entry& entry = wnd->history[*history_index];

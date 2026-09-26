@@ -7,6 +7,8 @@
 
 #include "window_private.h"
 
+#include <fcntl.h>
+
 //------------
 // recent files and window state
 static const char RECENT_GROUP[] = "edid-editor";
@@ -169,7 +171,8 @@ static void wnd_offer_retry(wxedid_wnd* wnd) {
 }
 
 static void wnd_load_bytes(wxedid_wnd* wnd, const char* path,
-                           const u8_t* data, size_t size, bool hex_source) {
+                           const u8_t* data, size_t size, bool hex_source,
+                           bool writable) {
    //a pending rebuild refers to groups that loading may release
    wnd_flush_refresh(wnd);
    edid_load_result loaded = edid_load(wnd->doc->EDID, data, size, path, wnd->doc->GLog);
@@ -177,6 +180,7 @@ static void wnd_load_bytes(wxedid_wnd* wnd, const char* path,
       if (loaded.can_retry) wnd_offer_retry(wnd);
       return;
    }
+   wnd->document_serial++;
    bool base_ok = loaded.opened;
    bool extension_failed = loaded.extension_failed;
    bool partial = loaded.partial;
@@ -191,7 +195,7 @@ static void wnd_load_bytes(wxedid_wnd* wnd, const char* path,
    wnd->saved_history_position = block_count_adjusted ? -1 : 0;
    if (base_ok) {
       snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
-      wnd->source_writable = ! hex_source && (g_access(path, W_OK) == 0);
+      wnd->source_writable = ! hex_source && writable;
       wnd_add_recent(path, hex_source);
       gtk_stack_set_visible_child_name(wnd->content_stack, "editor");
       wnd->overview_shown = false;
@@ -215,68 +219,131 @@ bool path_is_hex_text(const char* path) {
    return hex;
 }
 
-static void wnd_read_file(wxedid_wnd* wnd, const char* path, bool hex) {
-   wnd_clear_feedback(wnd);
-   wnd->source_path = path;
-   wnd->source_hex = hex;
-   wnd->load_had_errors = true;
+//Files and displays are read on a worker thread: reading a display's EDID
+//waits while the kernel probes connectors, over DDC for each.
+static const size_t HEX_TEXT_LIMIT = 65536;
 
-   if (hex) {
-      GStatBuf info;
-      if ((g_stat(path, &info) == 0) && (info.st_size > 65536)) {
-         wnd_log_error(wnd, _("Couldn’t import %s: it is too large to be EDID hex text. "
-                              "Choose another file."), path);
-         return;
-      }
-      char* contents = NULL;
-      gsize length = 0;
-      GError* error = NULL;
-      if (! g_file_get_contents(path, &contents, &length, &error)) {
-         wnd_log_error(wnd, _("Couldn’t read %s: %s. Check the file, then try again."),
-                       path, error->message);
-         g_error_free(error);
-         return;
-      }
-      std::vector<u8_t> bytes;
-      std::string problem;
-      bool decoded = edid_hex_decode(contents, length, bytes, problem);
-      g_free(contents);
-      if (! decoded) {
-         wnd_log_error(wnd, _("Couldn’t import %s: %s. Choose a file with EDID hex data."),
-                       path, problem.c_str());
-         return;
-      }
-      wnd_load_bytes(wnd, path, bytes.data(), bytes.size(), true);
+//Opened without blocking, so that a pipe with no writer can't hold the
+//thread. One byte more than the data can hold is read to find data too long.
+static void source_read(wxedid_source* source) {
+   const char* path = source->path.c_str();
+   int fd = g_open(path, O_RDONLY | O_CLOEXEC | O_NONBLOCK, 0);
+   if (fd < 0) {
+      source->problem = SOURCE_OPEN_FAILED;
+      source->detail = g_strerror(errno);
       return;
    }
-
-   FILE* in = fopen(path, "rb");
-   if (in == NULL) {
-      wnd_log_error(wnd, _("Couldn’t open %s: %s. Check its permissions, then try again."),
-                    path, strerror(errno));
-      return;
+   size_t limit = (source->hex ? HEX_TEXT_LIMIT : sizeof(edi_t)) + 1;
+   source->data.resize(limit);
+   size_t length = 0;
+   while (length < limit) {
+      ssize_t count = read(fd, source->data.data() + length, limit - length);
+      if ((count < 0) && (errno == EINTR)) continue;
+      if (count < 0) {
+         source->problem = SOURCE_READ_FAILED;
+         source->detail = g_strerror(errno);
+         break;
+      }
+      if (count == 0) break;
+      length += static_cast<size_t>(count);
    }
-
-   u8_t file_data[sizeof(edi_t) + 1] = {};
-   size_t rd = fread(file_data, 1, sizeof(file_data), in);
-   bool read_failed = (ferror(in) != 0);
-   int read_errno = errno;
-   fclose(in);
-
-   if (read_failed) {
-      wnd_log_error(wnd, _("Couldn’t read %s: %s. Check the file, then try again."),
-                    path, strerror(read_errno));
-      return;
+   g_close(fd, NULL);
+   source->data.resize(length);
+   if ((source->problem == SOURCE_READ) && source->hex && (length > HEX_TEXT_LIMIT)) {
+      source->problem = SOURCE_TOO_LARGE;
    }
-   wnd_load_bytes(wnd, path, file_data, rd, false);
+   source->writable = ! source->hex && ! g_str_has_prefix(path, DRM_ROOT) &&
+                      (g_access(path, W_OK) == 0);
 }
 
-//notices logged while a file opens are kept for the Overview
-void wnd_load_file(wxedid_wnd* wnd, const char* path, bool hex) {
+void wnd_read_source(wxedid_wnd* wnd, const char* path, bool hex,
+                     GCancellable* cancellable, GAsyncReadyCallback callback,
+                     gpointer user_data) {
+   wxedid_source* source = new wxedid_source{};
+   source->path = path;
+   source->hex = hex;
+   source->was_dirty = wnd->dirty;
+   GTask* task = g_task_new(wnd->window, cancellable, callback, user_data);
+   g_task_set_task_data(task, source, [](gpointer data) {
+      delete static_cast<wxedid_source*>(data);
+   });
+   g_task_run_in_thread(task, [](GTask* task, gpointer, gpointer data, GCancellable*) {
+      source_read(static_cast<wxedid_source*>(data));
+      g_task_return_boolean(task, TRUE);
+   });
+   g_object_unref(task);
+}
+
+//the source, owned by result; NULL when the read was cancelled
+wxedid_source* wnd_read_source_finish(GAsyncResult* result) {
+   if (! g_task_propagate_boolean(G_TASK(result), NULL)) return NULL;
+   return static_cast<wxedid_source*>(g_task_get_task_data(G_TASK(result)));
+}
+
+static void wnd_open_source(wxedid_wnd* wnd, const wxedid_source& source) {
+   const char* path = source.path.c_str();
+   wnd_clear_feedback(wnd);
+   wnd->source_path = source.path;
+   wnd->source_hex = source.hex;
+   wnd->load_had_errors = true;
+
+   if (source.problem == SOURCE_TOO_LARGE) {
+      wnd_log_error(wnd, _("Couldn’t import %s: it is too large to be EDID hex text. "
+                           "Choose another file."), path);
+      return;
+   }
+   if (source.problem == SOURCE_OPEN_FAILED) {
+      wnd_log_error(wnd, _("Couldn’t open %s: %s. Check its permissions, then try again."),
+                    path, source.detail.c_str());
+      return;
+   }
+   if (source.problem == SOURCE_READ_FAILED) {
+      wnd_log_error(wnd, _("Couldn’t read %s: %s. Check the file, then try again."),
+                    path, source.detail.c_str());
+      return;
+   }
+   if (! source.hex) {
+      wnd_load_bytes(wnd, path, source.data.data(), source.data.size(), false,
+                     source.writable);
+      return;
+   }
+   std::vector<u8_t> bytes;
+   std::string problem;
+   if (! edid_hex_decode(reinterpret_cast<const char*>(source.data.data()),
+                         source.data.size(), bytes, problem)) {
+      wnd_log_error(wnd, _("Couldn’t import %s: %s. Choose a file with EDID hex data."),
+                    path, problem.c_str());
+      return;
+   }
+   wnd_load_bytes(wnd, path, bytes.data(), bytes.size(), true, false);
+}
+
+static void wnd_on_source_read(GObject*, GAsyncResult* result, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   wxedid_source* source = wnd_read_source_finish(result);
+   if (source == NULL) return;
+   //changes made while the file was read are not dropped unasked
+   if (wnd->dirty && ! source->was_dirty) {
+      wnd_request_open_source(wnd, source->hex ? OPEN_HEX : OPEN_FILE, source->path.c_str());
+      return;
+   }
+   //notices logged while a file opens are kept for the Overview
    wnd->loading = true;
-   wnd_read_file(wnd, path, hex);
+   wnd_open_source(wnd, *source);
    wnd->loading = false;
    if (wnd->loaded && wnd->overview_shown) wnd_refresh_overview(wnd);
+   //a window opened with a file shows once the file is read
+   if (! gtk_widget_get_visible(GTK_WIDGET(wnd->window))) gtk_window_present(wnd->window);
+}
+
+//a newer file replaces one still being read
+void wnd_load_file(wxedid_wnd* wnd, const char* path, bool hex) {
+   if (wnd->load_cancellable != NULL) {
+      g_cancellable_cancel(wnd->load_cancellable);
+      g_object_unref(wnd->load_cancellable);
+   }
+   wnd->load_cancellable = g_cancellable_new();
+   wnd_read_source(wnd, path, hex, wnd->load_cancellable, wnd_on_source_read, wnd);
 }
 
 void wnd_reload_source(wxedid_wnd* wnd) {
@@ -348,8 +415,18 @@ static void wnd_on_display_open(GtkButton* button, gpointer user_data) {
    }
 }
 
-static void wnd_present_display_dialog(wxedid_wnd* wnd, bool compare = false) {
-   std::vector<edid_display> displays = edid_connected_displays(DRM_ROOT);
+struct wxedid_display_list {
+   bool                      compare;
+   std::vector<edid_display> displays;
+};
+
+static void wnd_on_displays_listed(GObject*, GAsyncResult* result, gpointer user_data) {
+   if (! g_task_propagate_boolean(G_TASK(result), NULL)) return;
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   const wxedid_display_list* list = static_cast<const wxedid_display_list*>(
+      g_task_get_task_data(G_TASK(result)));
+   bool compare = list->compare;
+   const std::vector<edid_display>& displays = list->displays;
    if (displays.empty()) {
       AdwAlertDialog* alert = ADW_ALERT_DIALOG(adw_alert_dialog_new(
          _("No display data found"),
@@ -392,6 +469,18 @@ static void wnd_present_display_dialog(wxedid_wnd* wnd, bool compare = false) {
    adw_dialog_present(dialog, GTK_WIDGET(wnd->window));
 }
 
+static void wnd_present_display_dialog(wxedid_wnd* wnd, bool compare = false) {
+   GTask* task = g_task_new(wnd->window, wnd->cancellable, wnd_on_displays_listed, wnd);
+   g_task_set_task_data(task, new wxedid_display_list{compare, {}}, [](gpointer data) {
+      delete static_cast<wxedid_display_list*>(data);
+   });
+   g_task_run_in_thread(task, [](GTask* task, gpointer, gpointer data, GCancellable*) {
+      static_cast<wxedid_display_list*>(data)->displays = edid_connected_displays(DRM_ROOT);
+      g_task_return_boolean(task, TRUE);
+   });
+   g_object_unref(task);
+}
+
 static void wnd_present_open_dialog(wxedid_wnd* wnd, open_mode mode) {
    if (mode == OPEN_DISPLAY) {
       wnd_present_display_dialog(wnd);
@@ -411,7 +500,7 @@ static void wnd_present_open_dialog(wxedid_wnd* wnd, open_mode mode) {
    if (import_hex) {
       g_object_set_data(G_OBJECT(dialog), "wxedid-import-hex", GINT_TO_POINTER(1));
    }
-   gtk_file_dialog_open(dialog, wnd->window, NULL, wnd_on_open_response,
+   gtk_file_dialog_open(dialog, wnd->window, wnd->cancellable, wnd_on_open_response,
                         g_object_ref(wnd->window));
    g_object_unref(dialog);
 }
@@ -423,13 +512,12 @@ static void wnd_on_discard_open_response(GObject* source, GAsyncResult* result,
       ADW_ALERT_DIALOG(source), result);
    if (0 != strcmp(response, "discard")) return;
    const char* path = static_cast<const char*>(g_object_get_data(source, "wxedid-open-path"));
-   if (path != NULL) {
-      std::string target = path;
-      wnd_load_file(wnd, target.c_str(), path_is_hex_text(target.c_str()));
-      return;
-   }
    open_mode mode = static_cast<open_mode>(
       GPOINTER_TO_INT(g_object_get_data(source, "wxedid-open-mode")));
+   if (path != NULL) {
+      wnd_load_file(wnd, path, (mode == OPEN_HEX) || path_is_hex_text(path));
+      return;
+   }
    wnd_present_open_dialog(wnd, mode);
 }
 
@@ -439,7 +527,7 @@ void wnd_request_open_source(wxedid_wnd* wnd, int requested, const char* path) {
    open_mode mode = static_cast<open_mode>(requested);
    if (! wnd->dirty) {
       if (path != NULL) {
-         wnd_load_file(wnd, path, path_is_hex_text(path));
+         wnd_load_file(wnd, path, (mode == OPEN_HEX) || path_is_hex_text(path));
       } else {
          wnd_present_open_dialog(wnd, mode);
       }
@@ -512,47 +600,98 @@ static bool wnd_prepare_output(wxedid_wnd* wnd) {
    return prepared;
 }
 
+struct wxedid_write {
+   GtkWindow*    window;
+   GApplication* application; //held until the file is written
+   std::string   path;
+   size_t        size;
+   const char*   done;        //toast title, %s the file name
+   bool          document;    //the EDID binary, not an export
+   size_t        position;    //history position of the EDID binary
+   unsigned      serial;      //document_serial of the EDID binary
+};
+
+static void wnd_on_written(GObject* source, GAsyncResult* result, gpointer user_data) {
+   wxedid_write* write = static_cast<wxedid_write*>(user_data);
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(
+      g_object_get_data(G_OBJECT(write->window), "wxedid-wnd"));
+   const char* path = write->path.c_str();
+   GError* error = NULL;
+   bool written = g_file_replace_contents_finish(G_FILE(source), result, NULL, &error);
+   if (! written) {
+      wnd_log_error(wnd, write->document
+         ? _("Couldn’t save %s: %s. Check its permissions, then save again.")
+         : _("Couldn’t save %s: %s. Check its permissions, then try again."),
+         path, error->message);
+      g_error_free(error);
+   } else {
+      char msg[1152];
+      snprintf(msg, sizeof(msg), "[i] Saved %zu bytes to %s", write->size, path);
+      wnd->doc->GLog.DoLog(msg);
+      if (write->document) wnd_add_recent(path, false);
+      //another EDID opened meanwhile keeps its own file and state
+      if (write->document && (write->serial == wnd->document_serial)) {
+         snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
+         //writing it replaced it, so it can be written again
+         wnd->source_writable = true;
+         wnd->document_hex = false;
+         wnd->saved_history_position =
+            wnd->save_matches ? static_cast<long>(write->position) : -1;
+      }
+      char* basename = g_path_get_basename(path);
+      char* title = g_strdup_printf(write->done, basename);
+      adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(title));
+      g_free(title);
+      g_free(basename);
+   }
+
+   bool close = false;
+   if (write->document) {
+      wnd->save_pending = false;
+      close = written && wnd->close_after_save;
+      wnd->close_after_save = false;
+      wnd_update_history_state(wnd);
+      wnd_update_document_ui(wnd);
+   }
+   if (close) gtk_window_close(write->window);
+   g_application_release(write->application);
+   g_object_unref(write->application);
+   g_object_unref(write->window);
+   delete write;
+}
+
+//GIO writes a new file and renames it over the old one, keeping its mode,
+//so a write that fails leaves the old file as it was. A link, or a file in
+//a folder that can't be written to, is written in place.
+static void wnd_write(wxedid_wnd* wnd, wxedid_write* write, const void* data, size_t size) {
+   write->window = GTK_WINDOW(g_object_ref(wnd->window));
+   write->application = G_APPLICATION(g_object_ref(gtk_window_get_application(wnd->window)));
+   write->size = size;
+   g_application_hold(write->application);
+   GBytes* bytes = g_bytes_new(data, size);
+   GFile* file = g_file_new_for_path(write->path.c_str());
+   g_file_replace_contents_bytes_async(file, bytes, NULL, FALSE, G_FILE_CREATE_NONE, NULL,
+                                       wnd_on_written, write);
+   g_object_unref(file);
+   g_bytes_unref(bytes);
+}
+
 //------------
 // save: write the buffer to a given path, recompute checksums first
-static bool wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
-   if (! wnd_prepare_output(wnd)) return false;
-   edi_buf_t* pbuf = wnd->doc->EDID.getEDID();
-
-   FILE* out = fopen(path, "wb");
-   if (out == NULL) {
-      wnd_log_error(wnd, _("Couldn’t save %s: %s. Check its permissions, then save again."),
-                    path, strerror(errno));
-      return false;
-   }
-
-   size_t expected = wnd->doc->EDID.getNumValidBlocks() * sizeof(ediblk_t);
-   size_t wr = fwrite(pbuf->buff, 1, expected, out);
-   int close_rc = fclose(out);
-   if ((wr != expected) || (close_rc != 0)) {
-      wnd_log_error(wnd, _("Couldn’t save %s completely. Check free space and permissions, "
-                           "then save again."), path);
-      return false;
-   }
-
-   char msg[1152];
-   snprintf(msg, sizeof(msg), "[i] Saved %zu bytes to %s", wr, path);
-   wnd->doc->GLog.DoLog(msg);
-   wnd_add_recent(path, false);
-   if (strcmp(path, wnd->doc->path) != 0) {
-      snprintf(wnd->doc->path, sizeof(wnd->doc->path), "%s", path);
-   }
-   wnd->source_writable = (g_access(wnd->doc->path, W_OK) == 0);
-   wnd->document_hex = false;
-   wnd->saved_history_position = static_cast<long>(wnd->history_position);
-   wnd_update_history_state(wnd);
+static void wnd_save_to_file(wxedid_wnd* wnd, const char* path) {
+   if (wnd->save_pending || ! wnd_prepare_output(wnd)) return;
+   wxedid_write* write = new wxedid_write{};
+   write->path = path;
+   write->done = _("Saved %s");
+   write->document = true;
+   write->position = wnd->history_position;
+   write->serial = wnd->document_serial;
+   wnd->save_pending = true;
+   wnd->save_position = wnd->history_position;
+   wnd->save_matches = true;
    wnd_update_document_ui(wnd);
-
-   char* basename = g_path_get_basename(wnd->doc->path);
-   char* toast_title = g_strdup_printf(_("Saved %s"), basename);
-   adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(toast_title));
-   g_free(toast_title);
-   g_free(basename);
-   return true;
+   wnd_write(wnd, write, wnd->doc->EDID.getEDID()->buff,
+             wnd->doc->EDID.getNumValidBlocks() * sizeof(ediblk_t));
 }
 
 static void wnd_on_save_response(GObject* source, GAsyncResult* result,
@@ -624,7 +763,7 @@ static void wnd_present_save_dialog(wxedid_wnd* wnd) {
       g_object_unref(folder);
    }
    g_free(directory);
-   gtk_file_dialog_save(dialog, wnd->window, NULL, wnd_on_save_response,
+   gtk_file_dialog_save(dialog, wnd->window, wnd->cancellable, wnd_on_save_response,
                         g_object_ref(wnd->window));
    g_object_unref(dialog);
 }
@@ -664,25 +803,14 @@ static void wnd_on_text_save_response(GObject* source, GAsyncResult* result,
 
    if ((file != NULL) && (wnd != NULL)) {
       char* path = g_file_get_path(file);
-      GError* write_error = NULL;
       if (path == NULL) {
          wnd_log_error(wnd, _("Couldn’t save to the selected location: only local files are "
                               "supported. Choose a local file."));
-      } else if (! g_file_set_contents(path, output->contents.data(),
-                                       output->contents.size(), &write_error)) {
-         wnd_log_error(wnd, _("Couldn’t save %s: %s. Check its permissions, then try again."),
-                       path, write_error->message);
-         g_error_free(write_error);
       } else {
-         char msg[1152];
-         snprintf(msg, sizeof(msg), "[i] Saved %zu bytes to %s",
-                  output->contents.size(), path);
-         wnd->doc->GLog.DoLog(msg);
-         char* basename = g_path_get_basename(path);
-         char* title = g_strdup_printf(output->done, basename);
-         adw_toast_overlay_add_toast(wnd->toast_overlay, adw_toast_new(title));
-         g_free(title);
-         g_free(basename);
+         wxedid_write* write = new wxedid_write{};
+         write->path = path;
+         write->done = output->done;
+         wnd_write(wnd, write, output->contents.data(), output->contents.size());
       }
       g_free(path);
    } else if ((wnd != NULL) && (error != NULL) &&
@@ -731,7 +859,8 @@ static void wnd_present_text_save_dialog(wxedid_wnd* wnd, const char* title,
    wxedid_text_output* output = new wxedid_text_output{
       GTK_WINDOW(g_object_ref(wnd->window)), std::move(contents), done,
    };
-   gtk_file_dialog_save(dialog, wnd->window, NULL, wnd_on_text_save_response, output);
+   gtk_file_dialog_save(dialog, wnd->window, wnd->cancellable, wnd_on_text_save_response,
+                        output);
    g_object_unref(dialog);
 }
 

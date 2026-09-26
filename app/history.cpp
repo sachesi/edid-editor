@@ -25,6 +25,8 @@ static edi_grp_cl* history_owned_group(const wxedid_wnd* wnd, size_t index) {
 }
 
 static void wnd_drop_history(wxedid_wnd* wnd, size_t from) {
+   //dropping entries the EDID being saved was built from loses its state
+   if (wnd->save_pending && (from < wnd->save_position)) wnd->save_matches = false;
    for (size_t index=from; index<wnd->history.size(); index++) {
       delete history_owned_group(wnd, index);
    }

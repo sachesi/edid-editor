@@ -165,6 +165,13 @@ struct wxedid_wnd {
    gulong              recent_changed;
    GtkLabel*           reserved_label;
    u32_t               invalid_fields;
+   GCancellable*       cancellable;      //cancelled when the window closes
+   GCancellable*       load_cancellable; //the source being read; a newer one replaces it
+   unsigned            document_serial;  //changes each time another EDID is loaded
+   bool                save_pending;     //an EDID binary is being written
+   size_t              save_position;    //history position of the data being written
+   bool                save_matches;     //the history before save_position is unchanged
+   bool                close_after_save; //closing waits for the write
 };
 
 struct wxedid_timing {
@@ -254,6 +261,25 @@ enum open_mode {
    OPEN_DISPLAY,
 };
 
+enum source_problem {
+   SOURCE_READ,
+   SOURCE_TOO_LARGE, //hex text longer than any EDID
+   SOURCE_OPEN_FAILED,
+   SOURCE_READ_FAILED,
+};
+
+//an EDID file or display read off the main thread; the EDID itself is
+//parsed on it
+struct wxedid_source {
+   std::string       path;
+   bool              hex;
+   bool              was_dirty; //the document had changes when the read began
+   bool              writable;  //a binary file the document can be saved back to
+   std::vector<u8_t> data;      //hex text, or the start of a binary file
+   source_problem    problem;
+   std::string       detail;    //the system's reason for a failed read
+};
+
 // window.cpp
 char* document_basename(const char* path);
 void wnd_refresh_group_title(wxedid_wnd* wnd, edi_grp_cl* pgrp);
@@ -262,6 +288,7 @@ void wnd_update_header_controls(wxedid_wnd* wnd);
 void wnd_show_error(wxedid_wnd* wnd, const char* message);
 void wnd_clear_feedback(wxedid_wnd* wnd);
 void wnd_log_error(wxedid_wnd* wnd, const char* format, ...) G_GNUC_PRINTF(2, 3);
+void wnd_cancel_io(wxedid_wnd* wnd);
 
 // fields.cpp
 void wnd_record_edit_history(wxedid_wnd* wnd, edi_grp_cl* group,
@@ -358,6 +385,10 @@ void wnd_on_open_recent(GSimpleAction*, GVariant* parameter, gpointer user_data)
 void wnd_load_state(wxedid_wnd* wnd);
 void wnd_save_state(wxedid_wnd* wnd);
 bool path_is_hex_text(const char* path);
+void wnd_read_source(wxedid_wnd* wnd, const char* path, bool hex,
+                     GCancellable* cancellable, GAsyncReadyCallback callback,
+                     gpointer user_data);
+wxedid_source* wnd_read_source_finish(GAsyncResult* result);
 void wnd_load_file(wxedid_wnd* wnd, const char* path, bool hex);
 void wnd_reload_source(wxedid_wnd* wnd);
 GListStore* file_filters(const char* name, const char* const* patterns);

@@ -244,24 +244,22 @@ void wnd_on_log_action(GSimpleAction*, GVariant*, gpointer user_data) {
 
 //------------
 // compare: differences between the document and another EDID
-static bool read_edid_source(const char* path, bool hex, std::vector<u8_t>& bytes,
+static bool read_edid_source(const wxedid_source& source, std::vector<u8_t>& bytes,
                              std::string& problem) {
-   char* contents = NULL;
-   gsize length = 0;
-   GError* error = NULL;
-   if (! g_file_get_contents(path, &contents, &length, &error)) {
-      problem = error->message;
-      g_error_free(error);
+   if (source.problem == SOURCE_TOO_LARGE) {
+      problem = _("it is too large to be EDID hex text");
       return false;
    }
-   bool ok = true;
-   if (hex) {
-      ok = edid_hex_decode(contents, length, bytes, problem);
-   } else {
-      bytes.assign(contents, contents + length);
+   if (source.problem != SOURCE_READ) {
+      problem = source.detail;
+      return false;
    }
-   g_free(contents);
-   return ok;
+   if (source.hex) {
+      return edid_hex_decode(reinterpret_cast<const char*>(source.data.data()),
+                             source.data.size(), bytes, problem);
+   }
+   bytes = source.data;
+   return true;
 }
 
 static std::string compare_change(const edid_difference& entry, const char* other) {
@@ -275,15 +273,18 @@ static std::string compare_change(const edid_difference& entry, const char* othe
    return entry.left + " → " + entry.right;
 }
 
-void wnd_present_compare(wxedid_wnd* wnd, const char* path, bool hex) {
+static void wnd_on_compare_read(GObject*, GAsyncResult* result, gpointer user_data) {
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   const wxedid_source* source = wnd_read_source_finish(result);
+   if (source == NULL) return;
    std::vector<u8_t> bytes;
    std::string problem;
-   char* other = document_basename(path);
+   char* other = document_basename(source->path.c_str());
    EDID_cl EDID;
    guilog_cl log;
    log.SetSink([](const char*, void*) {}, NULL);
    EDID.SetGuiLogPtr(&log);
-   if (! read_edid_source(path, hex, bytes, problem) ||
+   if (! read_edid_source(*source, bytes, problem) ||
        ! edid_parse_bytes(EDID, bytes, problem)) {
       char message[1400];
       snprintf(message, sizeof(message), _("Couldn’t compare with %s: %s"), other, problem.c_str());
@@ -346,6 +347,10 @@ void wnd_present_compare(wxedid_wnd* wnd, const char* path, bool hex) {
    g_free(other);
 }
 
+void wnd_present_compare(wxedid_wnd* wnd, const char* path, bool hex) {
+   wnd_read_source(wnd, path, hex, wnd->cancellable, wnd_on_compare_read, wnd);
+}
+
 static void wnd_on_compare_response(GObject* source, GAsyncResult* result,
                                     gpointer user_data) {
    GtkWindow* window = GTK_WINDOW(user_data);
@@ -369,7 +374,7 @@ void wnd_on_compare_file_action(GSimpleAction*, GVariant*, gpointer user_data) {
    GListStore* filters = file_filters(_("EDID files"), patterns);
    gtk_file_dialog_set_filters(dialog, G_LIST_MODEL(filters));
    g_object_unref(filters);
-   gtk_file_dialog_open(dialog, wnd->window, NULL, wnd_on_compare_response,
+   gtk_file_dialog_open(dialog, wnd->window, wnd->cancellable, wnd_on_compare_response,
                         g_object_ref(wnd->window));
    g_object_unref(dialog);
 }
