@@ -64,6 +64,10 @@ install_data(
   'icons/io.github.sachesi.EdidEditor.svg',
   install_dir : get_option('datadir') / 'icons/hicolor/scalable/apps',
 )
+install_data(
+  'icons/io.github.sachesi.EdidEditor-symbolic.svg',
+  install_dir : get_option('datadir') / 'icons/hicolor/symbolic/apps',
+)
 
 install_man(files('../docs/edid-editor.1'))
 

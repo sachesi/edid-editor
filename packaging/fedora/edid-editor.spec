@@ -61,6 +61,7 @@ with the same code, with a manual page and completions for bash, zsh and fish.
 %{_datadir}/applications/%{app_id}.desktop
 %{_metainfodir}/%{app_id}.metainfo.xml
 %{_datadir}/icons/hicolor/scalable/apps/%{app_id}.svg
+%{_datadir}/icons/hicolor/symbolic/apps/%{app_id}-symbolic.svg
 %{_mandir}/man1/edid-editor.1*
 %{_mandir}/man1/edid-editor-cli.1*
 %{bash_completions_dir}/edid-editor-cli
