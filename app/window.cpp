@@ -143,6 +143,8 @@ void wnd_update_document_ui(wxedid_wnd* wnd) {
 
 void wnd_update_header_controls(wxedid_wnd* wnd) {
    bool collapsed = adw_overlay_split_view_get_collapsed(wnd->split_view);
+   //collapsed, the sidebar only opens on demand
+   if (! collapsed) adw_overlay_split_view_set_show_sidebar(wnd->split_view, wnd->loaded);
    gtk_widget_set_visible(GTK_WIDGET(wnd->window_title), ! collapsed);
    gtk_widget_set_visible(wnd->open_button, wnd->loaded && ! collapsed);
    gtk_widget_set_visible(wnd->sidebar_button, wnd->loaded && collapsed);
@@ -209,7 +211,10 @@ static void wnd_on_toggle_sidebar(GtkButton* /*button*/, gpointer user_data) {
 
 static void wnd_on_split_collapsed(GObject* /*object*/, GParamSpec* /*pspec*/,
                                    gpointer user_data) {
-   wnd_update_header_controls((wxedid_wnd*) user_data);
+   wxedid_wnd* wnd = (wxedid_wnd*) user_data;
+   if (adw_overlay_split_view_get_collapsed(wnd->split_view))
+      adw_overlay_split_view_set_show_sidebar(wnd->split_view, FALSE);
+   wnd_update_header_controls(wnd);
 }
 
 static void wnd_on_discard_close_response(GObject* source, GAsyncResult* result,
@@ -765,10 +770,7 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
    gtk_accessible_update_property(GTK_ACCESSIBLE(wnd->tree_search),
                                   GTK_ACCESSIBLE_PROPERTY_LABEL,
                                   _("Search groups"), -1);
-   gtk_widget_set_margin_start(GTK_WIDGET(wnd->tree_search), 12);
-   gtk_widget_set_margin_end(GTK_WIDGET(wnd->tree_search), 12);
-   gtk_widget_set_margin_top(GTK_WIDGET(wnd->tree_search), 12);
-   gtk_widget_set_margin_bottom(GTK_WIDGET(wnd->tree_search), 6);
+   gtk_widget_set_hexpand(GTK_WIDGET(wnd->tree_search), TRUE);
    g_signal_connect(wnd->tree_search, "search-changed",
                     G_CALLBACK(tree_search_changed), wnd);
    //Escape clears the search; the handler ignores its first argument
@@ -806,7 +808,6 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
 
    GtkWidget* sidebar = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
    gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->overview_list));
-   gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->tree_search));
    gtk_box_append(GTK_BOX(sidebar), GTK_WIDGET(wnd->sidebar_stack));
 
    GtkWidget* group_toolbar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
@@ -990,10 +991,16 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
 
    wnd->log = gtk_text_buffer_new(NULL);
 
+   GtkWidget* sidebar_header = adw_header_bar_new();
+   adw_header_bar_set_title_widget(ADW_HEADER_BAR(sidebar_header),
+                                   GTK_WIDGET(wnd->tree_search));
+   GtkWidget* sidebar_page = adw_toolbar_view_new();
+   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(sidebar_page), sidebar_header);
+   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(sidebar_page), sidebar);
+
    GtkWidget* split_view = adw_overlay_split_view_new();
    wnd->split_view = ADW_OVERLAY_SPLIT_VIEW(split_view);
-   adw_overlay_split_view_set_sidebar(wnd->split_view, sidebar);
-   adw_overlay_split_view_set_content(wnd->split_view, right);
+   adw_overlay_split_view_set_sidebar(wnd->split_view, sidebar_page);
    adw_overlay_split_view_set_min_sidebar_width(wnd->split_view, 280.0);
    adw_overlay_split_view_set_max_sidebar_width(wnd->split_view, 340.0);
    adw_overlay_split_view_set_sidebar_width_fraction(wnd->split_view, 0.28);
@@ -1025,7 +1032,6 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
          adw_breakpoint_add_setters(
             breakpoint,
             G_OBJECT(split_view), "collapsed", TRUE,
-            G_OBJECT(split_view), "show-sidebar", FALSE,
             G_OBJECT(wnd->timing->drawing), "height-request", 220,
             NULL);
       }
@@ -1082,7 +1088,7 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
 
    wnd->content_stack = GTK_STACK(gtk_stack_new());
    gtk_stack_add_named(wnd->content_stack, empty_page, "empty");
-   gtk_stack_add_named(wnd->content_stack, split_view, "editor");
+   gtk_stack_add_named(wnd->content_stack, right, "editor");
    gtk_stack_set_visible_child_name(wnd->content_stack, "empty");
    gtk_widget_set_vexpand(GTK_WIDGET(wnd->content_stack), TRUE);
 
@@ -1096,27 +1102,27 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
    g_signal_connect(wnd->source_banner, "button-clicked",
                     G_CALLBACK(wnd_on_source_banner), wnd);
 
-   GtkWidget* body = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-   gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->banner));
-   gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->source_banner));
-   gtk_box_append(GTK_BOX(body), GTK_WIDGET(wnd->content_stack));
+   GtkWidget* content_page = adw_toolbar_view_new();
+   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(content_page), header);
+   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(content_page), GTK_WIDGET(wnd->banner));
+   adw_toolbar_view_add_top_bar(ADW_TOOLBAR_VIEW(content_page),
+                                GTK_WIDGET(wnd->source_banner));
+   adw_toolbar_view_set_content(ADW_TOOLBAR_VIEW(content_page),
+                                GTK_WIDGET(wnd->content_stack));
+   adw_overlay_split_view_set_content(wnd->split_view, content_page);
 
    wnd->toast_overlay = ADW_TOAST_OVERLAY(adw_toast_overlay_new());
-   adw_toast_overlay_set_child(wnd->toast_overlay, body);
+   adw_toast_overlay_set_child(wnd->toast_overlay, split_view);
 
    wnd->doc->GLog.SetSink(log_sink, wnd);
    wnd->doc->EDID.SetGuiLogPtr(&wnd->doc->GLog);
 
-   GtkWidget* content = gtk_box_new(GTK_ORIENTATION_VERTICAL, 0);
-   gtk_box_append(GTK_BOX(content), header);
-   gtk_box_append(GTK_BOX(content), GTK_WIDGET(wnd->toast_overlay));
-   gtk_widget_set_vexpand(GTK_WIDGET(wnd->toast_overlay), TRUE);
-
    GtkDropTarget* drop = gtk_drop_target_new(GDK_TYPE_FILE_LIST, GDK_ACTION_COPY);
    g_signal_connect(drop, "drop", G_CALLBACK(wnd_on_drop), wnd);
-   gtk_widget_add_controller(content, GTK_EVENT_CONTROLLER(drop));
+   gtk_widget_add_controller(GTK_WIDGET(wnd->toast_overlay), GTK_EVENT_CONTROLLER(drop));
 
-   adw_application_window_set_content(ADW_APPLICATION_WINDOW(window), content);
+   adw_application_window_set_content(ADW_APPLICATION_WINDOW(window),
+                                      GTK_WIDGET(wnd->toast_overlay));
    wnd->recent_changed = g_signal_connect(gtk_recent_manager_get_default(), "changed",
                                           G_CALLBACK(wnd_on_recent_changed), wnd);
    wnd_refresh_recent(wnd);
