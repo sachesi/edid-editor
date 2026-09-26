@@ -13,7 +13,9 @@ __BEGIN_DECLS
 // rcd_autogen: full mode (2)
 
 //no PLT calls: include rcd_alias.h
-#ifdef __cplusplus
+//clang takes nothrow on the aliases for an exception specification
+//that rcd_alias.h doesn't declare
+#if defined(__cplusplus) && ! defined(__clang__)
 	#define __RCD_NTH ,nothrow
 #else
 	#define __RCD_NTH

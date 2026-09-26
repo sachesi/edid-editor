@@ -222,7 +222,9 @@ __END_DECLS
 #include "wxedid_rcd_scope.h"
 #include <sys/cdefs.h>
 __BEGIN_DECLS
-#ifdef __cplusplus
+//clang takes nothrow on the aliases for an exception specification
+//that rcd_alias.h doesn't declare
+#if defined(__cplusplus) && ! defined(__clang__)
 	#define __RCD_NTH ,nothrow
 #else
 	#define __RCD_NTH
