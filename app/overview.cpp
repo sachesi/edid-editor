@@ -14,12 +14,18 @@ struct wnd_mode_choice {
    edi_grp_cl* group;
 };
 
-//after the click: the change rebuilds the page that holds the button
+//After the click: the change rebuilds the page that holds the button. An
+//edit handled first may have taken the timing out of the EDID.
 static gboolean wnd_prefer_mode(gpointer data) {
    wnd_mode_choice* choice = static_cast<wnd_mode_choice*>(data);
-   if (edid_timing_preference(choice->wnd->doc->EDID, choice->group) == PREFERENCE_FLAGGED) {
+   EDID_cl& EDID = choice->wnd->doc->EDID;
+   bool present = false;
+   for (const edid_mode& mode : edid_modes(EDID)) {
+      present = present || (mode.group == choice->group);
+   }
+   if (present && (edid_timing_preference(EDID, choice->group) == PREFERENCE_FLAGGED)) {
       wnd_remove_preferred(choice->wnd, choice->group);
-   } else {
+   } else if (present) {
       wnd_make_preferred(choice->wnd, choice->group);
    }
    delete choice;
