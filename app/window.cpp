@@ -628,7 +628,6 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
    gtk_actionable_set_action_name(GTK_ACTIONABLE(btn_save), "win.save");
    gtk_widget_set_tooltip_text(btn_save, _("Save changes (Ctrl+S)"));
    gtk_widget_add_css_class(btn_save, "suggested-action");
-   adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_save);
 
    GMenu* primary_menu = g_menu_new();
    GMenu* open_section = g_menu_new();
@@ -674,6 +673,7 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
    gtk_widget_set_tooltip_text(btn_menu, _("Main menu"));
    g_object_unref(primary_menu);
    adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_menu);
+   adw_header_bar_pack_end(ADW_HEADER_BAR(header), btn_save);
 
    GtkWidget* btn_sidebar = gtk_button_new_from_icon_name("sidebar-show-symbolic");
    wnd->sidebar_button = btn_sidebar;
