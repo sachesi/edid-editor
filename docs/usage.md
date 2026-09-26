@@ -77,7 +77,7 @@ Vertical refresh sets its pixel clock.
 ## Changing groups
 
 CTA-861 and DisplayID data blocks can be added, duplicated, moved and deleted from the
-sidebar, its context menu or the keyboard. The audio templates start with a valid LPCM
+sidebar, its context menu (a right click or a long press on a group) or the keyboard. The audio templates start with a valid LPCM
 or extended audio layout. Undo and Redo cover these changes as well as field edits.
 
 ## Saving
