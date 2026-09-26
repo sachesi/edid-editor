@@ -86,4 +86,5 @@ Copyright (C) 2014-2025 Tomasz Pawlak, and has been modified for EDID Editor sin
 0.0.33 sources. The rcode library in `core/rcode/`, also by Tomasz Pawlak, is
 LGPL-3.0-or-later, see [COPYING.LESSER](core/rcode/COPYING.LESSER). The EDIDs in
 `core/tests/corpus/` come from the Linux Hardware EDID repository under CC BY 4.0, see
-its [README](core/tests/corpus/README).
+its [README](core/tests/corpus/README); the screenshots in `data/screenshots/` show
+`dell-del430f.hex` from there, with a made-up serial number.
