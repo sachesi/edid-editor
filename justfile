@@ -18,6 +18,7 @@ destdir := env("DESTDIR", "")
 gui := env("GUI", "auto")
 release := "build"
 debug := "builddir"
+sanitize := "build-sanitize"
 bindir := destdir + prefix + "/bin"
 datadir := destdir + prefix + "/share"
 mandir := datadir + "/man/man1"
@@ -51,6 +52,11 @@ test: build-debug
 # Tests of the interface, in a headless Weston session; a few minutes.
 test-ui: build-debug
     meson test -C {{debug}} --suite ui --print-errorlogs
+
+# Tests of the core and the metadata under AddressSanitizer and UndefinedBehaviorSanitizer.
+test-sanitize:
+    if [ -f {{sanitize}}/build.ninja ]; then meson configure {{sanitize}} -Dgui={{gui}}; else meson setup {{sanitize}} -Db_sanitize=address,undefined -Dgui={{gui}}; fi
+    meson test -C {{sanitize}} --no-suite ui --print-errorlogs
 
 # Install the release build, with the application when it was built. Does not build.
 install:

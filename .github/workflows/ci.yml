@@ -53,9 +53,23 @@ jobs:
       - name: Test
         run: just gui=disabled test
 
+  sanitize:
+    name: Tests under ASan and UBSan
+    runs-on: ubuntu-latest
+    container: registry.fedoraproject.org/fedora:44
+    steps:
+      - name: Install the build dependencies
+        run: >
+          dnf install -y --setopt=install_weak_deps=False
+          git-core just meson ninja-build gcc-c++ libasan libubsan python3
+          bash-completion zsh fish
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test
+        run: just gui=disabled test-sanitize
+
   release:
     name: Release
-    needs: [check, cli]
+    needs: [check, cli, sanitize]
     if: startsWith(github.ref, 'refs/tags/v')
     uses: ./.github/workflows/release.yml
     permissions:
