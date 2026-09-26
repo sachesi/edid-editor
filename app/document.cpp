@@ -60,6 +60,20 @@ static void wnd_on_recent_open(GtkButton* button, gpointer user_data) {
    if (path != NULL) wnd_request_open_source(static_cast<wxedid_wnd*>(user_data), 0, path);
 }
 
+//a path as shown to the user, with the home folder as ~
+char* wnd_display_path(const char* path) {
+   char* display = g_filename_display_name(path);
+   const char* home = g_get_home_dir();
+   size_t home_length = strlen(home);
+   if ((home_length > 1) && (0 == strncmp(display, home, home_length)) &&
+       ((display[home_length] == '/') || (display[home_length] == 0))) {
+      char* shortened = g_strconcat("~", display + home_length, NULL);
+      g_free(display);
+      display = shortened;
+   }
+   return display;
+}
+
 void wnd_refresh_recent(wxedid_wnd* wnd) {
    std::vector<std::string> paths = recent_paths(6);
    if (wnd->recent_list != NULL) {
@@ -67,15 +81,7 @@ void wnd_refresh_recent(wxedid_wnd* wnd) {
       for (const std::string& path : paths) {
          char* name = g_path_get_basename(path.c_str());
          char* folder = g_path_get_dirname(path.c_str());
-         char* display = g_filename_display_name(folder);
-         const char* home = g_get_home_dir();
-         size_t home_length = strlen(home);
-         if ((home_length > 1) && (0 == strncmp(display, home, home_length)) &&
-             ((display[home_length] == '/') || (display[home_length] == 0))) {
-            char* shortened = g_strconcat("~", display + home_length, NULL);
-            g_free(display);
-            display = shortened;
-         }
+         char* display = wnd_display_path(folder);
          GtkWidget* row = adw_action_row_new();
          adw_preferences_row_set_use_markup(ADW_PREFERENCES_ROW(row), FALSE);
          adw_preferences_row_set_title(ADW_PREFERENCES_ROW(row), name);
