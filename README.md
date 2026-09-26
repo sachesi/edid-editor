@@ -65,11 +65,10 @@ The same packages are attached to each [release](https://github.com/sachesi/edid
 
 `just` runs Meson; `meson setup`, `meson compile` and `meson install` work as well.
 Building needs Meson and a C++17 compiler, and for the application gettext and the
-development packages for GTK 4 and libadwaita 1.8 or newer; it is developed against GTK
-4.22 and libadwaita 1.9. Without them, or with `gui=disabled` (`-Dgui=disabled` for
-Meson), only `edid-editor-cli` is built. The tests of the interface also need Weston,
-Xwayland, xdotool, the session bus and the Python bindings for AT-SPI, and are skipped
-when those are missing.
+development packages for GTK 4.22 and libadwaita 1.9 or newer. Without them, or with
+`gui=disabled` (`-Dgui=disabled` for Meson), only `edid-editor-cli` is built. The tests
+of the interface also need Weston, Xwayland, xdotool, the session bus and the Python
+bindings for AT-SPI, and are skipped when those are missing.
 
 ## Documentation
 

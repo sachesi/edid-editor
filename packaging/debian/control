@@ -11,8 +11,8 @@ Build-Depends: debhelper-compat (= 13),
                gettext,
                desktop-file-utils,
                appstream,
-               libgtk-4-dev (>= 4.10),
-               libadwaita-1-dev (>= 1.8)
+               libgtk-4-dev (>= 4.22),
+               libadwaita-1-dev (>= 1.9)
 Standards-Version: 4.7.2
 Homepage: https://github.com/sachesi/edid-editor
 Rules-Requires-Root: no
@@ -21,8 +21,8 @@ Package: edid-editor
 Architecture: any
 Depends: ${shlibs:Depends},
          ${misc:Depends},
-         libgtk-4-1 (>= 4.10),
-         libadwaita-1-0 (>= 1.8),
+         libgtk-4-1 (>= 4.22),
+         libadwaita-1-0 (>= 1.9),
          hicolor-icon-theme
 Description: EDID editor for GNOME, with a command line interface
  EDID Editor inspects and edits EDID, the data a display sends to describe
