@@ -127,7 +127,7 @@ struct wxedid_wnd {
    GSimpleAction*      ignore_read_only_action;
    GSimpleAction*      make_preferred_action;
    GSimpleAction*      remove_preferred_action;
-   GtkPopoverMenu*     group_menu;
+   GMenuModel*         group_menu_model;
    edi_grp_cl*         pending_delete;
    edi_grp_cl*         last_selected;  //restored when a search shows it again
    edi_grp_cl*         refresh_group;  //field write that may need a rebuild
@@ -338,9 +338,6 @@ void wnd_on_add_cta_group(GSimpleAction*, GVariant* parameter,
                           gpointer user_data);
 void wnd_on_add_displayid_group(GSimpleAction*, GVariant*,
                                 gpointer user_data);
-void wnd_popup_group_menu(wxedid_wnd* wnd, double x, double y);
-void wnd_on_tree_item_context(GtkGestureClick* gesture, int /*presses*/,
-                              double x, double y, gpointer user_data);
 gboolean wnd_on_tree_key(GtkEventControllerKey*, guint keyval,
                          guint /*keycode*/, GdkModifierType state,
                          gpointer user_data);

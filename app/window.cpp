@@ -421,6 +421,7 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
                                  g_signal_handler_disconnect(adw_style_manager_get_default(),
                                                              w->accent_changed);
                               g_clear_object(&w->recent_menu);
+                              g_clear_object(&w->group_menu_model);
                               g_clear_object(&w->cancellable);
                               g_clear_object(&w->load_cancellable);
                               g_clear_object(&w->log);
@@ -741,16 +742,7 @@ static wxedid_wnd* wnd_new(AdwApplication* app) {
    g_menu_append(group_menu_model, _("Move Up"), "win.move-group-up");
    g_menu_append(group_menu_model, _("Move Down"), "win.move-group-down");
    g_menu_append(group_menu_model, _("Delete"), "win.delete-group");
-   wnd->group_menu = GTK_POPOVER_MENU(
-      gtk_popover_menu_new_from_model(G_MENU_MODEL(group_menu_model)));
-   gtk_widget_set_parent(GTK_WIDGET(wnd->group_menu), GTK_WIDGET(wnd->tree));
-   //a list view doesn't unparent children it didn't add itself
-   g_signal_connect(wnd->tree, "destroy",
-                    G_CALLBACK(+[](GtkWidget*, gpointer menu) {
-                       gtk_widget_unparent(GTK_WIDGET(menu));
-                    }), wnd->group_menu);
-   gtk_popover_set_has_arrow(GTK_POPOVER(wnd->group_menu), FALSE);
-   g_object_unref(group_menu_model);
+   wnd->group_menu_model = G_MENU_MODEL(group_menu_model);
 
    GtkEventController* tree_keys = gtk_event_controller_key_new();
    g_signal_connect(tree_keys, "key-pressed", G_CALLBACK(wnd_on_tree_key), wnd);

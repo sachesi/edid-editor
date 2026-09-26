@@ -198,6 +198,15 @@ void tree_search_clear(GtkButton*, gpointer user_data) {
 
 //------------
 // factory: tree cell shows the group name
+//the group menu acts on the selected group
+static void tree_group_menu_shown(GtkWidget*, gpointer user_data) {
+   GtkListItem* item = GTK_LIST_ITEM(user_data);
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(
+      g_object_get_data(G_OBJECT(item), "wxedid-wnd"));
+   gtk_single_selection_set_selected(wnd->tree_sel,
+                                     gtk_list_item_get_position(item));
+}
+
 void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
                      GtkListItem* item, gpointer user_data) {
    //group name, with its code and offset underneath
@@ -217,20 +226,23 @@ void tree_name_setup(GtkSignalListItemFactory* /*factory*/,
    gtk_box_append(GTK_BOX(content), offset);
 
    gtk_tree_expander_set_child(GTK_TREE_EXPANDER(expander), content);
-   gtk_list_item_set_child(item, expander);
+
+   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(user_data);
+   GtkWidget* menu = gtk_popover_menu_new_from_model(wnd->group_menu_model);
+   gtk_popover_set_has_arrow(GTK_POPOVER(menu), FALSE);
+   g_signal_connect(menu, "show", G_CALLBACK(tree_group_menu_shown), item);
+   GtkWidget* bin = gtk_popover_bin_new();
+   gtk_popover_bin_set_child(GTK_POPOVER_BIN(bin), expander);
+   gtk_popover_bin_set_popover(GTK_POPOVER_BIN(bin), menu);
+   gtk_list_item_set_child(item, bin);
    g_object_set_data(G_OBJECT(item), "wxedid-wnd", user_data);
-   GtkGesture* context = gtk_gesture_click_new();
-   gtk_gesture_single_set_button(GTK_GESTURE_SINGLE(context),
-                                 GDK_BUTTON_SECONDARY);
-   g_signal_connect(context, "pressed",
-                    G_CALLBACK(wnd_on_tree_item_context), item);
-   gtk_widget_add_controller(expander, GTK_EVENT_CONTROLLER(context));
 }
 
 void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
                     GtkListItem* item, gpointer /*user_data*/) {
    GtkTreeListRow* row = GTK_TREE_LIST_ROW(gtk_list_item_get_item(item));
-   GtkTreeExpander* expander = GTK_TREE_EXPANDER(gtk_list_item_get_child(item));
+   GtkPopoverBin* bin = GTK_POPOVER_BIN(gtk_list_item_get_child(item));
+   GtkTreeExpander* expander = GTK_TREE_EXPANDER(gtk_popover_bin_get_child(bin));
    gtk_tree_expander_set_list_row(expander, row);
 
    GObject* obj    = G_OBJECT(gtk_tree_list_row_get_item(row));
@@ -249,6 +261,7 @@ void tree_name_bind(GtkSignalListItemFactory* /*factory*/,
    gtk_label_set_text(GTK_LABEL(label), display_name.c_str());
    gtk_widget_set_tooltip_text(label, display_name.c_str());
    gtk_list_item_set_selectable(item, (it != NULL) && it->selectable);
+   gtk_popover_bin_set_handle_input(bin, (it != NULL) && (it->pgrp != NULL));
    //block headings only expand: no hover or activation
    gtk_list_item_set_activatable(item, (it != NULL) && it->selectable);
 
@@ -746,31 +759,18 @@ void wnd_on_remove_preferred(GSimpleAction*, GVariant*, gpointer user_data) {
    wnd_remove_preferred(wnd, wnd_selected_group(wnd));
 }
 
-void wnd_popup_group_menu(wxedid_wnd* wnd, double x, double y) {
-   if ((wnd->group_menu == NULL) || (wnd_selected_group(wnd) == NULL)) return;
-   GdkRectangle point = {
-      static_cast<int>(x), static_cast<int>(y), 1, 1,
-   };
-   gtk_popover_set_pointing_to(GTK_POPOVER(wnd->group_menu), &point);
-   gtk_popover_popup(GTK_POPOVER(wnd->group_menu));
-}
-
-void wnd_on_tree_item_context(GtkGestureClick* gesture, int /*presses*/,
-                              double x, double y, gpointer user_data) {
-   GtkListItem* item = GTK_LIST_ITEM(user_data);
-   wxedid_wnd* wnd = static_cast<wxedid_wnd*>(
-      g_object_get_data(G_OBJECT(item), "wxedid-wnd"));
-   if ((wnd == NULL) || ! gtk_list_item_get_selectable(item)) return;
-   gtk_single_selection_set_selected(wnd->tree_sel,
-                                     gtk_list_item_get_position(item));
-   GtkWidget* source = gtk_event_controller_get_widget(GTK_EVENT_CONTROLLER(gesture));
-   graphene_point_t source_point = GRAPHENE_POINT_INIT(
-      static_cast<float>(x), static_cast<float>(y));
-   graphene_point_t tree_point;
-   if (! gtk_widget_compute_point(source, GTK_WIDGET(wnd->tree),
-                                  &source_point, &tree_point))
-      tree_point = source_point;
-   wnd_popup_group_menu(wnd, tree_point.x, tree_point.y);
+static void wnd_popup_group_menu(wxedid_wnd* wnd) {
+   GtkTreeListRow* row = GTK_TREE_LIST_ROW(
+      gtk_single_selection_get_selected_item(wnd->tree_sel));
+   if (row == NULL) return;
+   wxedid_item* it = WXEDID_ITEM(gtk_tree_list_row_get_item(row));
+   if (it == NULL) return;
+   if ((it->pgrp != NULL) && (it->bound_label != NULL)) {
+      GtkWidget* bin = gtk_widget_get_ancestor(GTK_WIDGET(it->bound_label),
+                                               GTK_TYPE_POPOVER_BIN);
+      if (bin != NULL) gtk_popover_bin_popup(GTK_POPOVER_BIN(bin));
+   }
+   g_object_unref(it);
 }
 
 gboolean wnd_on_tree_key(GtkEventControllerKey*, guint keyval,
@@ -797,7 +797,7 @@ gboolean wnd_on_tree_key(GtkEventControllerKey*, guint keyval,
    }
    if ((keyval == GDK_KEY_Menu) ||
        ((keyval == GDK_KEY_F10) && (modifiers == GDK_SHIFT_MASK))) {
-      wnd_popup_group_menu(wnd, 24, 24);
+      wnd_popup_group_menu(wnd);
       return TRUE;
    }
    return FALSE;
