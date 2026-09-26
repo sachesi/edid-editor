@@ -32,7 +32,7 @@ textview.byte-view > text {
 
 textview.byte-view,
 label.modeline {
-  font-family: "Adwaita Mono", monospace;
+  font-family: var(--monospace-font-family), monospace;
 }
 
 /* a mode that isn't preferred: the filled star faded, as some icon themes
